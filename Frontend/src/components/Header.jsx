@@ -1,7 +1,5 @@
 import React from 'react'
-// Если логотип лежит в public/logo.png, путь '/logo.png' верный.
-// Но в React лучше импортировать ассеты. Предположим, он в src/assets/logo.png
-import logoImg from '../assets/hero.png'
+import logoImg from '../assets/logo.jpeg'
 
 export default function Header() {
 	return (
