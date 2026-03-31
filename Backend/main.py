@@ -2,10 +2,19 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi import HTTPException
 from fastapi import Query
+from fastapi.middleware.cors import CORSMiddleware
 
 import pymysql
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"], # Разрешаем доступ именно твоему фронтенду
+    allow_credentials=True,
+    allow_methods=["*"], # Разрешаем все методы (GET, POST, PATCH и т.д.)
+    allow_headers=["*"], # Разрешаем все заголовки
+)
 
 def get_connection():
     return pymysql.connect(
@@ -25,7 +34,6 @@ class RequestCreate(BaseModel):
     vehicle_id: int
     work_type: str
     visit_type: str
-    status: str
     installation: InstallationDetails | None = None
 
 class RequestUpdate(BaseModel):
