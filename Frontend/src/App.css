@@ -10,6 +10,15 @@ body {
   display: flex;
   flex-direction: column;
 }
+html, body, #root {
+  height: 100%;
+}
+
+.app-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
 
 /* ─────────────────────────────────────────
    HEADER
