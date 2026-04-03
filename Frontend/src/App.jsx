@@ -8,6 +8,7 @@ import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import DashboardTable from './components/DashboardTable'
 import RequestCard from './components/RequestCard'
+import Clients from './components/Clients'
 
 function App() {
 	// ═════════════════════════════════════════════
@@ -58,7 +59,7 @@ function App() {
 
 			<div className='body-row'>
 				{/* В Sidebar нужно будет передать setActiveSection, чтобы менять разделы */}
-				<Sidebar />
+				<Sidebar activeSection={activeSection} setActiveSection={setActiveSection} />
 
 				<main className='main'>
 					{/* ═════ РАЗДЕЛ: ГЛАВНАЯ (section-home) ═════ */}
@@ -155,10 +156,12 @@ function App() {
 
 					{/* Остальные секции (Клиенты, Сотрудники) пока можно оставить заглушками */}
 					{activeSection === 'clients' && (
-						<section className='content-section active'>
-							<h2>Клиенты (в разработке)</h2>
-						</section>
-					)}
+    <section className='content-section active' id='section-clients'>
+        {/* Рендерим наш новый компонент */}
+        <Clients />
+    </section>
+)}
+
 				</main>
 			</div>
 
