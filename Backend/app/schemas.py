@@ -40,3 +40,9 @@ class VehicleCreate(BaseModel):
     vin: str | None = None
     year: int | None = None
     type: str | None = None
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    name: str
+    role: str # ADMIN, MANAGER, TECHNICIAN, SENIOR_TECHNICIAN
