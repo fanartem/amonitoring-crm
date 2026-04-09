@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from app.security import get_current_user
 from app.database import get_connection
 from app.schemas import ClientCreate
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
 @router.post("")
-def create_client(data: ClientCreate):
+def create_client(data: ClientCreate, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -26,7 +27,7 @@ def create_client(data: ClientCreate):
         connection.close()
 
 @router.get("")
-def get_clients():
+def get_clients(current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:

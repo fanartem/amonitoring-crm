@@ -13,17 +13,14 @@ class RequestCreate(BaseModel):
 
 class RequestUpdate(BaseModel):
     status: str | None = None
-    user_id: int  # кто делает изменение
     installation: InstallationDetails | None = None  # для обновления деталей установки
 
 class CommentCreate(BaseModel):
     request_id: int
-    user_id: int
     message: str
 
 class AssignRequest(BaseModel):
     technician_id: int
-    user_id: int  # кто назначает
 
 class ClientCreate(BaseModel):
     type: str  # TOO / IP / INDIVIDUAL

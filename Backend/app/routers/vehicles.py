@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from app.security import get_current_user
 from app.database import get_connection
 from app.schemas import VehicleCreate
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
 
 @router.post("")
-def create_vehicle(data: VehicleCreate):
+def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -29,7 +30,7 @@ def create_vehicle(data: VehicleCreate):
         connection.close()
 
 @router.get("")
-def get_vehicles(client_id: int = Query(None)):
+def get_vehicles(client_id: int = Query(None), current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:

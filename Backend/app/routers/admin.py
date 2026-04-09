@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.database import get_connection
+from app.security import get_current_admin
 
 router = APIRouter(prefix="/admin", tags=["Admin Panel"])
 
 @router.get("/pending-users")
-def get_pending_users():
+def get_pending_users(admin: dict = Depends(get_current_admin)):
     """Список пользователей, ожидающих подтверждения"""
     connection = get_connection()
     try:
@@ -19,7 +20,7 @@ def get_pending_users():
         connection.close()
 
 @router.post("/approve-user/{user_id}")
-def approve_user(user_id: int):
+def approve_user(user_id: int, admin: dict = Depends(get_current_admin)):
     """Одобрение пользователя администратором"""
     connection = get_connection()
     try:

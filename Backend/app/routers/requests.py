@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_connection
 from app.schemas import RequestCreate, RequestUpdate, AssignRequest, CommentCreate
+from app.security import get_current_user
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
 @router.post("")
-def create_request(data: RequestCreate):
+def create_request(data: RequestCreate, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -32,7 +33,7 @@ def create_request(data: RequestCreate):
                 (request_id, user_id, action, new_value)
                 VALUES (%s, %s, %s, %s)
                 """,
-                (request_id, None, "CREATED", "Request created")
+                (request_id, current_user["id"], "CREATED", "Request created")
             )
 
             # 2. если это установка — добавляем детали
@@ -52,7 +53,7 @@ def create_request(data: RequestCreate):
         connection.close()
 
 @router.get("")
-def get_requests(status: str = Query(None)):
+def get_requests(status: str = Query(None), current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -79,7 +80,7 @@ def get_requests(status: str = Query(None)):
         connection.close()
 
 @router.patch("/{request_id}")
-def update_request(request_id: int, data: RequestUpdate):
+def update_request(request_id: int, data: RequestUpdate, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     ALLOWED_TRANSITIONS = {
         "NEW": ["IN_PROGRESS"],
@@ -90,14 +91,8 @@ def update_request(request_id: int, data: RequestUpdate):
     try:
         with connection.cursor() as cursor:
             # 1. Проверка пользователя
-            cursor.execute("SELECT role FROM users WHERE id = %s", (data.user_id,))
-            user = cursor.fetchone()
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
-
-            role = user["role"]
-            if role not in ["ADMIN", "MANAGER", "SENIOR_TECHNICIAN"]:
-                raise HTTPException(status_code=403, detail="Not enough permissions")
+            if current_user["role"] not in ["ADMIN", "SENIOR_TECHNICIAN", "MANAGER"]:
+                raise HTTPException(status_code=403, detail="Недостаточно прав для назначения заявок")
 
             # 2. Получаем текущую заявку
             cursor.execute("SELECT work_type, status FROM requests WHERE id = %s", (request_id,))
@@ -109,7 +104,7 @@ def update_request(request_id: int, data: RequestUpdate):
 
             # 3. Обновление статуса
             if data.status is not None:
-                if role != "ADMIN":
+                if current_user["role"] != "ADMIN":
                     allowed = ALLOWED_TRANSITIONS.get(old_status, [])
                     if data.status not in allowed:
                         raise HTTPException(
@@ -122,7 +117,7 @@ def update_request(request_id: int, data: RequestUpdate):
                 if old_status != data.status:
                     cursor.execute(
                         "INSERT INTO request_history (request_id, user_id, action, old_value, new_value) VALUES (%s, %s, %s, %s, %s)",
-                        (request_id, data.user_id, "STATUS_CHANGED", old_status, data.status)
+                        (request_id, current_user["id"], "STATUS_CHANGED", old_status, data.status)
                     )
 
             # 4. Обновление деталей установки
@@ -147,7 +142,7 @@ def update_request(request_id: int, data: RequestUpdate):
 
                 cursor.execute(
                     "INSERT INTO request_history (request_id, user_id, action, old_value, new_value) VALUES (%s, %s, %s, %s, %s)",
-                    (request_id, data.user_id, "INSTALLATION_UPDATED", old_v, new_v)
+                    (request_id, current_user["id"], "INSTALLATION_UPDATED", old_v, new_v)
                 )
 
             connection.commit()
@@ -156,16 +151,13 @@ def update_request(request_id: int, data: RequestUpdate):
         connection.close()
 
 @router.post("/{request_id}/assign")
-def assign_request(request_id: int, data: AssignRequest):
+def assign_request(request_id: int, data: AssignRequest, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] not in ["ADMIN", "SENIOR_TECHNICIAN"]:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            # Проверка прав назначающего
-            cursor.execute("SELECT role FROM users WHERE id = %s", (data.user_id,))
-            user = cursor.fetchone()
-            if not user or user["role"] not in ["ADMIN", "SENIOR_TECHNICIAN"]:
-                raise HTTPException(status_code=403, detail="Not enough permissions")
-
             # Проверка техника
             cursor.execute("SELECT role FROM users WHERE id = %s", (data.technician_id,))
             tech = cursor.fetchone()
@@ -187,7 +179,7 @@ def assign_request(request_id: int, data: AssignRequest):
             # Пишем историю
             cursor.execute(
                 "INSERT INTO request_history (request_id, user_id, action, old_value, new_value) VALUES (%s, %s, %s, %s, %s)",
-                (request_id, data.user_id, "ASSIGNED", f"assigned_to={req['assigned_to']}", f"assigned_to={data.technician_id}")
+                (request_id, current_user["id"], "ASSIGNED", f"assigned_to={req['assigned_to']}", f"assigned_to={data.technician_id}")
             )
             
             connection.commit()
@@ -196,7 +188,7 @@ def assign_request(request_id: int, data: AssignRequest):
         connection.close()
 
 @router.get("/{request_id}")
-def get_request_detail(request_id: int):
+def get_request_detail(request_id: int, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -233,13 +225,13 @@ def get_request_detail(request_id: int):
         connection.close()
 
 @router.post("/comments")
-def create_comment(data: CommentCreate):
+def create_comment(data: CommentCreate, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO request_comments (request_id, user_id, message) VALUES (%s, %s, %s)",
-                (data.request_id, data.user_id, data.message)
+                (data.request_id, current_user["id"], data.message)
             )
             connection.commit()
         return {"message": "comment added"}
@@ -247,7 +239,7 @@ def create_comment(data: CommentCreate):
         connection.close()
 
 @router.get("/{request_id}/comments")
-def get_comments(request_id: int):
+def get_comments(request_id: int, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
