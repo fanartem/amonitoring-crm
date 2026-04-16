@@ -1,54 +1,77 @@
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
-import api from '../api';
+import React, { useState, useEffect } from 'react';
 
 export default function Clients() {
-  // 1. Получаем данные с бэкенда
-  const { data: clients, isLoading, isError } = useQuery({
-    queryKey: ['clients'], // Уникальный ключ кэша для этого запроса
-    queryFn: () => api.get('/clients').then(res => res.data), // Запрос к FastAPI
-  });
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // 2. Обрабатываем промежуточные состояния
-  if (isLoading) return <div style={{ padding: 40, textAlign: 'center' }}>Загрузка клиентов...</div>;
-  if (isError) return <div style={{ padding: 40, color: 'red', textAlign: 'center' }}>Ошибка при загрузке клиентов.</div>;
+  // Загружаем клиентов при открытии страницы
+  useEffect(() => {
+    fetchClients();
+  }, []);
 
-  // 3. Рендерим интерфейс, используя твои классы из App.css
+  const fetchClients = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch('http://127.0.0.1:8000/clients', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Не удалось загрузить список клиентов');
+      }
+
+      const data = await response.json();
+      setClients(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="section-inner" style={{ margin: '40px auto' }}>
-      <h2 className="section-title">База клиентов</h2>
-
-      <div className="placeholder-table">
-        {/* Шапка таблицы (Grid-сетка из App.css) */}
-        <div className="table-row table-header">
-          <div>Имя / Компания</div>
-          <div>Телефон</div>
-          <div>Email</div>
-          <div>Статус</div>
+    <div className="clients-wrapper">
+      <div className="clients-header-row" style={{ marginBottom: '20px' }}>
+        <h2 className="section-title" style={{ marginBottom: 0 }}>Клиенты</h2>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <span className="clients-hint">Клиенты из заявок и созданные вручную</span>
+          <button className="emp-add-btn">+ Добавить клиента</button>
         </div>
-
-        {/* Пробегаемся по массиву клиентов и отрисовываем строку для каждого */}
-        {clients?.map((client) => (
-          <div key={client.id} className="table-row">
-            <div style={{ fontWeight: 600, color: '#333' }}>{client.name}</div>
-            <div>{client.phone}</div>
-            <div>{client.email}</div>
-            <div>
-              {/* Условный рендеринг классов для бейджа */}
-              <span className={`badge ${client.is_active ? 'active-badge' : 'inactive-badge'}`}>
-                {client.is_active ? 'Активен' : 'Неактивен'}
-              </span>
-            </div>
-          </div>
-        ))}
-
-        {/* Сообщение, если база пустая */}
-        {(!clients || clients.length === 0) && (
-          <div style={{ padding: 20, textAlign: 'center', color: '#888' }}>
-            Список клиентов пуст
-          </div>
-        )}
       </div>
+
+      {loading ? (
+        <div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>
+          Загрузка клиентов...
+        </div>
+      ) : error ? (
+        <div style={{ padding: '40px', textAlign: 'center', color: '#c53030' }}>
+          {error}
+        </div>
+      ) : clients.length === 0 ? (
+        <div className="dash-empty visible" style={{ display: 'block' }}>
+          Нет клиентов
+        </div>
+      ) : (
+        /* Сетка с карточками клиентов */
+        <div className="clients-grid">
+          {clients.map(client => (
+            <div key={client.id} className="client-card">
+              <div className="client-card-name">
+                {client.company_name || client.name}
+              </div>
+              <div className="client-card-type">
+                {client.type} {client.company_name ? ` · ${client.name}` : ''}
+              </div>
+              <div className="client-card-phone">
+                {client.phone} {client.email ? ` · ${client.email}` : ''}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

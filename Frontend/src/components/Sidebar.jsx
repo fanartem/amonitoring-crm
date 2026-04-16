@@ -1,57 +1,54 @@
-import React from 'react'
+import React from 'react';
+import { NavLink } from 'react-router-dom';
 
-// 1. Принимаем пропсы: activeSection (строка) и setActiveSection (функция)
-export default function Sidebar({ activeSection, setActiveSection }) {
-    
-    // Вспомогательная функция, чтобы не дублировать логику проверки класса
-    const getClassName = (sectionName) => {
-        return `nav-item ${activeSection === sectionName ? 'active' : ''}`;
-    };
+export default function Sidebar() {
+  const userDataStr = localStorage.getItem('user_data');
+  const user = userDataStr ? JSON.parse(userDataStr) : null;
+  const isAdmin = user?.role?.toUpperCase() === 'ADMIN';
 
-    return (
-        <nav className='sidebar'>
-            <div className='sidebar-top'>
-                {/* 2. По клику вызываем setActiveSection с именем нужного раздела */}
-                <div 
-                    className={getClassName('home')} 
-                    onClick={() => setActiveSection('home')}
-                >
-                    Главная
-                </div>
-                
-                <div 
-                    className={getClassName('clients')} 
-                    onClick={() => setActiveSection('clients')}
-                >
-                    Клиенты
-                </div>
-                
-                <div 
-                    className={getClassName('requests')} 
-                    onClick={() => setActiveSection('requests')}
-                >
-                    Заявки
-                </div>
-                
-                <div 
-                    className={getClassName('employees')} 
-                    onClick={() => setActiveSection('employees')}
-                >
-                    Сотрудники
-                </div>
-            </div>
+  const handleLogout = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('user_data');
+    window.location.href = '/login';
+  };
 
-            <div className='sidebar-bottom'>
-                <div 
-                    className={getClassName('settings')} 
-                    onClick={() => setActiveSection('settings')}
-                >
-                    Настройки
-                </div>
-                <div className='nav-item' id='logout-btn'>
-                    Выход
-                </div>
-            </div>
-        </nav>
-    )
+  return (
+    <nav className="sidebar">
+      <div className="sidebar-top">
+        <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end>
+          Главная
+        </NavLink>
+        
+        <NavLink to="/clients" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          Клиенты
+        </NavLink>
+        
+        <NavLink to="/requests" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          Заявки
+        </NavLink>
+        
+        {/* Блок, который показывается только Администратору */}
+        {isAdmin && (
+          <>
+            <NavLink to="/employees" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              Сотрудники
+            </NavLink>
+            <NavLink to="/approvals" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              Одобрение
+            </NavLink>
+          </>
+        )}
+      </div>
+
+      <div className="sidebar-bottom">
+        <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          Настройки
+        </NavLink>
+        
+        <div className="nav-item" onClick={handleLogout} style={{ cursor: 'pointer' }}>
+          Выход
+        </div>
+      </div>
+    </nav>
+  );
 }

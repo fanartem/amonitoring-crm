@@ -42,6 +42,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         user_role: str = payload.get("role")
+        print(f"!!! ДЕБАГ ТОКЕНА: user_id = {user_id}, role = {user_role}")
         if user_id is None:
             raise credentials_exception
     except JWTError:

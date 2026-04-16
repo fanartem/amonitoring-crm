@@ -7,6 +7,14 @@ app = FastAPI(title="AMonitoring CRM API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=["*"], # Разрешаем запросы с любых адресов
+    allow_credentials=True,
+    allow_methods=["*"], # Разрешаем GET, POST и т.д.
+    allow_headers=["*"], # Разрешаем передавать Authorization Token
+)
+
+app.add_middleware(
+    CORSMiddleware,
     allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
