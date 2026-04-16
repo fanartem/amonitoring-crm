@@ -59,6 +59,30 @@ def sync_db():
                         FOREIGN KEY (vehicle_id) REFERENCES vehicles(id),
                         FOREIGN KEY (assigned_to) REFERENCES users(id)
                     );
+                """,
+                "request_comments": """
+                    CREATE TABLE request_comments (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        request_id INT NOT NULL,
+                        user_id INT NULL,
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE,
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                    );
+                """,
+                "request_history": """
+                    CREATE TABLE request_history (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        request_id INT NOT NULL,
+                        user_id INT NULL,
+                        action VARCHAR(100) NOT NULL,
+                        old_value TEXT,
+                        new_value TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE,
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                    );
                 """
             }
 
