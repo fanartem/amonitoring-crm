@@ -6,7 +6,7 @@ from app.security import get_current_user
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
 @router.post("/")
-def create_client(data: ClientCreate):
+def create_client(data: ClientCreate, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
