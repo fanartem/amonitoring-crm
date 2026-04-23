@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class InstallationDetails(BaseModel):
     has_beacon: bool = False
@@ -13,6 +14,7 @@ class RequestCreate(BaseModel):
 
 class RequestUpdate(BaseModel):
     status: str | None = None
+    is_paid: Optional[bool] = None   # для обновления статуса оплаты
     installation: InstallationDetails | None = None  # для обновления деталей установки
 
 class CommentCreate(BaseModel):

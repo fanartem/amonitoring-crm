@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from app.database import get_connection
-from app.security import verify_password, create_access_token, hash_password
+from app.security import verify_password, create_access_token, hash_password, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.schemas import UserCreate # Эту схему добавим в Шаге 4
+from datetime import timedelta
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -52,8 +53,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
                 )
 
             # Создаем токен (записываем туда ID и Роль)
+            access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            
             access_token = create_access_token(
-                data={"sub": str(user["id"]), "role": user["role"]}
+                data={"sub": str(user["id"]), "role": user["role"]},
+                expires_delta=access_token_expires
             )
             
             return {

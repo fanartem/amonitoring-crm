@@ -14,7 +14,7 @@ def sync_db():
                         email VARCHAR(255) UNIQUE NOT NULL,
                         hashed_password VARCHAR(255) NOT NULL,
                         name VARCHAR(255) NOT NULL,
-                        role ENUM('ADMIN', 'MANAGER', 'TECHNICIAN', 'SENIOR_TECHNICIAN') NOT NULL,
+                        role ENUM('ADMIN', 'MANAGER', 'TECHNICIAN', 'SENIOR_TECHNICIAN', 'ACCOUNTANT') NOT NULL,
                         is_approved BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
@@ -55,6 +55,8 @@ def sync_db():
                         status ENUM('NEW', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED') DEFAULT 'NEW',
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         assigned_to INT NULL,
+                        is_paid BOOLEAN DEFAULT FALSE,
+                        paid_at DATETIME NULL,
                         FOREIGN KEY (client_id) REFERENCES clients(id),
                         FOREIGN KEY (vehicle_id) REFERENCES vehicles(id),
                         FOREIGN KEY (assigned_to) REFERENCES users(id)

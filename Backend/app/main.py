@@ -13,14 +13,6 @@ app.add_middleware(
     allow_headers=["*"], # Разрешаем передавать Authorization Token
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Подключаем роутеры
 app.include_router(clients.router)
 app.include_router(requests.router)
