@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import '../styles/Requests.css'; // Используем классы из заявок для унификации дизайна
+import '../styles/Warehouse.css'
 import WarehouseItemModal from './WarehouseItemModal';
 
 const CATEGORIES = {
@@ -118,96 +119,244 @@ export default function Warehouse() {
   };
 
   return (
-    <div className="requests-page-container">
-      <div className="clients-header-bar" style={{ marginBottom: '15px' }}>
-        <h2>Склад оборудования</h2>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button onClick={downloadTemplate} style={{ padding: '8px 12px', background: '#f5f5f5', border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer' }}>
-            📥 Шаблон CSV
-          </button>
-          <input type="file" accept=".csv" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
-          <button onClick={() => fileInputRef.current.click()} style={{ padding: '8px 12px', background: '#e3f2fd', color: '#1565c0', border: '1px solid #bbdefb', borderRadius: '6px', cursor: 'pointer' }}>
-            ⬆️ Импорт CSV
-          </button>
-          <button className="btn-green" onClick={() => { setEditItem(null); setIsModalOpen(true); }}>+ Добавить</button>
-        </div>
-      </div>
+		<div className='requests-page-container'>
+			<div className='clients-header-bar' style={{ marginBottom: '15px' }}>
+				<h2>Склад оборудования</h2>
+				<div style={{ display: 'flex', gap: '10px' }}>
+					<button
+						onClick={downloadTemplate}
+						style={{
+							padding: '8px 12px',
+							background: '#f5f5f5',
+							border: '1px solid #ddd',
+							borderRadius: '6px',
+							cursor: 'pointer',
+						}}
+					>
+						Шаблон CSV
+					</button>
+					<input
+						type='file'
+						accept='.csv'
+						ref={fileInputRef}
+						style={{ display: 'none' }}
+						onChange={handleFileUpload}
+					/>
+					<button
+						onClick={() => fileInputRef.current.click()}
+						style={{
+							padding: '8px 12px',
+							background: '#e3f2fd',
+							color: '#1565c0',
+							border: '1px solid #bbdefb',
+							borderRadius: '6px',
+							cursor: 'pointer',
+						}}
+					>
+						Импорт CSV
+					</button>
+					<button
+						className='btn-green'
+						onClick={() => {
+							setEditItem(null)
+							setIsModalOpen(true)
+						}}
+					>
+						+ Добавить
+					</button>
+				</div>
+			</div>
 
-      <div className="filters-bar" style={{ marginBottom: '20px' }}>
-        <div className="filter-group" style={{ flex: '1.5' }}>
-          <label>Поиск по складу</label>
-          <input className="filter-input" type="text" name="search" placeholder="Наименование, модель, IMEI..." value={filters.search} onChange={handleFilterChange} />
-        </div>
-        <div className="filter-group">
-          <label>Категория</label>
-          <select className="filter-select" name="category" value={filters.category} onChange={handleFilterChange}>
-            <option value="">Все категории</option>
-            {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </div>
-        <div className="filter-group">
-          <label>Статус</label>
-          <select className="filter-select" name="status" value={filters.status} onChange={handleFilterChange}>
-            <option value="">Все статусы</option>
-            {Object.entries(STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </div>
-        <button className="btn-reset" onClick={resetFilters}>Сбросить</button>
-      </div>
+			<div className='filters-bar' style={{ marginBottom: '20px' }}>
+				<div className='filter-group' style={{ flex: '1.5' }}>
+					<label>Поиск по складу</label>
+					<input
+						className='filter-input'
+						type='text'
+						name='search'
+						placeholder='Наименование, модель, IMEI...'
+						value={filters.search}
+						onChange={handleFilterChange}
+					/>
+				</div>
+				<div className='filter-group'>
+					<label>Категория</label>
+					<select
+						className='filter-select'
+						name='category'
+						value={filters.category}
+						onChange={handleFilterChange}
+					>
+						<option value=''>Все категории</option>
+						{Object.entries(CATEGORIES).map(([k, v]) => (
+							<option key={k} value={k}>
+								{v}
+							</option>
+						))}
+					</select>
+				</div>
+				<div className='filter-group'>
+					<label>Статус</label>
+					<select
+						className='filter-select'
+						name='status'
+						value={filters.status}
+						onChange={handleFilterChange}
+					>
+						<option value=''>Все статусы</option>
+						{Object.entries(STATUSES).map(([k, v]) => (
+							<option key={k} value={k}>
+								{v}
+							</option>
+						))}
+					</select>
+				</div>
+				<button className='btn-reset' onClick={resetFilters}>
+					Сбросить
+				</button>
+			</div>
 
-      <div style={{ background: '#fff', borderRadius: '8px', border: '1px solid #eee', overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', textAlign: 'left' }}>
-          <thead>
-            <tr style={{ background: '#f9f9f9', borderBottom: '2px solid #eee', color: '#555' }}>
-              <th style={{ padding: '12px 15px' }}>Наименование</th>
-              <th style={{ padding: '12px 15px' }}>Категория</th>
-              <th style={{ padding: '12px 15px' }}>Идентификатор</th>
-              <th style={{ padding: '12px 15px' }}>Кол-во</th>
-              <th style={{ padding: '12px 15px' }}>Статус</th>
-              <th style={{ padding: '12px 15px', textAlign: 'right' }}>Действия</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center' }}>Загрузка...</td></tr>
-            ) : items.length === 0 ? (
-              <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#888' }}>Оборудование не найдено</td></tr>
-            ) : items.map(item => (
-              <tr key={item.id} style={{ borderBottom: '1px solid #eee' }}>
-                <td style={{ padding: '12px 15px' }}>
-                  <strong>{item.name}</strong>
-                  {item.model && <div style={{ fontSize: '12px', color: '#888' }}>{item.manufacturer} {item.model}</div>}
-                </td>
-                <td style={{ padding: '12px 15px' }}>{CATEGORIES[item.category] || item.category}</td>
-                <td style={{ padding: '12px 15px' }}>
-                  {item.is_serialized ? (
-                    <><span style={{ color: '#888', fontSize: '11px' }}>{item.identifier_type}:</span> {item.identifier_value}</>
-                  ) : (
-                    <span style={{ color: '#aaa', fontSize: '12px' }}>Расходник</span>
-                  )}
-                </td>
-                <td style={{ padding: '12px 15px', fontWeight: 'bold' }}>{item.quantity} шт.</td>
-                <td style={{ padding: '12px 15px' }}>
-                  <span style={{ background: STATUS_COLORS[item.status] || '#888', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>
-                    {STATUSES[item.status] || item.status}
-                  </span>
-                </td>
-                <td style={{ padding: '12px 15px', textAlign: 'right' }}>
-                  <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#1976d2', cursor: 'pointer', marginRight: '10px' }}>✎</button>
-                  <button onClick={() => handleDelete(item.id)} style={{ background: 'none', border: 'none', color: '#c62828', cursor: 'pointer' }}>🗑</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+			<div
+				style={{
+					background: '#fff',
+					borderRadius: '8px',
+					border: '1px solid #eee',
+					overflow: 'hidden',
+				}}
+			>
+				<table
+					style={{
+						width: '100%',
+						borderCollapse: 'collapse',
+						fontSize: '14px',
+						textAlign: 'left',
+					}}
+				>
+					<thead>
+						<tr
+							style={{
+								background: '#f9f9f9',
+								borderBottom: '2px solid #eee',
+								color: '#555',
+							}}
+						>
+							<th style={{ padding: '12px 15px' }}>Наименование</th>
+							<th style={{ padding: '12px 15px' }}>Категория</th>
+							<th style={{ padding: '12px 15px' }}>Идентификатор</th>
+							<th style={{ padding: '12px 15px' }}>Кол-во</th>
+							<th style={{ padding: '12px 15px' }}>Статус</th>
+							<th style={{ padding: '12px 15px', textAlign: 'right' }}>
+								Действия
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						{loading ? (
+							<tr>
+								<td
+									colSpan='6'
+									style={{ padding: '20px', textAlign: 'center' }}
+								>
+									Загрузка...
+								</td>
+							</tr>
+						) : items.length === 0 ? (
+							<tr>
+								<td
+									colSpan='6'
+									style={{
+										padding: '20px',
+										textAlign: 'center',
+										color: '#888',
+									}}
+								>
+									Оборудование не найдено
+								</td>
+							</tr>
+						) : (
+							items.map(item => (
+								<tr key={item.id} style={{ borderBottom: '1px solid #eee' }}>
+									<td style={{ padding: '12px 15px' }}>
+										<strong>{item.name}</strong>
+										{item.model && (
+											<div style={{ fontSize: '12px', color: '#888' }}>
+												{item.manufacturer} {item.model}
+											</div>
+										)}
+									</td>
+									<td style={{ padding: '12px 15px' }}>
+										{CATEGORIES[item.category] || item.category}
+									</td>
+									<td style={{ padding: '12px 15px' }}>
+										{item.is_serialized ? (
+											<>
+												<span style={{ color: '#888', fontSize: '11px' }}>
+													{item.identifier_type}:
+												</span>{' '}
+												{item.identifier_value}
+											</>
+										) : (
+											<span style={{ color: '#aaa', fontSize: '12px' }}>
+												Расходник
+											</span>
+										)}
+									</td>
+									<td style={{ padding: '12px 15px', fontWeight: 'bold' }}>
+										{item.quantity} шт.
+									</td>
+									<td style={{ padding: '12px 15px' }}>
+										<span
+											style={{
+												background: STATUS_COLORS[item.status] || '#888',
+												color: '#fff',
+												padding: '2px 8px',
+												borderRadius: '12px',
+												fontSize: '11px',
+												fontWeight: 'bold',
+											}}
+										>
+											{STATUSES[item.status] || item.status}
+										</span>
+									</td>
+									<td style={{ padding: '12px 15px', textAlign: 'right' }}>
+										<div className='warehouse-actions'>
+											<button
+												className='warehouse-action-btn warehouse-edit-btn'
+												onClick={() => openEdit(item)}
+												title='Редактировать'
+											>
+												✎
+											</button>
 
-      <WarehouseItemModal 
-        isOpen={isModalOpen} 
-        editItem={editItem} 
-        onClose={() => { setIsModalOpen(false); setEditItem(null); }} 
-        onSaved={() => { setIsModalOpen(false); setEditItem(null); fetchItems(); }} 
-      />
-    </div>
-  );
+											<button
+												className='warehouse-action-btn warehouse-delete-btn'
+												onClick={() => handleDelete(item.id)}
+												title='Переместить в корзину'
+											>
+												🗑
+											</button>
+										</div>
+									</td>
+								</tr>
+							))
+						)}
+					</tbody>
+				</table>
+			</div>
+
+			<WarehouseItemModal
+				isOpen={isModalOpen}
+				editItem={editItem}
+				onClose={() => {
+					setIsModalOpen(false)
+					setEditItem(null)
+				}}
+				onSaved={() => {
+					setIsModalOpen(false)
+					setEditItem(null)
+					fetchItems()
+				}}
+			/>
+		</div>
+	)
 }

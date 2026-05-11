@@ -48,7 +48,7 @@ export default function Sidebar() {
 					to='/warehouse'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 				>
-					📦 Склад
+					Склад
 				</NavLink>
 				
 
@@ -69,7 +69,7 @@ export default function Sidebar() {
 						to='/trash'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 					>
-						🗑 Корзина
+						Корзина
 					</NavLink>
 				)}
 			</div>

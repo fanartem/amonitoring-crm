@@ -1,236 +1,407 @@
-import React, { useState, useEffect } from 'react';
-import '../styles/Requests.css'; // Используем те же стили модалок
+import React, { useState, useEffect } from 'react'
+import '../styles/Requests.css'
+import '../styles/Warehouse.css'
 
 const CATEGORIES = {
-  GPS_TRACKER: 'GPS-трекер',
-  BEACON: 'Маяк',
-  FUEL_SENSOR: 'Датчик уровня топлива (ДУТ)',
-  BLE_SENSOR: 'BLE-датчик',
-  WIRED_SENSOR: 'Проводной датчик',
-  RELAY: 'Реле',
-  CABLE: 'Кабель',
-  OTHER: 'Другое'
-};
+	GPS_TRACKER: 'GPS-трекер',
+	BEACON: 'Маяк',
+	FUEL_SENSOR: 'Датчик уровня топлива (ДУТ)',
+	BLE_SENSOR: 'BLE-датчик',
+	WIRED_SENSOR: 'Проводной датчик',
+	RELAY: 'Реле',
+	CABLE: 'Кабель',
+	OTHER: 'Другое',
+}
 
-const IDENTIFIER_TYPES = ['IMEI', 'MAC', 'SERIAL', 'NONE', 'OTHER'];
-const STATUSES = { IN_STOCK: 'На складе', RESERVED: 'Резерв', INSTALLED: 'Установлено', WRITTEN_OFF: 'Списано' };
+const IDENTIFIER_TYPES = ['IMEI', 'MAC', 'SERIAL', 'OTHER']
 
-export default function WarehouseItemModal({ isOpen, onClose, onSaved, editItem }) {
-  const isEditMode = !!editItem;
+const STATUSES = {
+	IN_STOCK: 'На складе',
+	RESERVED: 'Резерв',
+	INSTALLED: 'Установлено',
+	WRITTEN_OFF: 'Списано',
+}
 
-  const [formData, setFormData] = useState({
-    category: 'GPS_TRACKER',
-    name: '',
-    manufacturer: '',
-    model: '',
-    identifier_type: 'IMEI',
-    identifier_value: '',
-    serial_number: '',
-    is_serialized: true,
-    quantity: 1,
-    note: '',
-    status: 'IN_STOCK'
-  });
+export default function WarehouseItemModal({
+	isOpen,
+	onClose,
+	onSaved,
+	editItem,
+}) {
+	const isEditMode = !!editItem
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+	const [formData, setFormData] = useState({
+		category: 'GPS_TRACKER',
+		name: '',
+		manufacturer: '',
+		model: '',
+		identifier_type: 'IMEI',
+		identifier_value: '',
+		serial_number: '',
+		is_serialized: true,
+		quantity: 1,
+		note: '',
+		status: 'IN_STOCK',
+	})
 
-  useEffect(() => {
-    if (isOpen) {
-      if (isEditMode) {
-        setFormData({
-          category: editItem.category || 'GPS_TRACKER',
-          name: editItem.name || '',
-          manufacturer: editItem.manufacturer || '',
-          model: editItem.model || '',
-          identifier_type: editItem.identifier_type || 'IMEI',
-          identifier_value: editItem.identifier_value || '',
-          serial_number: editItem.serial_number || '',
-          is_serialized: editItem.is_serialized,
-          quantity: editItem.quantity || 1,
-          note: editItem.note || '',
-          status: editItem.status || 'IN_STOCK'
-        });
-      } else {
-        setFormData({
-          category: 'GPS_TRACKER', name: '', manufacturer: '', model: '',
-          identifier_type: 'IMEI', identifier_value: '', serial_number: '',
-          is_serialized: true, quantity: 1, note: '', status: 'IN_STOCK'
-        });
-      }
-      setError('');
-    }
-  }, [isOpen, editItem]);
+	const [loading, setLoading] = useState(false)
+	const [error, setError] = useState('')
 
-  const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    
-    let newVal = type === 'checkbox' ? checked : value;
+	useEffect(() => {
+		if (!isOpen) return
 
-    // Умная логика формы
-    if (name === 'is_serialized') {
-      if (newVal) {
-        // Если серийный -> кол-во = 1, тип ID = IMEI
-        setFormData({ ...formData, is_serialized: true, quantity: 1, identifier_type: 'IMEI' });
-      } else {
-        // Если НЕ серийный (расходник) -> тип ID = NONE, стираем ID
-        setFormData({ ...formData, is_serialized: false, identifier_type: 'NONE', identifier_value: '' });
-      }
-      return;
-    }
+		if (isEditMode) {
+			const serialized = Boolean(editItem.is_serialized)
 
-    setFormData({ ...formData, [name]: newVal });
-  };
+			setFormData({
+				category: editItem.category || 'GPS_TRACKER',
+				name: editItem.name || '',
+				manufacturer: editItem.manufacturer || '',
+				model: editItem.model || '',
+				identifier_type: serialized
+					? editItem.identifier_type || 'IMEI'
+					: 'NONE',
+				identifier_value: editItem.identifier_value || '',
+				serial_number: editItem.serial_number || '',
+				is_serialized: serialized,
+				quantity: editItem.quantity || 1,
+				note: editItem.note || '',
+				status: editItem.status || 'IN_STOCK',
+			})
+		} else {
+			setFormData({
+				category: 'GPS_TRACKER',
+				name: '',
+				manufacturer: '',
+				model: '',
+				identifier_type: 'IMEI',
+				identifier_value: '',
+				serial_number: '',
+				is_serialized: true,
+				quantity: 1,
+				note: '',
+				status: 'IN_STOCK',
+			})
+		}
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
+		setError('')
+	}, [isOpen, editItem, isEditMode])
 
-    if (!formData.name) {
-      setError('Наименование оборудования обязательно');
-      return;
-    }
+	const handleChange = e => {
+		const { name, value, type, checked } = e.target
 
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('access_token');
-      
-      const payload = {
-        category: formData.category,
-        name: formData.name,
-        manufacturer: formData.manufacturer || null,
-        model: formData.model || null,
-        identifier_type: formData.identifier_type,
-        identifier_value: formData.identifier_value || null,
-        serial_number: formData.serial_number || null,
-        is_serialized: formData.is_serialized,
-        quantity: parseInt(formData.quantity, 10),
-        note: formData.note || null,
-        ...(isEditMode && { status: formData.status }) // Статус передаем только при редактировании
-      };
+		if (name === 'is_serialized') {
+			if (checked) {
+				setFormData(prev => ({
+					...prev,
+					is_serialized: true,
+					quantity: 1,
+					identifier_type: 'IMEI',
+				}))
+			} else {
+				setFormData(prev => ({
+					...prev,
+					is_serialized: false,
+					identifier_type: 'NONE',
+					identifier_value: '',
+				}))
+			}
+			return
+		}
 
-      const url = isEditMode ? `http://127.0.0.1:8000/warehouse/items/${editItem.id}` : 'http://127.0.0.1:8000/warehouse/items';
-      const method = isEditMode ? 'PATCH' : 'POST';
+		setFormData(prev => ({
+			...prev,
+			[name]: type === 'checkbox' ? checked : value,
+		}))
+	}
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(payload)
-      });
+	const handleSubmit = async e => {
+		e.preventDefault()
+		setError('')
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Ошибка сохранения');
-      }
+		if (!formData.name.trim()) {
+			setError('Наименование оборудования обязательно')
+			return
+		}
 
-      onSaved(); 
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+		if (formData.is_serialized && !formData.identifier_value.trim()) {
+			setError(
+				'Для серийного оборудования нужно указать IMEI, MAC или серийный номер',
+			)
+			return
+		}
 
-  if (!isOpen) return null;
+		if (!formData.is_serialized && Number(formData.quantity) < 1) {
+			setError('Количество должно быть больше 0')
+			return
+		}
 
-  return (
-    <div className="modal-overlay open">
-      <div className="modal-window" style={{ maxWidth: '600px' }}>
-        <div className="modal-header">
-          <span className="modal-title">{isEditMode ? 'Редактировать оборудование' : 'Добавить на склад'}</span>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
+		setLoading(true)
 
-        {error && <div className="validation-banner visible" style={{ background: '#ffebee', color: '#c62828', padding: '15px' }}>{error}</div>}
+		try {
+			const token = localStorage.getItem('access_token')
 
-        <div className="modal-body" style={{ background: '#f7f7f7', padding: '20px' }}>
-          <form id="warehouse-form" onSubmit={handleSubmit}>
-            
-            <div className="form-row align-center">
-              <span className="field-label req-mark">Категория:</span>
-              <select className="form-input" name="category" value={formData.category} onChange={handleChange}>
-                {Object.entries(CATEGORIES).map(([key, label]) => (
-                  <option key={key} value={key}>{label}</option>
-                ))}
-              </select>
-            </div>
+			const payload = {
+				category: formData.category,
+				name: formData.name.trim(),
+				manufacturer: formData.manufacturer.trim() || null,
+				model: formData.model.trim() || null,
+				identifier_type: formData.is_serialized
+					? formData.identifier_type
+					: 'NONE',
+				identifier_value: formData.is_serialized
+					? formData.identifier_value.trim()
+					: null,
+				serial_number: formData.serial_number.trim() || null,
+				is_serialized: formData.is_serialized,
+				quantity: formData.is_serialized ? 1 : parseInt(formData.quantity, 10),
+				note: formData.note.trim() || null,
+				...(isEditMode && { status: formData.status }),
+			}
 
-            <div className="form-row align-center">
-              <span className="field-label req-mark">Наименование:</span>
-              <input className="form-input" type="text" name="name" value={formData.name} onChange={handleChange} placeholder="Teltonika FMC920..." />
-            </div>
+			const url = isEditMode
+				? `http://127.0.0.1:8000/warehouse/items/${editItem.id}`
+				: 'http://127.0.0.1:8000/warehouse/items'
 
-            <div className="form-row align-center">
-              <span className="field-label">Производитель:</span>
-              <input className="form-input" type="text" name="manufacturer" value={formData.manufacturer} onChange={handleChange} />
-            </div>
+			const method = isEditMode ? 'PATCH' : 'POST'
 
-            <div className="form-row align-center">
-              <span className="field-label">Модель:</span>
-              <input className="form-input" type="text" name="model" value={formData.model} onChange={handleChange} />
-            </div>
+			const res = await fetch(url, {
+				method,
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify(payload),
+			})
 
-            <div className="form-row align-center" style={{ marginTop: '15px', padding: '10px', background: '#e3f2fd', borderRadius: '6px' }}>
-              <label className="radio-label" style={{ fontWeight: 'bold', color: '#1565c0' }}>
-                <input type="checkbox" name="is_serialized" checked={formData.is_serialized} onChange={handleChange} />
-                Серийное (Уникальное) оборудование
-              </label>
-              <div style={{ fontSize: '11px', color: '#555', marginLeft: '25px', marginTop: '4px' }}>Снимите галочку, если это расходник (кабель, стяжки), измеряемый количеством.</div>
-            </div>
+			if (!res.ok) {
+				const err = await res.json()
+				throw new Error(err.detail || 'Ошибка сохранения')
+			}
 
-            {formData.is_serialized ? (
-              <div style={{ padding: '15px', border: '1px solid #ddd', borderRadius: '6px', marginTop: '10px', background: '#fff' }}>
-                <div className="form-row align-center">
-                  <span className="field-label req-mark">Тип ID:</span>
-                  <select className="form-input" name="identifier_type" value={formData.identifier_type} onChange={handleChange}>
-                    {IDENTIFIER_TYPES.filter(t => t !== 'NONE').map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-                <div className="form-row align-center">
-                  <span className="field-label req-mark">Значение ID:</span>
-                  <input className="form-input" type="text" name="identifier_value" value={formData.identifier_value} onChange={handleChange} placeholder="Номер IMEI / MAC" />
-                </div>
-                <div className="form-row align-center">
-                  <span className="field-label">Кол-во:</span>
-                  <input className="form-input" type="number" value="1" disabled style={{ background: '#eee' }} />
-                </div>
-              </div>
-            ) : (
-              <div style={{ padding: '15px', border: '1px solid #ddd', borderRadius: '6px', marginTop: '10px', background: '#fff' }}>
-                <div className="form-row align-center">
-                  <span className="field-label req-mark">Количество:</span>
-                  <input className="form-input" type="number" name="quantity" value={formData.quantity} onChange={handleChange} min="1" />
-                </div>
-              </div>
-            )}
+			onSaved()
+		} catch (err) {
+			setError(err.message)
+		} finally {
+			setLoading(false)
+		}
+	}
 
-            {isEditMode && (
-              <div className="form-row align-center" style={{ marginTop: '15px' }}>
-                <span className="field-label req-mark">Статус:</span>
-                <select className="form-input" name="status" value={formData.status} onChange={handleChange}>
-                  {Object.entries(STATUSES).map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+	if (!isOpen) return null
 
-            <div className="form-section" style={{ marginTop: '15px' }}>
-              <span className="field-label">Примечание:</span>
-              <textarea className="form-textarea full-width" name="note" rows="2" value={formData.note} onChange={handleChange} placeholder="Дополнительная информация..."></textarea>
-            </div>
+	return (
+		<div className='modal-overlay open'>
+			<div className='modal-window warehouse-modal-window'>
+				<div className='modal-header'>
+					<span className='modal-title'>
+						{isEditMode ? 'Редактировать оборудование' : 'Добавить на склад'}
+					</span>
+					<button className='modal-close' onClick={onClose} type='button'>
+						&times;
+					</button>
+				</div>
 
-          </form>
-        </div>
+				{error && <div className='warehouse-error-banner'>{error}</div>}
 
-        <div className="modal-footer">
-          <button className="modal-submit-btn" type="button" onClick={onClose} style={{ borderColor: '#aaa', color: '#888' }}>Отмена</button>
-          <button className="modal-submit-btn" type="submit" form="warehouse-form" disabled={loading}>
-            {loading ? 'Сохранение...' : isEditMode ? 'Сохранить изменения' : 'Добавить на склад'}
-          </button>
-        </div>
+				<div className='warehouse-modal-body'>
+					<form id='warehouse-form' onSubmit={handleSubmit}>
+						<div className='warehouse-form-card'>
+							<div className='warehouse-form-section-title'>
+								Основная информация
+							</div>
 
-      </div>
-    </div>
-  );
+							<div className='warehouse-form-grid'>
+								<label className='warehouse-field'>
+									<span className='warehouse-label required'>Категория</span>
+									<select
+										className='warehouse-input'
+										name='category'
+										value={formData.category}
+										onChange={handleChange}
+									>
+										{Object.entries(CATEGORIES).map(([key, label]) => (
+											<option key={key} value={key}>
+												{label}
+											</option>
+										))}
+									</select>
+								</label>
+
+								<label className='warehouse-field'>
+									<span className='warehouse-label required'>Наименование</span>
+									<input
+										className='warehouse-input'
+										type='text'
+										name='name'
+										value={formData.name}
+										onChange={handleChange}
+										placeholder='Например: Teltonika FMC920'
+									/>
+								</label>
+
+								<label className='warehouse-field'>
+									<span className='warehouse-label'>Производитель</span>
+									<input
+										className='warehouse-input'
+										type='text'
+										name='manufacturer'
+										value={formData.manufacturer}
+										onChange={handleChange}
+										placeholder='Например: Teltonika'
+									/>
+								</label>
+
+								<label className='warehouse-field'>
+									<span className='warehouse-label'>Модель</span>
+									<input
+										className='warehouse-input'
+										type='text'
+										name='model'
+										value={formData.model}
+										onChange={handleChange}
+										placeholder='Например: FMC920'
+									/>
+								</label>
+							</div>
+						</div>
+
+						<div className='warehouse-form-card'>
+							<div className='warehouse-form-section-title'>Складской учёт</div>
+
+							<label className='warehouse-toggle-row'>
+								<input
+									type='checkbox'
+									name='is_serialized'
+									checked={formData.is_serialized}
+									onChange={handleChange}
+								/>
+
+								<div>
+									<div className='warehouse-toggle-title'>
+										Серийное оборудование
+									</div>
+									<div className='warehouse-toggle-hint'>
+										Включите, если у оборудования есть уникальный IMEI, MAC или
+										серийный номер. Для расходников снимите галочку.
+									</div>
+								</div>
+							</label>
+
+							{formData.is_serialized ? (
+								<div className='warehouse-form-grid warehouse-inner-grid'>
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>Тип ID</span>
+										<select
+											className='warehouse-input'
+											name='identifier_type'
+											value={formData.identifier_type}
+											onChange={handleChange}
+										>
+											{IDENTIFIER_TYPES.map(type => (
+												<option key={type} value={type}>
+													{type}
+												</option>
+											))}
+										</select>
+									</label>
+
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>
+											Значение ID
+										</span>
+										<input
+											className='warehouse-input'
+											type='text'
+											name='identifier_value'
+											value={formData.identifier_value}
+											onChange={handleChange}
+											placeholder='IMEI / MAC / SERIAL'
+										/>
+									</label>
+
+									<label className='warehouse-field'>
+										<span className='warehouse-label'>Количество</span>
+										<input
+											className='warehouse-input warehouse-disabled-input'
+											type='number'
+											value='1'
+											disabled
+										/>
+									</label>
+								</div>
+							) : (
+								<div className='warehouse-form-grid warehouse-inner-grid'>
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>Количество</span>
+										<input
+											className='warehouse-input'
+											type='number'
+											name='quantity'
+											value={formData.quantity}
+											onChange={handleChange}
+											min='1'
+										/>
+									</label>
+								</div>
+							)}
+
+							{isEditMode && (
+								<div className='warehouse-form-grid warehouse-inner-grid'>
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>Статус</span>
+										<select
+											className='warehouse-input'
+											name='status'
+											value={formData.status}
+											onChange={handleChange}
+										>
+											{Object.entries(STATUSES).map(([key, label]) => (
+												<option key={key} value={key}>
+													{label}
+												</option>
+											))}
+										</select>
+									</label>
+								</div>
+							)}
+						</div>
+
+						<div className='warehouse-form-card'>
+							<div className='warehouse-form-section-title'>Примечание</div>
+
+							<label className='warehouse-field'>
+								<textarea
+									className='warehouse-textarea'
+									name='note'
+									rows='3'
+									value={formData.note}
+									onChange={handleChange}
+									placeholder='Дополнительная информация...'
+								/>
+							</label>
+						</div>
+					</form>
+				</div>
+
+				<div className='modal-footer warehouse-modal-footer'>
+					<button className='modal-cancel-btn' type='button' onClick={onClose}>
+						Отмена
+					</button>
+
+					<button
+						className='warehouse-submit-btn'
+						type='submit'
+						form='warehouse-form'
+						disabled={loading}
+					>
+						{loading
+							? 'Сохранение...'
+							: isEditMode
+								? 'Сохранить изменения'
+								: 'Добавить на склад'}
+					</button>
+				</div>
+			</div>
+		</div>
+	)
 }
