@@ -30,7 +30,7 @@ class CommentCreate(BaseModel):
     message: str
 
 class AssignRequest(BaseModel):
-    technician_id: int
+    technician_id: int | None = None
 
 class ClientCreate(BaseModel):
     type: str
