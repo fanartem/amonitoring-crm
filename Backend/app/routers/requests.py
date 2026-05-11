@@ -574,18 +574,14 @@ def restore_request(request_id: int, current_user: dict = Depends(get_current_us
 
 @router.post("/{request_id}/assign")
 def assign_request(request_id: int, data: AssignRequest, current_user: dict = Depends(get_current_user)):
-    # ПРОЛЕЖА 2: Только Админ и Старший монтажник могут назначать
+    # Только Админ и Старший монтажник могут назначать/снимать монтажника
     if current_user["role"] not in ["ADMIN", "SENIOR_TECHNICIAN"]:
         raise HTTPException(status_code=403, detail="Только Старший монтажник или Админ могут назначать заявки")
     
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT role FROM users WHERE id = %s", (data.technician_id,))
-            tech = cursor.fetchone()
-            if not tech or tech["role"] != "TECHNICIAN":
-                raise HTTPException(status_code=400, detail="Назначить можно только обычного монтажника (TECHNICIAN)")
-
+            # Проверяем заявку
             cursor.execute(
                 """
                 SELECT status, assigned_to
@@ -596,18 +592,115 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
             )
             req = cursor.fetchone()
 
+            if not req:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            # Снимать монтажника можно только с активной заявки
+            if req["status"] not in ["NEW", "IN_PROGRESS"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Изменять назначение можно только у новой заявки или заявки в работе"
+                )
+
+            old_assigned_to = req["assigned_to"]
+
+            # Если technician_id == None — снимаем назначенного монтажника
+            if data.technician_id is None:
+                cursor.execute(
+                    """
+                    UPDATE requests
+                    SET assigned_to = NULL
+                    WHERE id = %s
+                    """,
+                    (request_id,)
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO request_history 
+                    (request_id, user_id, action, old_value, new_value)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        request_id,
+                        current_user["id"],
+                        "UNASSIGNED",
+                        f"assigned_to={old_assigned_to}",
+                        "assigned_to=NULL"
+                    )
+                )
+
+                connection.commit()
+
+                return {
+                    "message": "Technician unassigned",
+                    "request_id": request_id
+                }
+
+            # Если technician_id НЕ None — назначаем монтажника
             cursor.execute(
-                "UPDATE requests SET assigned_to = %s, status = 'IN_PROGRESS' WHERE id = %s",
+                """
+                SELECT role
+                FROM users
+                WHERE id = %s
+                """,
+                (data.technician_id,)
+            )
+            tech = cursor.fetchone()
+
+            if not tech or tech["role"] != "TECHNICIAN":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Назначить можно только обычного монтажника (TECHNICIAN)"
+                )
+
+            # Назначать нового монтажника можно только на NEW
+            # или можно переназначать в IN_PROGRESS — если вам это нужно
+            if req["status"] not in ["NEW", "IN_PROGRESS"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Назначить монтажника можно только на новую заявку или заявку в работе"
+                )
+
+            cursor.execute(
+                """
+                UPDATE requests
+                SET assigned_to = %s,
+                    status = 'IN_PROGRESS'
+                WHERE id = %s
+                """,
                 (data.technician_id, request_id)
             )
 
             cursor.execute(
-                "INSERT INTO request_history (request_id, user_id, action, old_value, new_value) VALUES (%s, %s, %s, %s, %s)",
-                (request_id, current_user["id"], "ASSIGNED", f"assigned_to={req['assigned_to']}", f"assigned_to={data.technician_id}")
+                """
+                INSERT INTO request_history 
+                (request_id, user_id, action, old_value, new_value)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "ASSIGNED",
+                    f"assigned_to={old_assigned_to}",
+                    f"assigned_to={data.technician_id}"
+                )
             )
             
             connection.commit()
-            return {"message": "Technician assigned"}
+
+            return {
+                "message": "Technician assigned",
+                "request_id": request_id,
+                "technician_id": data.technician_id
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
 
