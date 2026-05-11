@@ -277,16 +277,39 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            # Получаем только заявки конкретного клиента
             sql = """
-            SELECT r.id, r.created_at, r.status, v.brand, v.model, r.city
+            SELECT 
+                r.id,
+                r.client_id,
+                r.vehicle_id,
+                r.work_type,
+                r.visit_type,
+                r.address,
+                r.city,
+                r.scheduled_at,
+                r.status,
+                r.created_at,
+                r.assigned_to,
+                r.is_paid,
+                r.paid_at,
+
+                v.brand,
+                v.model,
+                v.plate_number,
+                v.vin,
+                v.year,
+                v.type AS vehicle_type,
+
+                i.has_beacon,
+                i.has_blocking
             FROM requests r
             LEFT JOIN vehicles v ON r.vehicle_id = v.id
+            LEFT JOIN installation_details i ON r.id = i.request_id
             WHERE r.client_id = %s
+              AND r.is_deleted = 0
             ORDER BY r.created_at DESC
             """
             cursor.execute(sql, (client_id,))
             return cursor.fetchall()
     finally:
         connection.close()
-
