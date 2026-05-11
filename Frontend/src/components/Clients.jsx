@@ -88,6 +88,39 @@ export default function Clients() {
     return tech ? tech.name : `ID: ${techId}`;
   };
 
+	const clientTypeLabels = {
+		TOO: 'ТОО',
+		IP: 'ИП',
+		INDIVIDUAL: 'Физ. лицо',
+	}
+
+	const getClientTypeLabel = type => {
+		return clientTypeLabels[type] || type || '—'
+	}
+
+	const getClientDisplayName = client => {
+		const clientType = client.client_type || client.type
+
+		if (clientType === 'TOO' || clientType === 'IP') {
+			return client.company_name || client.client_name || client.name || '—'
+		}
+
+		return client.client_name || client.name || client.company_name || '—'
+	}
+
+	const getClientSubtitle = client => {
+		const clientType = client.client_type || client.type
+
+		if (
+			(clientType === 'TOO' || clientType === 'IP') &&
+			(client.client_name || client.name)
+		) {
+			return `${getClientTypeLabel(clientType)} · представитель: ${client.client_name || client.name}`
+		}
+
+		return getClientTypeLabel(clientType)
+	}
+
   const handleClientClick = async (client) => {
     setSelectedClient(client);
     setClientVehicles([]); 
@@ -300,7 +333,7 @@ export default function Clients() {
 															}}
 															onClick={e => handleEditClientClick(e, client)}
 														>
-															✎ Редактировать
+															Редактировать
 														</div>
 														<div
 															className='dropdown-item'
@@ -318,7 +351,7 @@ export default function Clients() {
 																)
 															}
 														>
-															🗑 Удалить
+															Удалить
 														</div>
 													</div>
 												)}
@@ -327,7 +360,7 @@ export default function Clients() {
 									</div>
 
 									<div className='client-card-type'>
-										{client.type}{' '}
+										{getClientTypeLabel(client.type)}
 										{client.company_name ? ` · ${client.name}` : ''}
 									</div>
 									<div className='client-card-info'>
@@ -409,7 +442,9 @@ export default function Clients() {
 						</div>
 						<div className='info-row'>
 							<span className='info-key'>Тип лица</span>
-							<span className='info-val'>{selectedClient.type}</span>
+							<span className='info-val'>
+								{getClientTypeLabel(selectedClient.type)}
+							</span>
 						</div>
 						<div className='info-row'>
 							<span className='info-key'>Телефон</span>
@@ -507,12 +542,7 @@ export default function Clients() {
 								style={{ position: 'relative', cursor: 'default' }}
 							>
 								<div className='card-column'>
-									<div className='card-item'>
-										<span className='card-label'>Клиент</span>
-										<span className='card-value'>
-											{req.client_name || selectedClient.name}
-										</span>
-									</div>
+									
 									<div className='card-item'>
 										<span className='card-label'>Статус</span>
 										<div
@@ -561,7 +591,7 @@ export default function Clients() {
 										<span className='card-label'>Оборудование</span>
 										<span className='card-value' style={{ fontSize: '13px' }}>
 											{req.work_type === 'INSTALLATION' ? (
-												`${req.has_blocking ? 'Блок.' : 'Без блок.'} • ${req.has_beacon ? 'Маяк' : 'Без маяка'}`
+												`${req.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${req.has_beacon ? 'Маяк' : 'Без маяка'}`
 											) : (
 												<span style={{ color: '#aaa' }}>—</span>
 											)}
