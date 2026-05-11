@@ -50,11 +50,34 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
         with connection.cursor() as cursor:
             base_sql = """
             SELECT 
-                r.id, r.client_id, r.vehicle_id, r.work_type, r.visit_type, r.city, r.status, 
-                r.created_at, r.assigned_to, r.is_paid, r.paid_at,
-                c.name AS client_name, c.phone,
-                v.brand, v.model, v.plate_number,
-                i.has_beacon, i.has_blocking
+                r.id,
+                r.client_id,
+                r.vehicle_id,
+                r.work_type,
+                r.visit_type,
+                r.address,
+                r.city,
+                r.scheduled_at,
+                r.status,
+                r.created_at,
+                r.assigned_to,
+                r.is_paid,
+                r.paid_at,
+
+                c.name AS client_name,
+                c.company_name,
+                c.phone,
+                c.type AS client_type,
+
+                v.brand,
+                v.model,
+                v.plate_number,
+                v.vin,
+                v.year,
+                v.type AS vehicle_type,
+
+                i.has_beacon,
+                i.has_blocking
             FROM requests r
             LEFT JOIN clients c ON r.client_id = c.id
             LEFT JOIN vehicles v ON r.vehicle_id = v.id
@@ -595,11 +618,35 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
     try:
         with connection.cursor() as cursor:
             sql_request = """
-            SELECT r.id, r.client_id, r.vehicle_id, r.work_type, r.visit_type, r.city, 
-                r.status, r.created_at, r.assigned_to, r.is_paid, r.paid_at,
-                c.name AS client_name, c.phone, 
-                v.brand, v.model, v.plate_number, 
-                i.has_beacon, i.has_blocking
+            SELECT 
+                r.id,
+                r.client_id,
+                r.vehicle_id,
+                r.work_type,
+                r.visit_type,
+                r.address,
+                r.city,
+                r.scheduled_at,
+                r.status,
+                r.created_at,
+                r.assigned_to,
+                r.is_paid,
+                r.paid_at,
+
+                c.name AS client_name,
+                c.company_name,
+                c.phone,
+                c.type AS client_type,
+
+                v.brand,
+                v.model,
+                v.plate_number,
+                v.vin,
+                v.year,
+                v.type AS vehicle_type,
+
+                i.has_beacon,
+                i.has_blocking
             FROM requests r
             LEFT JOIN clients c ON r.client_id = c.id
             LEFT JOIN vehicles v ON r.vehicle_id = v.id
