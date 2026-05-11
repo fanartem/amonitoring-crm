@@ -1,29 +1,57 @@
 import React, { useState, useEffect } from 'react';
 
+// Умные мапперы (теперь понимают любой регистр)
+const mapTypeToUI = (dbType) => {
+  if (!dbType) return 'Физ. лицо';
+  const t = String(dbType).toUpperCase();
+  if (t === 'TOO' || t === 'ТОО') return 'ТОО';
+  if (t === 'IP' || t === 'ИП') return 'ИП';
+  return 'Физ. лицо';
+};
+
+const mapTypeToDB = (uiType) => {
+  if (uiType === 'ТОО') return 'TOO';
+  if (uiType === 'ИП') return 'IP';
+  return 'INDIVIDUAL';
+};
+
 export default function CreateRequestModal({ isOpen, onClose, onCreated, editRequestData }) {
   const [clientKind, setClientKind] = useState('new');
   const [clientsList, setClientsList] = useState([]);
   const [clientVehicles, setClientVehicles] = useState([]); 
-  const [technicians, setTechnicians] = useState([]);
-  const [selectedTech, setSelectedTech] = useState('');
 
   const isEditMode = !!editRequestData; 
 
   const [formData, setFormData] = useState({
-    client_id: '', client_type: 'ТОО', client_name: '', phone: '', city: '', company_name: '',
-    work_type: 'Установка', work_format: 'Выезд к клиенту', work_address: '', work_date: '',
-    car_type: 'Легковое', car_brand: '', car_model: '', car_vin: '', car_plate: '', car_year: '',
-    blocking: 'С блокировкой', beacon: 'С маяком', sensors: '',
-    monitoring_email: '', monitoring_password: '', manager_comment: ''
+    client_id: '', 
+    client_type: 'Физ. лицо', 
+    client_name: '', 
+    phone: '', 
+    city: '', 
+    company_name: '',
+    work_type: 'Установка', 
+    work_format: 'Выезд к клиенту', 
+    work_address: '', 
+    work_date: '',
+    car_id: '',
+    car_type: 'Легковая', 
+    car_brand: '', 
+    car_model: '', 
+    car_vin: '', 
+    car_plate: '', 
+    car_year: '',
+    blocking: 'С блокировкой', 
+    beacon: 'С маяком', 
+    manager_comment: ''
   });
 
   const [error, setError] = useState('');
+  const [missingFields, setMissingFields] = useState([]); 
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       fetchClients();
-      
       if (isEditMode) {
         setClientKind('existing');
         setFormData({
@@ -34,6 +62,7 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
           city: editRequestData.city || '',
           work_type: editRequestData.work_type === 'INSTALLATION' ? 'Установка' : editRequestData.work_type === 'REMOVAL' ? 'Снятие' : 'Диагностика',
           work_format: editRequestData.visit_type === 'ON_SITE' ? 'Выезд к клиенту' : 'В офисе',
+          work_address: editRequestData.address || '',
           car_brand: editRequestData.brand || '',
           car_model: editRequestData.model || '',
           car_plate: editRequestData.plate_number || '',
@@ -65,28 +94,64 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
 
   if (!isOpen) return null;
 
-  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
+    if (missingFields.includes(name)) {
+      setMissingFields(missingFields.filter(f => f !== name));
+    }
+  };
 
   const handleExistingClientSelect = (e) => {
     const selectedId = e.target.value;
     const client = clientsList.find(c => c.id === Number(selectedId));
     if (client) {
-      setFormData({ ...formData, client_id: client.id, client_type: client.type || 'Физ. лицо', client_name: client.name || '', phone: client.phone || '', company_name: client.company_name || client.company || '' });
+      setFormData({ 
+        ...formData, 
+        client_id: client.id, 
+        client_type: mapTypeToUI(client.type || client.client_type), 
+        client_name: client.name || '', 
+        phone: client.phone || '', 
+        company_name: client.company_name || '',
+        car_id: '', car_brand: '', car_model: '', car_plate: '', car_vin: '', car_year: '', car_type: 'Легковая'
+      });
       fetchClientVehicles(client.id);
+      setMissingFields(missingFields.filter(f => !['client_name', 'phone'].includes(f)));
     } else {
-      setFormData({ ...formData, client_id: '', client_name: '', phone: '', company_name: '' });
+      setFormData({ ...formData, client_id: '', client_type: 'Физ. лицо', client_name: '', phone: '', company_name: '' });
       setClientVehicles([]);
     }
   };
 
+  const handleExistingVehicleSelect = (e) => {
+    const selectedId = e.target.value;
+    if (!selectedId) {
+      setFormData({ ...formData, car_id: '', car_brand: '', car_model: '', car_plate: '', car_vin: '', car_year: '', car_type: 'Легковая' });
+      return;
+    }
+    const vehicle = clientVehicles.find(v => v.id === Number(selectedId));
+    if (vehicle) {
+      setFormData({ 
+        ...formData, 
+        car_id: vehicle.id,
+        car_type: vehicle.type || 'Легковая',
+        car_brand: vehicle.brand || '',
+        car_model: vehicle.model || '',
+        car_plate: vehicle.plate_number || '',
+        car_vin: vehicle.vin || '',
+        car_year: vehicle.year || ''
+      });
+      setMissingFields(missingFields.filter(f => !['car_brand', 'car_model'].includes(f)));
+    }
+  };
+
   const handleClose = () => {
-    setClientKind('new'); setError(''); setClientVehicles([]);
+    setClientKind('new'); setError(''); setMissingFields([]); setClientVehicles([]);
     setFormData({
-      client_id: '', client_type: 'ТОО', client_name: '', phone: '', city: '', company_name: '',
+      client_id: '', client_type: 'Физ. лицо', client_name: '', phone: '', city: '', company_name: '',
       work_type: 'Установка', work_format: 'Выезд к клиенту', work_address: '', work_date: '',
-      car_type: 'Легковое', car_brand: '', car_model: '', car_vin: '', car_plate: '', car_year: '',
-      blocking: 'С блокировкой', beacon: 'С маяком', sensors: '',
-      monitoring_email: '', monitoring_password: '', manager_comment: ''
+      car_id: '', car_type: 'Легковая', car_brand: '', car_model: '', car_vin: '', car_plate: '', car_year: '',
+      blocking: 'С блокировкой', beacon: 'С маяком', manager_comment: ''
     });
     onClose();
   };
@@ -94,9 +159,28 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    
+    const required = [];
+    if (!formData.client_name) required.push('client_name');
+    if (!formData.phone) required.push('phone');
+    if (!formData.city) required.push('city');
+    
+    if (clientKind === 'new' && (formData.client_type === 'ТОО' || formData.client_type === 'ИП') && !formData.company_name) {
+      required.push('company_name');
+    }
 
-    if (!formData.client_name || !formData.phone || (!isEditMode && (!formData.work_date || !formData.car_brand || !formData.car_model))) {
-      setError('Заполните обязательные поля (имя, телефон, дата, марка, модель)');
+    if (!isEditMode) {
+      if (!formData.work_date) required.push('work_date');
+      if (!formData.car_brand) required.push('car_brand');
+      if (!formData.car_model) required.push('car_model');
+      if (formData.work_format === 'Выезд к клиенту' && !formData.work_address) {
+        required.push('work_address');
+      }
+    }
+
+    if (required.length > 0) {
+      setMissingFields(required);
+      setError('Пожалуйста, заполните все обязательные поля.');
       return;
     }
 
@@ -105,7 +189,6 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
       const token = localStorage.getItem('access_token');
       const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
 
-      // === РЕЖИМ РЕДАКТИРОВАНИЯ ===
       if (isEditMode) {
         const updateRes = await fetch(`http://127.0.0.1:8000/requests/${editRequestData.id}`, {
           method: 'PATCH', headers,
@@ -116,43 +199,52 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
           })
         });
         
-        if (!updateRes.ok) {
-          const errText = await updateRes.text();
-          throw new Error(`Ошибка редактирования (Бэкенд): ${errText}`);
-        }
+        if (!updateRes.ok) throw new Error(`Ошибка редактирования: ${await updateRes.text()}`);
         onCreated(); handleClose();
         return;
       }
 
-      // === РЕЖИМ СОЗДАНИЯ ===
       let finalClientId = formData.client_id ? parseInt(formData.client_id, 10) : null;
 
-      // 1. Клиент
       if (clientKind === 'new') {
-        const clientRes = await fetch('http://127.0.0.1:8000/clients/', {
-          method: 'POST', headers, body: JSON.stringify({ type: 'INDIVIDUAL', name: formData.client_name, company_name: formData.company_name || null, phone: formData.phone, email: null })
+        const clientRes = await fetch('http://127.0.0.1:8000/clients', {
+          method: 'POST', headers, body: JSON.stringify({ 
+            type: mapTypeToDB(formData.client_type), 
+            name: formData.client_name, 
+            company_name: (formData.client_type === 'Физ. лицо') ? null : formData.company_name, 
+            phone: formData.phone
+          })
         });
         if (!clientRes.ok) throw new Error(`Ошибка Клиента: ${await clientRes.text()}`);
         const clientData = await clientRes.json();
         finalClientId = parseInt(clientData.id || clientData.client_id, 10);
       }
 
-      // 2. Автомобиль
-      const vehicleRes = await fetch('http://127.0.0.1:8000/vehicles', {
-        method: 'POST', headers, body: JSON.stringify({
-          client_id: finalClientId, brand: formData.car_brand, model: formData.car_model, plate_number: formData.car_plate || "Нет", vin: formData.car_vin || null, year: formData.car_year ? parseInt(formData.car_year, 10) : null, type: formData.car_type
-        })
-      });
-      if (!vehicleRes.ok) throw new Error(`Ошибка Автомобиля: ${await vehicleRes.text()}`);
-      const vehicleData = await vehicleRes.json();
-      const finalVehicleId = parseInt(vehicleData.id || vehicleData.vehicle_id, 10);
+      let finalVehicleId = formData.car_id ? parseInt(formData.car_id, 10) : null;
+      
+      if (!finalVehicleId) {
+        const vehicleRes = await fetch('http://127.0.0.1:8000/vehicles', {
+          method: 'POST', headers, body: JSON.stringify({
+            client_id: finalClientId, 
+            type: formData.car_type, 
+            brand: formData.car_brand, 
+            model: formData.car_model, 
+            plate_number: formData.car_plate || "Нет", 
+            vin: formData.car_vin || null, 
+            year: formData.car_year ? parseInt(formData.car_year, 10) : null
+          })
+        });
+        if (!vehicleRes.ok) throw new Error(`Ошибка Автомобиля: ${await vehicleRes.text()}`);
+        const vehicleData = await vehicleRes.json();
+        finalVehicleId = parseInt(vehicleData.id || vehicleData.vehicle_id, 10);
+      }
 
-      // 3. Заявка
       const requestRes = await fetch('http://127.0.0.1:8000/requests', {
         method: 'POST', headers, body: JSON.stringify({
           client_id: finalClientId, vehicle_id: finalVehicleId,
           work_type: formData.work_type === 'Установка' ? 'INSTALLATION' : formData.work_type === 'Снятие' ? 'REMOVAL' : 'DIAGNOSTIC',
           visit_type: formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
+          address: formData.work_format === 'Выезд к клиенту' ? formData.work_address : null,
           city: formData.city, 
           installation: { has_beacon: formData.beacon === 'С маяком', has_blocking: formData.blocking === 'С блокировкой' }
         })
@@ -160,7 +252,6 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
       if (!requestRes.ok) throw new Error(`Ошибка Заявки: ${await requestRes.text()}`);
       const requestData = await requestRes.json();
 
-      // 4. Отправка комментария (Убрана блокировка, уходит всегда, если есть текст)
       if (formData.manager_comment) {
         const commentRes = await fetch('http://127.0.0.1:8000/requests/comments', {
           method: 'POST', headers, body: JSON.stringify({ request_id: requestData.request_id, message: formData.manager_comment })
@@ -170,7 +261,6 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
 
       onCreated(); handleClose();   
     } catch (err) { 
-      // ТЕПЕРЬ ВСЕ ОШИБКИ БУДУТ ВЫВОДИТЬСЯ ЧЕТКО НА ЭКРАН!
       setError(err.message); 
     } finally { 
       setLoading(false); 
@@ -178,6 +268,10 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
   };
 
   const isExisting = clientKind === 'existing';
+
+  const getErrorStyle = (fieldName) => {
+    return missingFields.includes(fieldName) ? { borderColor: '#c62828', backgroundColor: '#ffebee' } : {};
+  };
 
   return (
     <div className="modal-overlay open">
@@ -187,7 +281,6 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
           <button className="modal-close" onClick={handleClose}>&times;</button>
         </div>
         
-        {/* КРАСНЫЙ БАННЕР С ОШИБКОЙ */}
         {error && <div className="validation-banner visible" style={{ background: '#ffebee', color: '#c62828', padding: '15px', borderBottom: '1px solid #ef9a9a', whiteSpace: 'pre-wrap' }}>{error}</div>}
         
         <div className="modal-body" style={{ background: '#f7f7f7', padding: '20px' }}>
@@ -214,39 +307,55 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
               )}
 
               <div className="form-row align-center">
-                <span className="field-label req-mark">ФИО:</span>
-                <input className="form-input" type="text" name="client_name" value={formData.client_name} onChange={handleChange} readOnly={isExisting || isEditMode} />
+                <span className="field-label req-mark">Тип лица:</span>
+                <select 
+                  className="form-input" 
+                  name="client_type" 
+                  value={formData.client_type} 
+                  onChange={handleChange} 
+                  disabled={isExisting || isEditMode}
+                >
+                  <option>Физ. лицо</option>
+                  <option>ИП</option>
+                  <option>ТОО</option>
+                </select>
               </div>
+
+              {(formData.client_type === 'ТОО' || formData.client_type === 'ИП') && (
+                <div className="form-row align-center">
+                  <span className="field-label req-mark">Наименование:</span>
+                  <input className="form-input" style={getErrorStyle('company_name')} type="text" name="company_name" value={formData.company_name} onChange={handleChange} readOnly={isExisting || isEditMode} />
+                </div>
+              )}
+
+              <div className="form-row align-center">
+                <span className="field-label req-mark">ФИО:</span>
+                <input className="form-input" style={getErrorStyle('client_name')} type="text" name="client_name" value={formData.client_name} onChange={handleChange} readOnly={isExisting || isEditMode} />
+              </div>
+              
               <div className="form-row align-center">
                 <span className="field-label req-mark">Контактный номер:</span>
-                <input className="form-input" type="tel" name="phone" value={formData.phone} onChange={handleChange} readOnly={isExisting || isEditMode} />
+                <input className="form-input" style={getErrorStyle('phone')} type="tel" name="phone" value={formData.phone} onChange={handleChange} readOnly={isExisting || isEditMode} />
               </div>
             </div>
 
             {/* 2. Организация работ */}
             <div className="form-section">
               <h3 className="form-section-title">2. Организация работ</h3>
-              
-             <div className="form-row align-center">
-            <span className="field-label req-mark">Город:</span>
-            
-            <select 
-              className="form-input" 
-              name="city" 
-              value={formData.city} 
-              onChange={handleChange} 
-            >
-              <option value="">— город —</option>
-              <option>Алматы</option>
-              <option>Астана</option>
-              <option>Шымкент</option>
-              <option>Караганда</option>
-            </select>
-          </div>
-
+              <div className="form-row align-center">
+                <span className="field-label req-mark">Город:</span>
+                <select className="form-input" style={getErrorStyle('city')} name="city" value={formData.city} onChange={handleChange}>
+                  <option value="">— выберите город —</option>
+                  <option>Алматы</option>
+                  <option>Астана</option>
+                  <option>Шымкент</option>
+                  <option>Караганда</option>
+                </select>
+              </div>
               <div className="form-row align-center">
                 <span className="field-label req-mark">Форма работы</span>
                 <label className="radio-label"><input type="radio" name="work_type" value="Установка" checked={formData.work_type === 'Установка'} onChange={handleChange} disabled={isEditMode}/> Установка</label>
+                <label className="radio-label"><input type="radio" name="work_type" value="Снятие" checked={formData.work_type === 'Снятие'} onChange={handleChange} disabled={isEditMode}/> Снятие</label>
                 <label className="radio-label"><input type="radio" name="work_type" value="Диагностика" checked={formData.work_type === 'Диагностика'} onChange={handleChange} disabled={isEditMode}/> Диагностика</label>
               </div>
               <div className="form-row align-center">
@@ -254,10 +363,16 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
                 <label className="radio-label"><input type="radio" name="work_format" value="Выезд к клиенту" checked={formData.work_format === 'Выезд к клиенту'} onChange={handleChange} disabled={isEditMode}/> Выезд к клиенту</label>
                 <label className="radio-label"><input type="radio" name="work_format" value="В офисе" checked={formData.work_format === 'В офисе'} onChange={handleChange} disabled={isEditMode}/> В офисе</label>
               </div>
+              {formData.work_format === 'Выезд к клиенту' && (
+                <div className="form-row align-center">
+                  <span className="field-label req-mark">Адрес выезда:</span>
+                  <input className="form-input" style={{ width: '100%', ...getErrorStyle('work_address') }} type="text" name="work_address" value={formData.work_address} onChange={handleChange} placeholder="Укажите точный адрес..." readOnly={isEditMode}/>
+                </div>
+              )}
               {!isEditMode && (
                 <div className="form-row align-center">
                   <span className="field-label req-mark">Дата выполнения:</span>
-                  <input className="form-input short" type="date" name="work_date" value={formData.work_date} onChange={handleChange} />
+                  <input className="form-input short" style={getErrorStyle('work_date')} type="date" name="work_date" value={formData.work_date} onChange={handleChange} />
                 </div>
               )}
             </div>
@@ -266,47 +381,65 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
             <div className="form-section">
               <h3 className="form-section-title">3. Данные транспорта</h3>
               
-              <div className="form-row align-center">
-                <span className="field-label req-mark">Марка:</span>
-                <input className="form-input" type="text" name="car_brand" value={formData.car_brand} onChange={handleChange} readOnly={isEditMode}/>
-              </div>
-              <div className="form-row align-center">
-                <span className="field-label req-mark">Модель:</span>
-                <input className="form-input" type="text" name="car_model" value={formData.car_model} onChange={handleChange} readOnly={isEditMode}/>
-              </div>
-              
-              {/* Кнопка Диагностики */}
               {isExisting && clientVehicles.length > 0 && !isEditMode && (
-                <div className="form-row" style={{ marginTop: '10px' }}>
-                  <button type="button" className="btn-green" onClick={() => alert('Открытие списка сохраненных авто...')} style={{background: '#f0f4c3', color: '#558b2f', border: '1px solid #cddc39', width: '100%', padding: '10px'}}>
-                    🔍 Найдено авто: {clientVehicles.length}. Начать диагностику
-                  </button>
+                <div className="form-row align-center" style={{ marginBottom: '15px', background: '#f1f8e9', padding: '10px', borderRadius: '6px', border: '1px solid #c8e6c9' }}>
+                  <span className="field-label" style={{ color: '#2e7d32', fontWeight: 'bold' }}>Выберите авто:</span>
+                  <select className="form-input" style={{ borderColor: '#8bc34a' }} onChange={handleExistingVehicleSelect} value={formData.car_id}>
+                    <option value="">— Новая машина —</option>
+                    {clientVehicles.map(v => (
+                      <option key={v.id} value={v.id}>{v.brand} {v.model} ({v.plate_number || 'б/н'})</option>
+                    ))}
+                  </select>
                 </div>
               )}
 
               <div className="form-row align-center">
+                <span className="field-label req-mark">Тип техники:</span>
+                <select className="form-input" name="car_type" value={formData.car_type} onChange={handleChange} disabled={isEditMode || formData.car_id !== ''}>
+                  <option>Легковая</option>
+                  <option>Спецтехника</option>
+                </select>
+              </div>
+
+              <div className="form-row align-center">
+                <span className="field-label req-mark">Марка:</span>
+                <input className="form-input" style={getErrorStyle('car_brand')} type="text" name="car_brand" value={formData.car_brand} onChange={handleChange} readOnly={isEditMode || formData.car_id !== ''}/>
+              </div>
+              <div className="form-row align-center">
+                <span className="field-label req-mark">Модель:</span>
+                <input className="form-input" style={getErrorStyle('car_model')} type="text" name="car_model" value={formData.car_model} onChange={handleChange} readOnly={isEditMode || formData.car_id !== ''}/>
+              </div>
+              <div className="form-row align-center">
+                <span className="field-label">Год выпуска:</span>
+                <input className="form-input" type="number" name="car_year" value={formData.car_year} onChange={handleChange} readOnly={isEditMode || formData.car_id !== ''} placeholder="Например: 2020"/>
+              </div>
+              <div className="form-row align-center">
+                <span className="field-label">VIN-код:</span>
+                <input className="form-input" type="text" name="car_vin" value={formData.car_vin} onChange={handleChange} readOnly={isEditMode || formData.car_id !== ''} placeholder="17 символов" maxLength="17"/>
+              </div>
+              <div className="form-row align-center">
                 <span className="field-label">Гос. номер:</span>
-                <input className="form-input" type="text" name="car_plate" value={formData.car_plate} onChange={handleChange} readOnly={isEditMode}/>
+                <input className="form-input" type="text" name="car_plate" value={formData.car_plate} onChange={handleChange} readOnly={isEditMode || formData.car_id !== ''}/>
               </div>
             </div>
 
-            {/* 4. Установка */}
-            <div className="form-section">
-              <h3 className="form-section-title">4. Параметры установки</h3>
-              <div className="form-row align-center">
-                <label className="radio-label"><input type="radio" name="blocking" value="С блокировкой" checked={formData.blocking === 'С блокировкой'} onChange={handleChange} /> С блокировкой</label>
-                <label className="radio-label"><input type="radio" name="blocking" value="Без блокировки" checked={formData.blocking === 'Без блокировки'} onChange={handleChange} /> Без блокировки</label>
+            {formData.work_type === 'Установка' && (
+              <div className="form-section">
+                <h3 className="form-section-title">4. Параметры установки</h3>
+                <div className="form-row align-center">
+                  <label className="radio-label"><input type="radio" name="blocking" value="С блокировкой" checked={formData.blocking === 'С блокировкой'} onChange={handleChange} /> С блокировкой</label>
+                  <label className="radio-label"><input type="radio" name="blocking" value="Без блокировки" checked={formData.blocking === 'Без блокировки'} onChange={handleChange} /> Без блокировки</label>
+                </div>
+                <div className="form-row align-center">
+                  <label className="radio-label"><input type="radio" name="beacon" value="С маяком" checked={formData.beacon === 'С маяком'} onChange={handleChange} /> С маяком</label>
+                  <label className="radio-label"><input type="radio" name="beacon" value="Без маяка" checked={formData.beacon === 'Без маяка'} onChange={handleChange} /> Без маяка</label>
+                </div>
               </div>
-              <div className="form-row align-center">
-                <label className="radio-label"><input type="radio" name="beacon" value="С маяком" checked={formData.beacon === 'С маяком'} onChange={handleChange} /> С маяком</label>
-                <label className="radio-label"><input type="radio" name="beacon" value="Без маяка" checked={formData.beacon === 'Без маяка'} onChange={handleChange} /> Без маяка</label>
-              </div>
-            </div>
+            )}
 
-            {/* 5. Комментарии (ПОЛНОСТЬЮ РАЗБЛОКИРОВАНЫ) */}
             {!isEditMode && (
               <div className="form-section">
-                <h3 className="form-section-title">5. Комментарии от менеджера</h3>
+                <h3 className="form-section-title">{formData.work_type === 'Установка' ? '5.' : '4.'} Комментарии от менеджера</h3>
                 <textarea 
                   className="form-textarea full-width" 
                   name="manager_comment" rows="3" placeholder="Оставьте комментарий к заявке..." 

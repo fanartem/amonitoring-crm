@@ -5,6 +5,7 @@ export default function Sidebar() {
   const userDataStr = localStorage.getItem('user_data');
   const user = userDataStr ? JSON.parse(userDataStr) : null;
   const isAdmin = user?.role?.toUpperCase() === 'ADMIN';
+  const isManager = user?.role?.toUpperCase() === 'MANAGER';
 
   const handleLogout = () => {
     localStorage.removeItem('access_token');
@@ -51,6 +52,16 @@ export default function Sidebar() {
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 					>
 						Одобрение
+					</NavLink>
+				)}
+
+                {/* НОВОЕ: Корзина для Админов и Менеджеров */}
+                {(isAdmin || isManager) && (
+					<NavLink
+						to='/trash'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					>
+						🗑 Корзина
 					</NavLink>
 				)}
 			</div>

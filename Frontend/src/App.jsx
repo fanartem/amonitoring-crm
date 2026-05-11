@@ -10,6 +10,7 @@ import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import Requests from './components/Requests'; // <-- Подключили нашу новую таблицу заявок!
 import Employees from './components/Employees';
+import Trash from './components/Trash';
 
 
 
@@ -40,6 +41,8 @@ export default function App() {
       {/* Шапка */}
       <Header />
 
+      
+
       <div className="body-row">
         {/* Боковое меню */}
         <Sidebar />
@@ -50,6 +53,7 @@ export default function App() {
             
             {/* РЕГИСТРАТОР ПУТЕЙ */}
             <Routes>
+              <Route path="/trash" element={<Trash />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/" element={<Home />} />
               <Route path="/clients" element={<Clients />} />

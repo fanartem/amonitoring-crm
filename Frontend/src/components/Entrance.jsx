@@ -187,13 +187,14 @@ export default function Entrance() {
             </div>
           </div>
 
-          <div className="login-field">
+       <div className="login-field">
             <label className="login-label">Роль <span style={{ color: '#e53e3e' }}>*</span></label>
             <select className="login-input" style={{ cursor: 'pointer' }} value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="">— выберите роль —</option>
               <option value="MANAGER">Менеджер</option>
-              <option value="SENIOR_TECHNICIAN">Старший техник</option>
-              <option value="TECHNICIAN">Техник</option>
+              <option value="ACCOUNTANT">Бухгалтер</option>
+              <option value="SENIOR_TECHNICIAN">Старший монтажник</option>
+              <option value="TECHNICIAN">Монтажник</option>
             </select>
           </div>
 
