@@ -73,3 +73,34 @@ class UserUpdate(BaseModel):
     email: Optional[str] = None
     password: Optional[str] = None
     role: Optional[str] = None
+
+class WarehouseItemCreate(BaseModel):
+    category: str
+    name: str
+    manufacturer: str | None = None
+    model: str | None = None
+
+    identifier_type: str = "NONE"
+    identifier_value: str | None = None
+    serial_number: str | None = None
+
+    is_serialized: bool = True
+    quantity: int = 1
+
+    note: str | None = None
+
+class WarehouseItemUpdate(BaseModel):
+    category: str | None = None
+    name: str | None = None
+    manufacturer: str | None = None
+    model: str | None = None
+
+    identifier_type: str | None = None
+    identifier_value: str | None = None
+    serial_number: str | None = None
+
+    is_serialized: bool | None = None
+    quantity: int | None = None
+
+    status: str | None = None
+    note: str | None = None

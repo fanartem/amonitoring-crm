@@ -14,7 +14,7 @@ def sync_db():
                         email VARCHAR(255) UNIQUE NOT NULL,
                         hashed_password VARCHAR(255) NOT NULL,
                         name VARCHAR(255) NOT NULL,
-                        role ENUM('ADMIN', 'MANAGER', 'TECHNICIAN', 'SENIOR_TECHNICIAN', 'ACCOUNTANT') NOT NULL,
+                        role ENUM('ADMIN', 'MANAGER', 'TECHNICIAN', 'SENIOR_TECHNICIAN', 'ACCOUNTANT', 'WAREHOUSE_MANAGER') NOT NULL,
                         is_approved BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
@@ -104,6 +104,39 @@ def sync_db():
                         FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE,
                         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
                     );
+                """,
+                "warehouse_items": """
+                    CREATE TABLE warehouse_items (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+
+                        category VARCHAR(50) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        manufacturer VARCHAR(255) NULL,
+                        model VARCHAR(255) NULL,
+
+                        identifier_type VARCHAR(50) DEFAULT 'NONE',
+                        identifier_value VARCHAR(255) NULL,
+                        serial_number VARCHAR(255) NULL,
+
+                        is_serialized TINYINT DEFAULT 1,
+                        quantity INT DEFAULT 1,
+
+                        status VARCHAR(50) DEFAULT 'IN_STOCK',
+
+                        note TEXT NULL,
+
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NULL,
+
+                        is_deleted TINYINT DEFAULT 0,
+                        deleted_at DATETIME NULL,
+                        deleted_by INT NULL,
+
+                        created_by INT NULL,
+
+                        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+                        FOREIGN KEY (deleted_by) REFERENCES users(id) ON DELETE SET NULL
+                    );
                 """
             }
 
@@ -111,6 +144,12 @@ def sync_db():
                 cursor.execute(f"DROP TABLE IF EXISTS {table_name};")
                 cursor.execute(create_sql)
                 print(f"✅ Таблица {table_name} синхронизирована")
+            
+            cursor.execute("""
+                CREATE UNIQUE INDEX uq_warehouse_identifier
+                ON warehouse_items(identifier_type, identifier_value)
+            """)
+            print("✅ Индекс uq_warehouse_identifier создан")
             
             cursor.execute("SET FOREIGN_KEY_CHECKS = 1;")
             connection.commit()
