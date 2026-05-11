@@ -11,6 +11,7 @@ import Sidebar from './components/Sidebar';
 import Requests from './components/Requests'; // <-- Подключили нашу новую таблицу заявок!
 import Employees from './components/Employees';
 import Trash from './components/Trash';
+import Warehouse from './components/Warehouse';
 
 
 
@@ -53,6 +54,7 @@ export default function App() {
             
             {/* РЕГИСТРАТОР ПУТЕЙ */}
             <Routes>
+              <Route path="/warehouse" element={<Warehouse />} />
               <Route path="/trash" element={<Trash />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/" element={<Home />} />

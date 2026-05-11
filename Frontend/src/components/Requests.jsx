@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import '../styles/Requests.css';
 import CreateRequestModal from './CreateRequestModal';
 import RequestDetailModal from './RequestDetailModal';
+import * as XLSX from 'xlsx';
 
 const getUserRole = () => {
   try {
@@ -150,10 +151,59 @@ export default function Requests() {
     setCreateModalOpen(true);
   };
 
-  const handleMenuDownload = (e, reqId) => {
+const handleMenuDownload = async (e, reqId) => {
     e.stopPropagation();
     setActiveDropdown(null);
-    alert(`Загрузка заявки №${reqId}...`);
+    
+    try {
+      const token = localStorage.getItem('access_token');
+      
+      // 1. Запрашиваем полные данные заявки (у нас уже есть этот эндпоинт!)
+      const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!res.ok) throw new Error('Не удалось загрузить данные заявки');
+      
+      const data = await res.json();
+      const req = data.request;
+
+      // 2. Формируем красивые данные для Excel
+      const excelData = [
+        { 'Параметр': 'Номер заявки', 'Значение': req.id },
+        { 'Параметр': 'Дата создания', 'Значение': formatDate(req.created_at) },
+        { 'Параметр': 'Статус', 'Значение': statusLabels[req.status] || req.status },
+        { 'Параметр': 'Город', 'Значение': req.city || '—' },
+        { 'Параметр': 'Адрес выезда', 'Значение': req.address || '—' },
+        { 'Параметр': 'Тип работ', 'Значение': req.work_type === 'INSTALLATION' ? 'Установка' : req.work_type === 'REMOVAL' ? 'Снятие' : 'Диагностика' },
+        { 'Параметр': 'Формат', 'Значение': req.visit_type === 'ON_SITE' ? 'Выезд к клиенту' : 'В офисе' },
+        { 'Параметр': 'Клиент', 'Значение': req.client_name || req.client?.name || '—' },
+        { 'Параметр': 'Компания', 'Значение': req.company_name || req.client?.company_name || '—' },
+        { 'Параметр': 'Телефон', 'Значение': req.phone || req.client?.phone || '—' },
+        { 'Параметр': 'Марка авто', 'Значение': req.brand || req.vehicle?.brand || '—' },
+        { 'Параметр': 'Модель авто', 'Значение': req.model || req.vehicle?.model || '—' },
+        { 'Параметр': 'Гос. номер', 'Значение': req.plate_number || req.vehicle?.plate_number || '—' },
+        { 'Параметр': 'VIN-код', 'Значение': req.vin || req.vehicle?.vin || '—' },
+        { 'Параметр': 'Наличие маяка', 'Значение': req.has_beacon ? 'Да' : 'Нет' },
+        { 'Параметр': 'Наличие блокировки', 'Значение': req.has_blocking ? 'Да' : 'Нет' },
+        { 'Параметр': 'Статус оплаты', 'Значение': req.is_paid ? 'Оплачено' : 'Ожидает оплаты' }
+      ];
+
+      // 3. Создаем лист и книгу Excel
+      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      
+      // Делаем колонки пошире для красоты
+      worksheet['!cols'] = [{ wch: 25 }, { wch: 40 }];
+      
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, `Заявка ${reqId}`);
+
+      // 4. Скачиваем файл!
+      XLSX.writeFile(workbook, `Заявка_№${reqId}.xlsx`);
+
+    } catch (err) {
+      alert(`Ошибка при скачивании: ${err.message}`);
+    }
   };
 
   const handleMenuHistory = (e, reqId) => {

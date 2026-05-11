@@ -44,9 +44,17 @@ export default function Sidebar() {
 				>
 					Сотрудники
 				</NavLink>
+				<NavLink
+					to='/warehouse'
+					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+				>
+					📦 Склад
+				</NavLink>
+				
 
 				{/* Только для администратора */}
 				{isAdmin && (
+					
 					<NavLink
 						to='/approvals'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
