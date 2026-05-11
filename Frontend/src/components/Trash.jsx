@@ -82,7 +82,7 @@ export default function Trash() {
   return (
     <div className="requests-page-container" style={{ padding: '20px' }}>
       <div className="clients-header-bar" style={{ marginBottom: '20px' }}>
-        <h2>🗑 Корзина</h2>
+        <h2>Корзина</h2>
         <span className="subtitle-text">Восстановление удаленных данных</span>
       </div>
 

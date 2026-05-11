@@ -1,0 +1,251 @@
+.request-modal-window {
+  width: 760px;
+  max-width: 96%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: #fcfcfc;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.request-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  background: #f7f7f7;
+  padding: 20px;
+}
+
+.request-modal-error-banner {
+  background: #ffebee;
+  color: #c62828;
+  padding: 14px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid #ffcdd2;
+  white-space: pre-wrap;
+}
+
+#request-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.request-modal-card {
+  background: #ffffff;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+}
+
+.request-modal-section-title {
+  color: #5e9424;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+  letter-spacing: 0.5px;
+}
+
+.request-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.request-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.request-modal-full {
+  grid-column: 1 / -1;
+}
+
+.request-modal-gap-top {
+  margin-top: 14px;
+}
+
+.request-modal-label {
+  font-size: 13px;
+  color: #777777;
+  font-weight: 500;
+}
+
+.request-modal-label.required::after {
+  content: ' *';
+  color: #c62828;
+}
+
+.request-modal-input,
+.request-modal-textarea {
+  width: 100%;
+  border: 1px solid #d8d8d8;
+  border-radius: 6px;
+  padding: 9px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #222222;
+  background: #ffffff;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.request-modal-input:focus,
+.request-modal-textarea:focus {
+  border-color: #5e9424;
+  box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.request-modal-input:disabled,
+.request-modal-input[readonly] {
+  background: #f4f4f4;
+  color: #777777;
+  cursor: not-allowed;
+}
+
+.request-modal-textarea {
+  resize: vertical;
+  min-height: 78px;
+}
+
+.request-field-error {
+  border-color: #c62828 !important;
+  background: #ffebee !important;
+}
+
+.request-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.request-option-group {
+  margin-top: 16px;
+}
+
+.request-radio-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.request-radio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 1px solid #d8d8d8;
+  border-radius: 20px;
+  background: #ffffff;
+  color: #444444;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.request-radio-pill input {
+  accent-color: #5e9424;
+}
+
+.request-radio-pill:hover {
+  background: #f7f7f7;
+}
+
+.request-radio-pill.active {
+  background: #f1f8e9;
+  border-color: #c8e6c9;
+  color: #5e9424;
+}
+
+.request-radio-pill:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.request-existing-vehicle-box {
+  background: #f1f8e9;
+  border: 1px solid #c8e6c9;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.request-modal-footer {
+  gap: 12px;
+}
+
+.request-cancel-btn {
+  min-width: 130px;
+  padding: 10px 18px;
+  border: 1px solid #cccccc;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #666666;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.request-cancel-btn:hover {
+  background: #f5f5f5;
+  border-color: #999999;
+}
+
+.request-submit-btn {
+  min-width: 170px;
+  padding: 10px 18px;
+  border: 1px solid #5e9424;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #5e9424;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+}
+
+.request-submit-btn:hover {
+  background: #5e9424;
+  color: #ffffff;
+}
+
+.request-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .request-modal-window {
+    width: 96%;
+  }
+
+  .request-modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .request-modal-body {
+    padding: 14px;
+  }
+
+  .request-modal-card {
+    padding: 14px;
+  }
+
+  .request-modal-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .request-cancel-btn,
+  .request-submit-btn {
+    width: 100%;
+  }
+}

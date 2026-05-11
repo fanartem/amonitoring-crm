@@ -1,32 +1,166 @@
 .create-client-modal {
-  width: 400px;
+  width: 620px;
+  max-width: 95%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: #fcfcfc;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .create-client-body {
+  flex: 1;
+  overflow-y: auto;
+  background: #f7f7f7;
   padding: 20px;
 }
 
-.create-client-form {
+.create-client-error-banner {
+  background: #ffebee;
+  color: #c62828;
+  padding: 14px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid #ffcdd2;
+}
+
+.create-client-card {
+  background: #ffffff;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
+  padding: 18px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+}
+
+.create-client-card:last-child {
+  margin-bottom: 0;
+}
+
+.create-client-section-title {
+  color: #5e9424;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+  letter-spacing: 0.5px;
+}
+
+.create-client-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.create-client-field {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.create-client-full {
+  grid-column: 1 / -1;
 }
 
 .create-client-label {
-  display: block;
-  margin-bottom: 5px;
-  font-size: 14px;
-  color: #555;
+  font-size: 13px;
+  color: #777777;
+  font-weight: 500;
+}
+
+.create-client-label.required::after {
+  content: ' *';
+  color: #c62828;
 }
 
 .create-client-input {
   width: 100%;
-  padding: 8px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid #d8d8d8;
+  border-radius: 6px;
+  padding: 9px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #222222;
+  background: #ffffff;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.create-client-submit {
-  margin-top: 10px;
-  padding: 10px;
+.create-client-input:focus {
+  border-color: #5e9424;
+  box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.create-client-footer {
+  gap: 12px;
+}
+
+.create-client-cancel-btn {
+  min-width: 130px;
+  padding: 10px 18px;
+  border: 1px solid #cccccc;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #666666;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.create-client-cancel-btn:hover {
+  background: #f5f5f5;
+  border-color: #999999;
+}
+
+.create-client-submit-btn {
+  min-width: 170px;
+  padding: 10px 18px;
+  border: 1px solid #5e9424;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #5e9424;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+}
+
+.create-client-submit-btn:hover {
+  background: #5e9424;
+  color: #ffffff;
+}
+
+.create-client-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .create-client-modal {
+    width: 96%;
+  }
+
+  .create-client-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .create-client-body {
+    padding: 14px;
+  }
+
+  .create-client-card {
+    padding: 14px;
+  }
+
+  .create-client-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .create-client-cancel-btn,
+  .create-client-submit-btn {
+    width: 100%;
+  }
 }

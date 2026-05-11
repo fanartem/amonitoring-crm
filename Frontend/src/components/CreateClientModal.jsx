@@ -1,168 +1,269 @@
-import React, { useState, useEffect } from 'react';
-import '../styles/Requests.css'; // Используем те же стили модалок
+import React, { useState, useEffect } from 'react'
+import '../styles/Requests.css'
+import '../styles/CreateClientModal.css'
 
-export default function CreateClientModal({ isOpen, onClose, onCreated, editClientData }) {
-  const isEditMode = !!editClientData;
+const CLIENT_TYPES = {
+	TOO: 'ТОО',
+	IP: 'ИП',
+	INDIVIDUAL: 'Физ. лицо',
+}
 
-  const [formData, setFormData] = useState({
-    type: 'Физ. лицо',
-    name: '',
-    company_name: '',
-    phone: '',
-    email: ''
-  });
+export default function CreateClientModal({
+	isOpen,
+	onClose,
+	onCreated,
+	editClient,
+}) {
+	const isEditMode = !!editClient
 
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+	const [formData, setFormData] = useState({
+		type: 'TOO',
+		name: '',
+		company_name: '',
+		phone: '',
+		email: '',
+	})
 
-  useEffect(() => {
-    if (isOpen) {
-      if (isEditMode) {
-        // Подставляем данные для редактирования
-        let uiType = 'Физ. лицо';
-        if (editClientData.type === 'TOO' || editClientData.type === 'ТОО') uiType = 'ТОО';
-        if (editClientData.type === 'IP' || editClientData.type === 'ИП') uiType = 'ИП';
+	const [error, setError] = useState('')
+	const [loading, setLoading] = useState(false)
 
-        setFormData({
-          type: uiType,
-          name: editClientData.name || '',
-          company_name: editClientData.company_name || '',
-          phone: editClientData.phone || '',
-          email: editClientData.email || ''
-        });
-      } else {
-        // Очищаем форму для нового клиента
-        setFormData({
-          type: 'Физ. лицо',
-          name: '',
-          company_name: '',
-          phone: '',
-          email: ''
-        });
-      }
-      setError('');
-    }
-  }, [isOpen, editClientData]);
+	useEffect(() => {
+		if (!isOpen) return
 
-  if (!isOpen) return null;
+		if (isEditMode) {
+			setFormData({
+				type: editClient.type || 'TOO',
+				name: editClient.name || '',
+				company_name: editClient.company_name || '',
+				phone: editClient.phone || '',
+				email: editClient.email || '',
+			})
+		} else {
+			setFormData({
+				type: 'TOO',
+				name: '',
+				company_name: '',
+				phone: '',
+				email: '',
+			})
+		}
 
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
+		setError('')
+	}, [isOpen, editClient, isEditMode])
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
+	if (!isOpen) return null
 
-    // Валидация
-    if (!formData.name || !formData.phone) {
-      setError('Заполните обязательные поля: ФИО и Телефон');
-      return;
-    }
+	const handleChange = e => {
+		const { name, value } = e.target
 
-    if ((formData.type === 'ТОО' || formData.type === 'ИП') && !formData.company_name) {
-      setError('Для ТОО и ИП необходимо указать наименование компании');
-      return;
-    }
+		setFormData(prev => ({
+			...prev,
+			[name]: value,
+		}))
+	}
 
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('access_token');
-      
-      let dbType = 'INDIVIDUAL';
-      if (formData.type === 'ТОО') dbType = 'TOO';
-      if (formData.type === 'ИП') dbType = 'IP';
+	const resetForm = () => {
+		setFormData({
+			type: 'TOO',
+			name: '',
+			company_name: '',
+			phone: '',
+			email: '',
+		})
+		setError('')
+	}
 
-      const payload = {
-        type: dbType,
-        name: formData.name,
-        company_name: dbType === 'INDIVIDUAL' ? null : formData.company_name,
-        phone: formData.phone,
-        email: formData.email || null
-      };
+	const handleClose = () => {
+		resetForm()
+		onClose()
+	}
 
-      const url = isEditMode 
-        ? `http://127.0.0.1:8000/clients/${editClientData.id}` 
-        : 'http://127.0.0.1:8000/clients';
-      
-      const method = isEditMode ? 'PATCH' : 'POST';
+	const handleSubmit = async e => {
+		e.preventDefault()
+		setError('')
 
-      const res = await fetch(url, {
-        method: method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(payload)
-      });
+		if (!formData.name.trim()) {
+			setError('ФИО представителя обязательно')
+			return
+		}
 
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Ошибка: ${errText}`);
-      }
+		if (!formData.phone.trim()) {
+			setError('Телефон обязателен')
+			return
+		}
 
-      onCreated(); // Закрываем модалку и обновляем список
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+		setLoading(true)
 
-  return (
-    <div className="modal-overlay open">
-      <div className="modal-window" style={{ maxWidth: '500px' }}>
-        <div className="modal-header">
-          <div className="modal-title">{isEditMode ? 'Редактирование клиента' : 'Добавить нового клиента'}</div>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-        
-        {error && <div className="validation-banner visible" style={{ background: '#ffebee', color: '#c62828', padding: '15px', borderBottom: '1px solid #ef9a9a' }}>{error}</div>}
-        
-        <div className="modal-body" style={{ background: '#f7f7f7', padding: '20px' }}>
-          <form id="client-form" onSubmit={handleSubmit}>
-            
-            <div className="form-row align-center">
-              <span className="field-label req-mark">Тип лица:</span>
-              <select className="form-input" name="type" value={formData.type} onChange={handleChange}>
-                <option>Физ. лицо</option>
-                <option>ИП</option>
-                <option>ТОО</option>
-              </select>
-            </div>
+		try {
+			const token = localStorage.getItem('access_token')
 
-            {(formData.type === 'ТОО' || formData.type === 'ИП') && (
-              <div className="form-row align-center">
-                <span className="field-label req-mark">Наименование:</span>
-                <input className="form-input" type="text" name="company_name" value={formData.company_name} onChange={handleChange} placeholder="Например: Ромашка" />
-              </div>
-            )}
+			const payload = {
+				type: formData.type,
+				name: formData.name.trim(),
+				company_name:
+					formData.type === 'INDIVIDUAL'
+						? null
+						: formData.company_name.trim() || null,
+				phone: formData.phone.trim(),
+				email: formData.email.trim() || null,
+			}
 
-            <div className="form-row align-center">
-              <span className="field-label req-mark">ФИО:</span>
-              <input className="form-input" type="text" name="name" value={formData.name} onChange={handleChange} placeholder="Иванов Иван" />
-            </div>
-            
-            <div className="form-row align-center">
-              <span className="field-label req-mark">Телефон:</span>
-              <input className="form-input" type="tel" name="phone" value={formData.phone} onChange={handleChange} placeholder="+7 (777) 000-00-00" />
-            </div>
+			const url = isEditMode
+				? `http://127.0.0.1:8000/clients/${editClient.id}`
+				: 'http://127.0.0.1:8000/clients'
 
-            <div className="form-row align-center">
-              <span className="field-label">Email:</span>
-              <input className="form-input" type="email" name="email" value={formData.email} onChange={handleChange} placeholder="example@mail.ru" />
-            </div>
+			const method = isEditMode ? 'PATCH' : 'POST'
 
-          </form>
-        </div>
-        
-        <div className="modal-footer">
-          <button className="modal-submit-btn" type="button" onClick={onClose} style={{ borderColor: '#aaa', color: '#888' }}>Отмена</button>
-          <button className="modal-submit-btn" type="submit" form="client-form" disabled={loading}>
-            {loading ? 'Сохранение...' : isEditMode ? 'Сохранить изменения' : 'Добавить клиента'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+			const res = await fetch(url, {
+				method,
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify(payload),
+			})
+
+			if (!res.ok) {
+				const errData = await res.json()
+				throw new Error(errData.detail || 'Ошибка сохранения клиента')
+			}
+
+			resetForm()
+			onCreated()
+		} catch (err) {
+			setError(err.message)
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	return (
+		<div className='modal-overlay open'>
+			<div className='modal-window create-client-modal'>
+				<div className='modal-header'>
+					<span className='modal-title'>
+						{isEditMode ? 'Редактировать клиента' : 'Добавить клиента'}
+					</span>
+					<button className='modal-close' onClick={handleClose} type='button'>
+						&times;
+					</button>
+				</div>
+
+				{error && <div className='create-client-error-banner'>{error}</div>}
+
+				<div className='create-client-body'>
+					<form id='create-client-form' onSubmit={handleSubmit}>
+						<div className='create-client-card'>
+							<div className='create-client-section-title'>
+								Основная информация
+							</div>
+
+							<div className='create-client-grid'>
+								<label className='create-client-field'>
+									<span className='create-client-label required'>
+										Тип клиента
+									</span>
+									<select
+										name='type'
+										value={formData.type}
+										onChange={handleChange}
+										className='create-client-input'
+									>
+										{Object.entries(CLIENT_TYPES).map(([key, label]) => (
+											<option key={key} value={key}>
+												{label}
+											</option>
+										))}
+									</select>
+								</label>
+
+								<label className='create-client-field'>
+									<span className='create-client-label required'>
+										ФИО представителя
+									</span>
+									<input
+										type='text'
+										name='name'
+										value={formData.name}
+										onChange={handleChange}
+										className='create-client-input'
+										placeholder='Например: Иван Иванов'
+									/>
+								</label>
+
+								{(formData.type === 'TOO' || formData.type === 'IP') && (
+									<label className='create-client-field create-client-full'>
+										<span className='create-client-label'>
+											Название компании
+										</span>
+										<input
+											type='text'
+											name='company_name'
+											value={formData.company_name}
+											onChange={handleChange}
+											className='create-client-input'
+											placeholder='Например: TOO Autopark Monitoring'
+										/>
+									</label>
+								)}
+							</div>
+						</div>
+
+						<div className='create-client-card'>
+							<div className='create-client-section-title'>Контакты</div>
+
+							<div className='create-client-grid'>
+								<label className='create-client-field'>
+									<span className='create-client-label required'>Телефон</span>
+									<input
+										type='text'
+										name='phone'
+										value={formData.phone}
+										onChange={handleChange}
+										className='create-client-input'
+										placeholder='+7 777 123 45 67'
+									/>
+								</label>
+
+								<label className='create-client-field'>
+									<span className='create-client-label'>Email</span>
+									<input
+										type='email'
+										name='email'
+										value={formData.email}
+										onChange={handleChange}
+										className='create-client-input'
+										placeholder='client@example.com'
+									/>
+								</label>
+							</div>
+						</div>
+					</form>
+				</div>
+
+				<div className='modal-footer create-client-footer'>
+					<button
+						className='create-client-cancel-btn'
+						type='button'
+						onClick={handleClose}
+					>
+						Отмена
+					</button>
+
+					<button
+						className='create-client-submit-btn'
+						type='submit'
+						form='create-client-form'
+						disabled={loading}
+					>
+						{loading
+							? 'Сохранение...'
+							: isEditMode
+								? 'Сохранить изменения'
+								: 'Сохранить клиента'}
+					</button>
+				</div>
+			</div>
+		</div>
+	)
 }

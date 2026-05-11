@@ -11,11 +11,34 @@ def get_clients(current_user: dict = Depends(get_current_user)):
     try:
         with connection.cursor() as cursor:
             sql = """
-            SELECT c.*, COUNT(r.id) as request_count 
-            FROM clients c 
-            LEFT JOIN requests r ON c.id = r.client_id 
+            SELECT 
+                c.id,
+                c.type,
+                c.name,
+                c.company_name,
+                c.phone,
+                c.email,
+                c.created_at,
+                c.is_deleted,
+                c.deleted_at,
+                c.deleted_by,
+                COUNT(r.id) AS request_count
+            FROM clients c
+            LEFT JOIN requests r 
+                ON c.id = r.client_id 
+                AND r.is_deleted = 0
             WHERE c.is_deleted = 0
-            GROUP BY c.id 
+            GROUP BY 
+                c.id,
+                c.type,
+                c.name,
+                c.company_name,
+                c.phone,
+                c.email,
+                c.created_at,
+                c.is_deleted,
+                c.deleted_at,
+                c.deleted_by
             ORDER BY c.created_at DESC
             """
             cursor.execute(sql)

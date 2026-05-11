@@ -609,7 +609,8 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
                 cursor.execute(
                     """
                     UPDATE requests
-                    SET assigned_to = NULL
+                    SET assigned_to = NULL,
+                        status = 'NEW'
                     WHERE id = %s
                     """,
                     (request_id,)
