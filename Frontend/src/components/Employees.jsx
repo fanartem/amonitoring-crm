@@ -167,7 +167,8 @@ export default function Employees() {
     'MANAGER': 'Менеджер',
     'SENIOR_TECHNICIAN': 'Старший монтажник',
     'TECHNICIAN': 'Монтажник',
-    'ACCOUNTANT': 'Бухгалтер'
+    'ACCOUNTANT': 'Бухгалтер',
+	'WAREHOUSE_MANAGER': 'Заведующий складом'
   };
 
   const roleClasses = {
@@ -175,7 +176,8 @@ export default function Employees() {
     'MANAGER': 'role-manager',
     'SENIOR_TECHNICIAN': 'role-senior',
     'TECHNICIAN': 'role-tech',
-    'ACCOUNTANT': 'role-accountant'
+    'ACCOUNTANT': 'role-accountant',
+	'WAREHOUSE_MANAGER': 'role-warehouse',
   };
 
   return (

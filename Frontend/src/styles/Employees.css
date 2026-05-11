@@ -90,6 +90,8 @@
 .role-manager { background: #e3f2fd; color: #1565c0; }
 .role-senior { background: #fff3e0; color: #e65100; }
 .role-tech { background: #f5f5f5; color: #616161; }
+.role-accountant { background: #dbeee9; color: #35b192; }
+.role-warehouse { background: #f3e5f5; color: #7b1fa2; }
 
 /* Кнопки внизу карточки */
 .emp-actions {

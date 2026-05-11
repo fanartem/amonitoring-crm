@@ -396,7 +396,7 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
                   onClick={handleDeleteRequest}
                   style={{ background: 'transparent', border: '1px solid #ffcdd2', color: '#c62828', padding: '4px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '500' }}
                 >
-                  🗑 Удалить заявку
+                  Удалить заявку
                 </button>
               )}
 

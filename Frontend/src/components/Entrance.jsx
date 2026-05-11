@@ -195,6 +195,7 @@ export default function Entrance() {
               <option value="ACCOUNTANT">Бухгалтер</option>
               <option value="SENIOR_TECHNICIAN">Старший монтажник</option>
               <option value="TECHNICIAN">Монтажник</option>
+              <option value="WAREHOUSE_MANAGER">Заведующий складом</option>
             </select>
           </div>
 

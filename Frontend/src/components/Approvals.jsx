@@ -12,6 +12,7 @@ export default function Approvals() {
 		SENIOR_TECHNICIAN: 'Старший монтажник',
 		TECHNICIAN: 'Монтажник',
 		ACCOUNTANT: 'Бухгалтер',
+		WAREHOUSE_MANAGER: 'Заведующий складом',
 	}
 
   const roleClasses = {
@@ -20,6 +21,7 @@ export default function Approvals() {
 		SENIOR_TECHNICIAN: 'role-senior',
 		TECHNICIAN: 'role-tech',
 		ACCOUNTANT: 'role-accountant',
+		WAREHOUSE_MANAGER: 'role-warehouse',
 	}
 
 	useEffect(() => {
