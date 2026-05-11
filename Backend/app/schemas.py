@@ -104,3 +104,8 @@ class WarehouseItemUpdate(BaseModel):
 
     status: str | None = None
     note: str | None = None
+
+class RequestEquipmentAttach(BaseModel):
+    warehouse_item_id: int
+    quantity: int = 1
+    note: str | None = None

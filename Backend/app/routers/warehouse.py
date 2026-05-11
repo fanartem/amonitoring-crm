@@ -5,7 +5,7 @@ import csv
 
 from app.database import get_connection
 from app.security import get_current_user
-from app.schemas import WarehouseItemCreate, WarehouseItemUpdate
+from app.schemas import WarehouseItemCreate, WarehouseItemUpdate, RequestEquipmentAttach
 
 
 router = APIRouter(prefix="/warehouse", tags=["Warehouse"])
@@ -778,6 +778,372 @@ def restore_warehouse_item(
             }
 
     except HTTPException:
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.post("/requests/{request_id}/equipment")
+def attach_equipment_to_request(
+    request_id: int,
+    data: RequestEquipmentAttach,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Привязать оборудование к заявке и списать со склада.
+    Доступ: ADMIN, WAREHOUSE_MANAGER.
+    """
+    require_warehouse_manage(current_user)
+
+    if data.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Количество должно быть больше 0")
+
+    connection = get_connection()
+    try:
+        with connection.cursor() as cursor:
+            # Проверяем заявку
+            cursor.execute(
+                """
+                SELECT id, status, is_deleted
+                FROM requests
+                WHERE id = %s
+                """,
+                (request_id,)
+            )
+            request = cursor.fetchone()
+
+            if not request:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            if request["is_deleted"]:
+                raise HTTPException(status_code=400, detail="Нельзя привязать оборудование к удалённой заявке")
+
+            # Проверяем оборудование
+            cursor.execute(
+                """
+                SELECT 
+                    id,
+                    category,
+                    name,
+                    manufacturer,
+                    model,
+                    identifier_type,
+                    identifier_value,
+                    is_serialized,
+                    quantity,
+                    status,
+                    is_deleted
+                FROM warehouse_items
+                WHERE id = %s
+                """,
+                (data.warehouse_item_id,)
+            )
+            item = cursor.fetchone()
+
+            if not item:
+                raise HTTPException(status_code=404, detail="Оборудование не найдено")
+
+            if item["is_deleted"]:
+                raise HTTPException(status_code=400, detail="Нельзя привязать оборудование из корзины")
+
+            if item["status"] != "IN_STOCK":
+                raise HTTPException(status_code=400, detail="Оборудование недоступно на складе")
+
+            is_serialized = bool(item["is_serialized"])
+
+            if is_serialized:
+                if data.quantity != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Для серийного оборудования количество должно быть 1"
+                    )
+
+                # На всякий случай проверяем, не было ли уже привязано
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM request_equipment
+                    WHERE warehouse_item_id = %s
+                    """,
+                    (data.warehouse_item_id,)
+                )
+                existing_link = cursor.fetchone()
+
+                if existing_link:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Это серийное оборудование уже привязано к заявке"
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET status = 'INSTALLED',
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (data.warehouse_item_id,)
+                )
+
+            else:
+                available_quantity = int(item["quantity"])
+
+                if data.quantity > available_quantity:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Недостаточно оборудования на складе. Доступно: {available_quantity}"
+                    )
+
+                new_quantity = available_quantity - data.quantity
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (new_quantity, data.warehouse_item_id)
+                )
+
+            # Создаём связь заявки и оборудования
+            cursor.execute(
+                """
+                INSERT INTO request_equipment (
+                    request_id,
+                    warehouse_item_id,
+                    quantity,
+                    attached_by,
+                    note
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    data.warehouse_item_id,
+                    data.quantity,
+                    current_user["id"],
+                    data.note
+                )
+            )
+
+            link_id = cursor.lastrowid
+
+            item_title = f"{item['name']}"
+            if item["model"]:
+                item_title += f" {item['model']}"
+            if item["identifier_value"]:
+                item_title += f" ({item['identifier_type']}: {item['identifier_value']})"
+
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    old_value,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "EQUIPMENT_ATTACHED",
+                    None,
+                    f"{item_title}, quantity={data.quantity}"
+                )
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Оборудование привязано к заявке",
+                "link_id": link_id,
+                "request_id": request_id,
+                "warehouse_item_id": data.warehouse_item_id
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.get("/requests/{request_id}/equipment")
+def get_request_equipment(
+    request_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Получить оборудование, привязанное к заявке.
+    Доступ: все авторизованные пользователи.
+    """
+    connection = get_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM requests
+                WHERE id = %s AND is_deleted = 0
+                """,
+                (request_id,)
+            )
+            request = cursor.fetchone()
+
+            if not request:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            sql = """
+            SELECT 
+                re.id AS link_id,
+                re.request_id,
+                re.warehouse_item_id,
+                re.quantity,
+                re.attached_at,
+                re.note,
+
+                wi.category,
+                wi.name,
+                wi.manufacturer,
+                wi.model,
+                wi.identifier_type,
+                wi.identifier_value,
+                wi.serial_number,
+                wi.is_serialized,
+                wi.status,
+
+                u.name AS attached_by_name
+            FROM request_equipment re
+            LEFT JOIN warehouse_items wi ON re.warehouse_item_id = wi.id
+            LEFT JOIN users u ON re.attached_by = u.id
+            WHERE re.request_id = %s
+            ORDER BY re.attached_at DESC
+            """
+
+            cursor.execute(sql, (request_id,))
+            return cursor.fetchall()
+
+    finally:
+        connection.close()
+
+@router.delete("/requests/{request_id}/equipment/{link_id}")
+def detach_equipment_from_request(
+    request_id: int,
+    link_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Отвязать оборудование от заявки и вернуть на склад.
+    Доступ: ADMIN, WAREHOUSE_MANAGER.
+    """
+    require_warehouse_manage(current_user)
+
+    connection = get_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 
+                    re.id,
+                    re.request_id,
+                    re.warehouse_item_id,
+                    re.quantity,
+
+                    wi.name,
+                    wi.model,
+                    wi.identifier_type,
+                    wi.identifier_value,
+                    wi.is_serialized,
+                    wi.quantity AS current_quantity,
+                    wi.status
+                FROM request_equipment re
+                LEFT JOIN warehouse_items wi ON re.warehouse_item_id = wi.id
+                WHERE re.id = %s
+                AND re.request_id = %s
+                """,
+                (link_id, request_id)
+            )
+            link = cursor.fetchone()
+
+            if not link:
+                raise HTTPException(status_code=404, detail="Привязка оборудования не найдена")
+
+            is_serialized = bool(link["is_serialized"])
+
+            if is_serialized:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET status = 'IN_STOCK',
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (link["warehouse_item_id"],)
+                )
+            else:
+                new_quantity = int(link["current_quantity"]) + int(link["quantity"])
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (new_quantity, link["warehouse_item_id"])
+                )
+
+            cursor.execute(
+                """
+                DELETE FROM request_equipment
+                WHERE id = %s
+                """,
+                (link_id,)
+            )
+
+            item_title = f"{link['name']}"
+            if link["model"]:
+                item_title += f" {link['model']}"
+            if link["identifier_value"]:
+                item_title += f" ({link['identifier_type']}: {link['identifier_value']})"
+
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    old_value,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "EQUIPMENT_DETACHED",
+                    f"{item_title}, quantity={link['quantity']}",
+                    None
+                )
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Оборудование отвязано от заявки и возвращено на склад",
+                "link_id": link_id,
+                "request_id": request_id
+            }
+
+    except HTTPException:
+        connection.rollback()
         raise
     except Exception as e:
         connection.rollback()

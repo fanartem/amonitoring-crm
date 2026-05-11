@@ -137,6 +137,21 @@ def sync_db():
                         FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
                         FOREIGN KEY (deleted_by) REFERENCES users(id) ON DELETE SET NULL
                     );
+                """,
+                "request_equipment": """
+                    CREATE TABLE request_equipment (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        request_id INT NOT NULL,
+                        warehouse_item_id INT NOT NULL,
+                        quantity INT DEFAULT 1,
+                        attached_by INT NULL,
+                        attached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        note TEXT NULL,
+
+                        FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE,
+                        FOREIGN KEY (warehouse_item_id) REFERENCES warehouse_items(id),
+                        FOREIGN KEY (attached_by) REFERENCES users(id) ON DELETE SET NULL
+                    );
                 """
             }
 
