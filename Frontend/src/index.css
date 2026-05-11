@@ -101,13 +101,13 @@ html, body, #root {
 ───────────────────────────────────────── */
 .body-row { display: flex; flex: 1; min-height: 0; }
 .sidebar {
-  width: 68px; background-color: #5a8a1f; display: flex; flex-direction: column; 
+  width: 100px; background-color: #5a8a1f; display: flex; flex-direction: column; 
   justify-content: space-between; flex-shrink: 0; padding: 8px 0;
 }
 .sidebar-top, .sidebar-bottom { display: flex; flex-direction: column; }
 .nav-item {
   padding: 10px 6px; text-align: center; color: rgba(255,255,255,0.8); text-decoration: none;
-  font-size: 10.5px; cursor: pointer; user-select: none; line-height: 1.2;
+  font-size: 12px; cursor: pointer; user-select: none; line-height: 1.2;
   white-space: normal; transition: background 0.15s, color 0.15s;
 }
 .nav-item:hover { color: #fff; background: rgba(255,255,255,0.08); }
