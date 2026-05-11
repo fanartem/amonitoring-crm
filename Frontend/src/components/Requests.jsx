@@ -267,8 +267,7 @@ const handleMenuDownload = async (e, reqId) => {
                 <span className="card-label">Оплата</span>
                 <div style={{ display: 'flex', flexDirection: 'row', gap: '8px', alignItems: 'center', marginTop: '2px' }}>
                   <div className={`status-badge ${req.is_paid ? 'status-progress' : 'status-new'}`} style={{padding: '2px 10px', fontSize: '11px'}}>{req.is_paid ? 'Оплачено' : 'Ожидает оплаты'}</div>
-                  {req.is_paid && req.paid_at && <span style={{ fontSize: '11px', color: '#888', fontWeight: '500' }}>{formatDate(req.paid_at).split(' ')[0]}</span>}
-                </div>
+{Boolean(req.is_paid) && req.paid_at && <span style={{ fontSize: '11px', color: '#888', fontWeight: '500' }}>{formatDate(req.paid_at).split(' ')[0]}</span>}                </div>
               </div>
             </div>
 

@@ -194,22 +194,32 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
       const token = localStorage.getItem('access_token');
       const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
 
-      // ЛОГИКА РЕДАКТИРОВАНИЯ (PATCH ВСЕХ ДАННЫХ)
+      // Умное формирование данных для отправки (чтобы бэк не путался)
+      const basePayload = {
+        city: formData.city,
+        address: formData.work_format === 'Выезд к клиенту' ? formData.work_address : null,
+        work_type: formData.work_type === 'Установка' ? 'INSTALLATION' : formData.work_type === 'Снятие' ? 'REMOVAL' : 'DIAGNOSTIC',
+        visit_type: formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
+      };
+
+      // Отправляем детали установки ТОЛЬКО если это реально Установка
+      if (formData.work_type === 'Установка') {
+        basePayload.installation = { 
+          has_beacon: formData.beacon === 'С маяком', 
+          has_blocking: formData.blocking === 'С блокировкой' 
+        };
+      } else {
+        basePayload.installation = null; 
+      }
+
+      // ЛОГИКА РЕДАКТИРОВАНИЯ (PATCH)
       if (isEditMode) {
-        // 1. Обновляем заявку
         const updateRes = await fetch(`http://127.0.0.1:8000/requests/${editRequestData.id}`, {
           method: 'PATCH', headers,
-          body: JSON.stringify({
-            city: formData.city,
-            address: formData.work_format === 'Выезд к клиенту' ? formData.work_address : null,
-            work_type: formData.work_type === 'Установка' ? 'INSTALLATION' : formData.work_type === 'Снятие' ? 'REMOVAL' : 'DIAGNOSTIC',
-            visit_type: formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
-            installation: { has_beacon: formData.beacon === 'С маяком', has_blocking: formData.blocking === 'С блокировкой' }
-          })
+          body: JSON.stringify(basePayload)
         });
         if (!updateRes.ok) throw new Error(`Ошибка редактирования заявки: ${await updateRes.text()}`);
 
-        // 2. Обновляем клиента (если это существующий клиент)
         if (formData.client_id) {
           await fetch(`http://127.0.0.1:8000/clients/${formData.client_id}`, {
             method: 'PATCH', headers,
@@ -221,7 +231,6 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
           }).catch(e => console.error('Ошибка фонового обновления клиента:', e));
         }
 
-        // 3. Обновляем автомобиль (если есть ID авто)
         if (formData.car_id) {
           await fetch(`http://127.0.0.1:8000/vehicles/${formData.car_id}`, {
             method: 'PATCH', headers,
@@ -239,16 +248,13 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
         return;
       }
 
-      // ЛОГИКА СОЗДАНИЯ (без изменений)
+      // ЛОГИКА СОЗДАНИЯ
       let finalClientId = formData.client_id ? parseInt(formData.client_id, 10) : null;
-
       if (clientKind === 'new') {
         const clientRes = await fetch('http://127.0.0.1:8000/clients', {
           method: 'POST', headers, body: JSON.stringify({ 
-            type: mapTypeToDB(formData.client_type), 
-            name: formData.client_name, 
-            company_name: (formData.client_type === 'Физ. лицо') ? null : formData.company_name, 
-            phone: formData.phone
+            type: mapTypeToDB(formData.client_type), name: formData.client_name, 
+            company_name: (formData.client_type === 'Физ. лицо') ? null : formData.company_name, phone: formData.phone
           })
         });
         if (!clientRes.ok) throw new Error(`Ошибка Клиента: ${await clientRes.text()}`);
@@ -257,17 +263,12 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
       }
 
       let finalVehicleId = formData.car_id ? parseInt(formData.car_id, 10) : null;
-      
       if (!finalVehicleId) {
         const vehicleRes = await fetch('http://127.0.0.1:8000/vehicles', {
           method: 'POST', headers, body: JSON.stringify({
-            client_id: finalClientId, 
-            type: formData.car_type, 
-            brand: formData.car_brand, 
-            model: formData.car_model, 
-            plate_number: formData.car_plate || "Нет", 
-            vin: formData.car_vin || null, 
-            year: formData.car_year ? parseInt(formData.car_year, 10) : null
+            client_id: finalClientId, type: formData.car_type, brand: formData.car_brand, 
+            model: formData.car_model, plate_number: formData.car_plate || "Нет", 
+            vin: formData.car_vin || null, year: formData.car_year ? parseInt(formData.car_year, 10) : null
           })
         });
         if (!vehicleRes.ok) throw new Error(`Ошибка Автомобиля: ${await vehicleRes.text()}`);
@@ -276,23 +277,18 @@ export default function CreateRequestModal({ isOpen, onClose, onCreated, editReq
       }
 
       const requestRes = await fetch('http://127.0.0.1:8000/requests', {
-        method: 'POST', headers, body: JSON.stringify({
-          client_id: finalClientId, vehicle_id: finalVehicleId,
-          work_type: formData.work_type === 'Установка' ? 'INSTALLATION' : formData.work_type === 'Снятие' ? 'REMOVAL' : 'DIAGNOSTIC',
-          visit_type: formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
-          address: formData.work_format === 'Выезд к клиенту' ? formData.work_address : null,
-          city: formData.city, 
-          installation: { has_beacon: formData.beacon === 'С маяком', has_blocking: formData.blocking === 'С блокировкой' }
+        method: 'POST', headers, 
+        body: JSON.stringify({
+          client_id: finalClientId, vehicle_id: finalVehicleId, ...basePayload
         })
       });
       if (!requestRes.ok) throw new Error(`Ошибка Заявки: ${await requestRes.text()}`);
       const requestData = await requestRes.json();
 
       if (formData.manager_comment) {
-        const commentRes = await fetch('http://127.0.0.1:8000/requests/comments', {
+        await fetch('http://127.0.0.1:8000/requests/comments', {
           method: 'POST', headers, body: JSON.stringify({ request_id: requestData.request_id, message: formData.manager_comment })
-        });
-        if (!commentRes.ok) throw new Error(`Ошибка Комментария: ${await commentRes.text()}`);
+        }).catch(e => console.error(e));
       }
 
       onCreated(); handleClose();   

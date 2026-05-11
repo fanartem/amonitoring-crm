@@ -153,16 +153,23 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
   };
 
   const handleAssign = async () => {
-    if (!selectedTech) { alert('Выберите монтажника'); return; }
     try {
       const token = localStorage.getItem('access_token');
+      // Если пусто — отправляем null (снятие монтажника)
+      const techId = selectedTech ? parseInt(selectedTech, 10) : null;
+      
       const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}/assign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ technician_id: parseInt(selectedTech) })
+        body: JSON.stringify({ technician_id: techId })
       });
-      if (!res.ok) throw new Error('Ошибка при назначении');
-      alert(request.assigned_to ? 'Монтажник успешно заменен!' : 'Монтажник назначен!');
+      
+      if (!res.ok) throw new Error('Ошибка при назначении/снятии сотрудника');
+      
+      // Выводим правильное уведомление
+      if (!techId) alert('Монтажник успешно снят с заявки!');
+      else alert(request.assigned_to ? 'Монтажник успешно заменен!' : 'Монтажник назначен!');
+      
       fetchRequestDetails();
       onUpdated();
     } catch (err) { alert(err.message); }
@@ -410,13 +417,12 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
                       <option key={t.id} value={t.id}>{t.name}</option>
                     ))}
                   </select>
-                  <button 
+                <button 
                     className="btn-green" 
                     style={{ padding: '5px 12px', fontSize: '13px' }} 
                     onClick={handleAssign}
-                    disabled={!selectedTech && !request.assigned_to}
                   >
-                    {request.assigned_to ? 'Изменить' : 'Назначить'}
+                    {request.assigned_to ? (selectedTech ? 'Изменить' : 'Снять') : 'Назначить'}
                   </button>
                 </div>
               ) : request.assigned_to ? (
