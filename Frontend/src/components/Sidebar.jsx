@@ -6,6 +6,7 @@ export default function Sidebar() {
   const user = userDataStr ? JSON.parse(userDataStr) : null;
   const isAdmin = user?.role?.toUpperCase() === 'ADMIN';
   const isManager = user?.role?.toUpperCase() === 'MANAGER';
+  const isWarehouseManager = user?.role?.toUpperCase() === 'WAREHOUSE_MANAGER';
 
   const handleLogout = () => {
     localStorage.removeItem('access_token');
@@ -44,12 +45,13 @@ export default function Sidebar() {
 				>
 					Сотрудники
 				</NavLink>
-				<NavLink
-					to='/warehouse'
-					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-				>
-					Склад
-				</NavLink>
+				{isWarehouseManager || isAdmin && (
+					<NavLink
+						to='/warehouse'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					>
+						Склад
+				</NavLink>)}
 				
 
 				{/* Только для администратора */}
