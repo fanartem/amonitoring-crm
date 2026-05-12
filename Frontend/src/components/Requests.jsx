@@ -553,7 +553,10 @@ export default function Requests() {
 							{userRole === 'ACCOUNTANT' && !req.is_paid && (
 								<button
 									className='btn-green'
-									style={{ padding: '6px 14px', fontSize: '13px', borderRadius: '6px' }}
+									style={{
+										marginBottom: '12px',
+										marginRight: '5px',
+									}}
 									onClick={e => handlePayRequest(e, req.id)}
 								>
 									Оплатить
