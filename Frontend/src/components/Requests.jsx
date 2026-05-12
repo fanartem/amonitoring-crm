@@ -564,12 +564,8 @@ export default function Requests() {
 								<button
 									className='btn-green'
 									style={{ 
-										padding: '6px 14px', 
-										fontSize: '13px', 
-										borderRadius: '6px',
-										backgroundColor: '#0288d1',
-										borderColor: '#0288d1',
-										color: '#fff'
+										marginBottom: '12px',
+										marginRight: '5px',
 									}}
 									onClick={e => handleAcceptRequest(e, req)}
 								>

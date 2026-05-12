@@ -741,7 +741,7 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 											fontSize: '13px',
 										}}
 									>
-										✓ Назначен: {getTechName(request.assigned_to)}
+										Монтажник: {getTechName(request.assigned_to)}
 									</span>
 								</div>
 							) : null}
