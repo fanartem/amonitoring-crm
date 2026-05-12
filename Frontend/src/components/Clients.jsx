@@ -29,11 +29,13 @@ export default function Clients() {
   const [technicians, setTechnicians] = useState([]); 
 
   const [isCreateModalOpen, setCreateModalOpen] = useState(false);
-  // НОВОЕ: Состояние для редактируемого клиента
   const [editClientData, setEditClientData] = useState(null); 
   
   const [selectedRequestId, setSelectedRequestId] = useState(null);
   const [activeDropdown, setActiveDropdown] = useState(null);
+
+  // Состояние для редактируемого автомобиля
+  const [editingVehicle, setEditingVehicle] = useState(null);
   
   const userRole = getUserRole();
 
@@ -173,7 +175,7 @@ export default function Clients() {
         alert('Клиент успешно удален в корзину!');
         fetchClients(); 
         if (selectedClient && selectedClient.id === clientId) {
-          setSelectedClient(null); // Если удалили открытого клиента, закрываем его карточку
+          setSelectedClient(null); 
         }
       } else {
         const errData = await res.text();
@@ -184,7 +186,6 @@ export default function Clients() {
     }
   };
 
-  // НОВОЕ: Обработчик клика "Редактировать"
   const handleEditClientClick = (e, client) => {
     e.stopPropagation();
     setActiveDropdown(null);
@@ -195,6 +196,29 @@ export default function Clients() {
   const toggleDropdown = (e, clientId) => {
     e.stopPropagation();
     setActiveDropdown(prev => prev === clientId ? null : clientId);
+  };
+
+  // ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ОТРЕДАКТИРОВАННОГО АВТО (без IMEI, так как он берется со склада)
+  const handleVehicleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+        const token = localStorage.getItem('access_token');
+        const res = await fetch(`http://127.0.0.1:8000/vehicles/${editingVehicle.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({
+                brand: editingVehicle.brand,
+                model: editingVehicle.model,
+                plate_number: editingVehicle.plate_number,
+                vin: editingVehicle.vin,
+                year: editingVehicle.year ? parseInt(editingVehicle.year, 10) : null
+            })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        alert('Данные авто успешно обновлены!');
+        setEditingVehicle(null);
+        fetchClientVehicles(selectedClient.id); 
+    } catch (err) { alert('Ошибка: ' + err.message); }
   };
 
   const statusLabels = { 'NEW': 'В ожидании', 'IN_PROGRESS': 'В процессе установки', 'COMPLETED': 'Работы завершены', 'CANCELLED': 'Отменено' };
@@ -211,11 +235,6 @@ export default function Clients() {
     const d = new Date(dateString);
     return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
   };
-
-  const getPillStyle = (color) => ({
-    fontSize: '11px', color: '#fff', padding: '2px 10px',
-    borderRadius: '12px', background: color, fontWeight: 'bold', display: 'inline-block'
-  });
 
   return (
 		<div className='clients-page-container'>
@@ -473,6 +492,7 @@ export default function Clients() {
 									: '🚗 Просмотреть все машины клиента'}
 							</button>
 
+							{/* БЛОК ВЫВОДА МАШИН С КНОПКОЙ ИЗМЕНИТЬ */}
 							{clientVehicles.length > 0 && (
 								<div
 									style={{
@@ -492,27 +512,24 @@ export default function Clients() {
 									>
 										Транспорт клиента ({clientVehicles.length}):
 									</h4>
-									<ul
-										style={{
-											margin: 0,
-											paddingLeft: '20px',
-											fontSize: '13px',
-											color: '#555',
-										}}
-									>
-										{clientVehicles.map(v => (
-											<li key={v.id} style={{ marginBottom: '8px' }}>
-												<strong>
-													{v.brand} {v.model}
-												</strong>
-												<span style={{ color: '#888' }}>
-													{' '}
-													— Гос. номер: {v.plate_number || 'б/н'}, VIN:{' '}
-													{v.vin || '—'}, Год: {v.year || '—'}
-												</span>
-											</li>
-										))}
-									</ul>
+									<div style={{ display: 'grid', gap: '10px' }}>
+                    {clientVehicles.map(v => (
+                      <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '10px 15px', borderRadius: '6px', border: '1px solid #eee' }}>
+                         <div>
+                            <div style={{marginBottom: '4px'}}>
+                               <strong style={{fontSize: '14px'}}>{v.brand} {v.model}</strong> 
+                               <span style={{fontSize: '12px', background: '#e0f7fa', color: '#006064', padding: '2px 8px', borderRadius: '4px', marginLeft: '10px', fontWeight: '500'}}>
+                                  IMEI: {v.imei || 'Не указан'}
+                               </span>
+                            </div>
+                            <span style={{ color: '#888', fontSize: '12px' }}>Гос. номер: {v.plate_number || 'б/н'} • VIN: {v.vin || '—'} • Год: {v.year || '—'}</span>
+                         </div>
+                         {(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+                            <button className="btn-details" style={{padding: '4px 10px', fontSize: '12px'}} onClick={() => setEditingVehicle(v)}>✎ Изменить</button>
+                         )}
+                      </div>
+                    ))}
+                  </div>
 								</div>
 							)}
 						</div>
@@ -626,12 +643,12 @@ export default function Clients() {
 											}}
 										>
 											<div
-												className={`status-badge ${req.is_paid ? 'status-progress' : 'status-new'}`}
+												className={`status-badge ${Boolean(req.is_paid) ? 'status-progress' : 'status-new'}`}
 												style={{ padding: '2px 10px', fontSize: '11px' }}
 											>
-												{req.is_paid ? 'Оплачено' : 'Ожидает оплаты'}
+												{Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}
 											</div>
-											{req.is_paid && req.paid_at && (
+											{Boolean(req.is_paid) && req.paid_at && (
 												<span
 													style={{
 														fontSize: '11px',
@@ -672,6 +689,46 @@ export default function Clients() {
 					</div>
 				</div>
 			)}
+
+      {/* МОДАЛКА РЕДАКТИРОВАНИЯ АВТОМОБИЛЯ (БЕЗ РУЧНОГО ВВОДА IMEI) */}
+      {editingVehicle && (
+        <div className="modal-overlay open" onClick={() => setEditingVehicle(null)}>
+            <div className="modal-window" onClick={e => e.stopPropagation()} style={{maxWidth: '400px'}}>
+                <div className="modal-header">
+                    <span className="modal-title">Редактирование авто</span>
+                    <button className="modal-close" onClick={() => setEditingVehicle(null)}>&times;</button>
+                </div>
+                <div className="modal-body" style={{padding: '20px', background: '#f7f7f7'}}>
+                    <form onSubmit={handleVehicleSubmit} id="vehicle-form" style={{display: 'flex', flexDirection: 'column', gap: '15px'}}>
+                        <div>
+                            <label className="field-label req-mark">Марка:</label>
+                            <input className="form-input" style={{width: '100%'}} value={editingVehicle.brand || ''} onChange={e => setEditingVehicle({...editingVehicle, brand: e.target.value})} required/>
+                        </div>
+                        <div>
+                            <label className="field-label req-mark">Модель:</label>
+                            <input className="form-input" style={{width: '100%'}} value={editingVehicle.model || ''} onChange={e => setEditingVehicle({...editingVehicle, model: e.target.value})} required/>
+                        </div>
+                        <div>
+                            <label className="field-label">Гос. номер:</label>
+                            <input className="form-input" style={{width: '100%'}} value={editingVehicle.plate_number || ''} onChange={e => setEditingVehicle({...editingVehicle, plate_number: e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="field-label">VIN-код:</label>
+                            <input className="form-input" style={{width: '100%'}} maxLength="17" value={editingVehicle.vin || ''} onChange={e => setEditingVehicle({...editingVehicle, vin: e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="field-label">Год выпуска:</label>
+                            <input className="form-input" type="number" style={{width: '100%'}} value={editingVehicle.year || ''} onChange={e => setEditingVehicle({...editingVehicle, year: e.target.value})} />
+                        </div>
+                    </form>
+                </div>
+                <div className="modal-footer">
+                    <button className="modal-submit-btn" type="button" style={{borderColor: '#aaa', color: '#888'}} onClick={() => setEditingVehicle(null)}>Отмена</button>
+                    <button className="modal-submit-btn" type="submit" form="vehicle-form">Сохранить</button>
+                </div>
+            </div>
+        </div>
+      )}
 
 			<CreateClientModal
 				isOpen={isCreateModalOpen}

@@ -4,235 +4,235 @@ import '../styles/Requests.css';
 import RequestEquipmentPanel from './RequestEquipmentPanel'
 
 const getUserRole = () => {
-  try {
-    const token = localStorage.getItem('access_token');
-    if (!token) return null;
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
-    return JSON.parse(jsonPayload).role;
-  } catch (error) { return null; }
+	try {
+		const token = localStorage.getItem('access_token');
+		if (!token) return null;
+		const base64Url = token.split('.')[1];
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+		const jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
+			return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+		}).join(''));
+		return JSON.parse(jsonPayload).role;
+	} catch (error) { return null; }
 };
 
 const mapTypeToUI = (dbType) => {
-  if (!dbType) return 'Физ. лицо';
-  const t = String(dbType).toUpperCase();
-  if (t === 'TOO' || t === 'ТОО') return 'ТОО';
-  if (t === 'IP' || t === 'ИП') return 'ИП';
-  return 'Физ. лицо';
+	if (!dbType) return 'Физ. лицо';
+	const t = String(dbType).toUpperCase();
+	if (t === 'TOO' || t === 'ТОО') return 'ТОО';
+	if (t === 'IP' || t === 'ИП') return 'ИП';
+	return 'Физ. лицо';
 };
 
 export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdated, initialTab = 'info', onEditClick }) {
-  const [activeTab, setActiveTab] = useState(initialTab); 
-  const [request, setRequest] = useState(null);
-  const [comments, setComments] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [newComment, setNewComment] = useState('');
-  const [technicians, setTechnicians] = useState([]);
-  const [selectedTech, setSelectedTech] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  
-  const userRole = getUserRole();
+	const [activeTab, setActiveTab] = useState(initialTab);
+	const [request, setRequest] = useState(null);
+	const [comments, setComments] = useState([]);
+	const [history, setHistory] = useState([]);
+	const [newComment, setNewComment] = useState('');
+	const [technicians, setTechnicians] = useState([]);
+	const [selectedTech, setSelectedTech] = useState('');
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState('');
 
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    if (isOpen) window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+	const userRole = getUserRole();
 
-  useEffect(() => {
-    if (isOpen && requestId) {
-      setActiveTab(initialTab);
-      fetchRequestDetails();
-      fetchComments();
-      if (userRole === 'ADMIN' || userRole === 'SENIOR_TECHNICIAN') {
-        fetchTechnicians();
-      }
-    }
-  }, [isOpen, requestId, initialTab]);
+	useEffect(() => {
+		const handleKeyDown = (e) => {
+			if (e.key === 'Escape') onClose();
+		};
+		if (isOpen) window.addEventListener('keydown', handleKeyDown);
+		return () => window.removeEventListener('keydown', handleKeyDown);
+	}, [isOpen, onClose]);
 
-  useEffect(() => {
-    if (request) {
-      setSelectedTech(request.assigned_to ? request.assigned_to.toString() : '');
-    }
-  }, [request]);
+	useEffect(() => {
+		if (isOpen && requestId) {
+			setActiveTab(initialTab);
+			fetchRequestDetails();
+			fetchComments();
+			if (userRole === 'ADMIN' || userRole === 'SENIOR_TECHNICIAN') {
+				fetchTechnicians();
+			}
+		}
+	}, [isOpen, requestId, initialTab]);
 
-  const fetchRequestDetails = async () => {
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Не удалось загрузить данные заявки');
-      
-      const data = await res.json();
-      setRequest(data.request);
-      setHistory(data.history || []); 
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+	useEffect(() => {
+		if (request) {
+			setSelectedTech(request.assigned_to ? request.assigned_to.toString() : '');
+		}
+	}, [request]);
 
-  const fetchComments = async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}/comments`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setComments(data);
-      }
-    } catch (err) { console.error(err); }
-  };
+	const fetchRequestDetails = async () => {
+		setLoading(true);
+		try {
+			const token = localStorage.getItem('access_token');
+			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
+				headers: { 'Authorization': `Bearer ${token}` }
+			});
+			if (!res.ok) throw new Error('Не удалось загрузить данные заявки');
 
-  const fetchTechnicians = async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/users/technicians`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setTechnicians(data);
-      }
-    } catch (err) { console.error(err); }
-  };
+			const data = await res.json();
+			setRequest(data.request);
+			setHistory(data.history || []);
+		} catch (err) {
+			setError(err.message);
+		} finally {
+			setLoading(false);
+		}
+	};
 
-  const handleStatusChange = async (e) => {
-    const newStatus = e.target.value;
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ status: newStatus })
-      });
-      if (!res.ok) throw new Error('Не удалось обновить статус');
-      setRequest({ ...request, status: newStatus });
-      fetchRequestDetails(); 
-      onUpdated(); 
-    } catch (err) { alert(err.message); }
-  };
+	const fetchComments = async () => {
+		try {
+			const token = localStorage.getItem('access_token');
+			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}/comments`, {
+				headers: { 'Authorization': `Bearer ${token}` }
+			});
+			if (res.ok) {
+				const data = await res.json();
+				setComments(data);
+			}
+		} catch (err) { console.error(err); }
+	};
 
-  const handlePaymentChange = async (e) => {
-    const newIsPaid = e.target.value === 'true';
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ is_paid: newIsPaid })
-      });
-      if (!res.ok) throw new Error('Не удалось обновить статус оплаты');
-      setRequest({ ...request, is_paid: newIsPaid });
-      fetchRequestDetails(); 
-      onUpdated(); 
-    } catch (err) { alert(err.message); }
-  };
+	const fetchTechnicians = async () => {
+		try {
+			const token = localStorage.getItem('access_token');
+			const res = await fetch(`http://127.0.0.1:8000/users/technicians`, {
+				headers: { 'Authorization': `Bearer ${token}` }
+			});
+			if (res.ok) {
+				const data = await res.json();
+				setTechnicians(data);
+			}
+		} catch (err) { console.error(err); }
+	};
 
-  const handleAddComment = async () => {
-    if (!newComment.trim()) return;
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ request_id: requestId, message: newComment })
-      });
-      if (!res.ok) throw new Error('Не удалось отправить комментарий');
-      setNewComment('');
-      fetchComments(); 
-    } catch (err) { alert(err.message); }
-  };
+	const handleStatusChange = async (e) => {
+		const newStatus = e.target.value;
+		try {
+			const token = localStorage.getItem('access_token');
+			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+				body: JSON.stringify({ status: newStatus })
+			});
+			if (!res.ok) throw new Error('Не удалось обновить статус');
+			setRequest({ ...request, status: newStatus });
+			fetchRequestDetails();
+			onUpdated();
+		} catch (err) { alert(err.message); }
+	};
 
-  const handleAssign = async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      // Если пусто — отправляем null (снятие монтажника)
-      const techId = selectedTech ? parseInt(selectedTech, 10) : null;
-      
-      const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}/assign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ technician_id: techId })
-      });
-      
-      if (!res.ok) throw new Error('Ошибка при назначении/снятии сотрудника');
-      
-      // Выводим правильное уведомление
-      if (!techId) alert('Монтажник успешно снят с заявки!');
-      else alert(request.assigned_to ? 'Монтажник успешно заменен!' : 'Монтажник назначен!');
-      
-      fetchRequestDetails();
-      onUpdated();
-    } catch (err) { alert(err.message); }
-  };
+	const handlePaymentChange = async (e) => {
+		const newIsPaid = e.target.value === 'true';
+		try {
+			const token = localStorage.getItem('access_token');
+			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+				body: JSON.stringify({ is_paid: newIsPaid })
+			});
+			if (!res.ok) throw new Error('Не удалось обновить статус оплаты');
+			setRequest({ ...request, is_paid: newIsPaid });
+			fetchRequestDetails();
+			onUpdated();
+		} catch (err) { alert(err.message); }
+	};
 
-  // ФУНКЦИЯ УДАЛЕНИЯ ЗАЯВКИ
-  const handleDeleteRequest = async () => {
-    if (!window.confirm('Вы уверены, что хотите удалить эту заявку? Она будет перемещена в Корзину.')) return;
-    
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        const errData = await res.text();
-        throw new Error(errData || 'Ошибка при удалении заявки');
-      }
-      alert('Заявка удалена!');
-      onUpdated(); // Обновляем список на главной
-      onClose();   // Закрываем модалку
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+	const handleAddComment = async () => {
+		if (!newComment.trim()) return;
+		try {
+			const token = localStorage.getItem('access_token');
+			const res = await fetch(`http://127.0.0.1:8000/requests/comments`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+				body: JSON.stringify({ request_id: requestId, message: newComment })
+			});
+			if (!res.ok) throw new Error('Не удалось отправить комментарий');
+			setNewComment('');
+			fetchComments();
+		} catch (err) { alert(err.message); }
+	};
 
-  const getTechName = (val) => {
-    const strVal = String(val);
-    if (!val || strVal === 'null' || strVal === 'None' || strVal.includes('NaN')) return 'Не назначен';
-    
-    const id = parseInt(strVal, 10);
-    if (isNaN(id)) return strVal;
-    
-    const tech = technicians.find(t => t.id === id);
-    return tech ? tech.name : `Сотрудник ID: ${id}`;
-  };
+	const handleAssign = async () => {
+		try {
+			const token = localStorage.getItem('access_token');
+			// Если пусто — отправляем null (снятие монтажника)
+			const techId = selectedTech ? parseInt(selectedTech, 10) : null;
 
-  const renderHistoryMessage = (h) => {
-    if (h.action === 'CREATED') return 'Заявка создана';
-    if (h.action === 'STATUS_CHANGED') return `Статус изменен: ${h.old_value || '—'} → ${h.new_value}`;
-    if (h.action === 'PAYMENT_CHANGED') return `Статус оплаты: ${h.new_value === 'true' ? 'Оплачено' : 'Ожидает оплаты'}`;
-    
-    if (h.action === 'ASSIGNED' || h.action === 'TECHNICIAN_ASSIGNED' || h.action === 'TECHNICIAN_CHANGED') {
-      if (h.old_value && h.old_value !== 'null' && h.old_value !== 'None' && !String(h.old_value).includes('NaN')) {
-        return `Монтажник изменен: ${getTechName(h.old_value)} → ${getTechName(h.new_value)}`;
-      }
-      return `Назначен монтажник: ${getTechName(h.new_value)}`;
-    }
-    return h.action;
-  };
+			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}/assign`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+				body: JSON.stringify({ technician_id: techId })
+			});
 
-  if (!isOpen) return null;
+			if (!res.ok) throw new Error('Ошибка при назначении/снятии сотрудника');
 
-  const formatDate = (dateString) => {
-    if (!dateString) return '—';
-    const d = new Date(dateString);
-    return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
-  };
+			// Выводим правильное уведомление
+			if (!techId) alert('Монтажник успешно снят с заявки!');
+			else alert(request.assigned_to ? 'Монтажник успешно заменен!' : 'Монтажник назначен!');
 
-  return (
+			fetchRequestDetails();
+			onUpdated();
+		} catch (err) { alert(err.message); }
+	};
+
+	// ФУНКЦИЯ УДАЛЕНИЯ ЗАЯВКИ
+	const handleDeleteRequest = async () => {
+		if (!window.confirm('Вы уверены, что хотите удалить эту заявку? Она будет перемещена в Корзину.')) return;
+
+		try {
+			const token = localStorage.getItem('access_token');
+			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
+				method: 'DELETE',
+				headers: { 'Authorization': `Bearer ${token}` }
+			});
+			if (!res.ok) {
+				const errData = await res.text();
+				throw new Error(errData || 'Ошибка при удалении заявки');
+			}
+			alert('Заявка удалена!');
+			onUpdated(); // Обновляем список на главной
+			onClose();   // Закрываем модалку
+		} catch (err) {
+			alert(err.message);
+		}
+	};
+
+	const getTechName = (val) => {
+		const strVal = String(val);
+		if (!val || strVal === 'null' || strVal === 'None' || strVal.includes('NaN')) return 'Не назначен';
+
+		const id = parseInt(strVal, 10);
+		if (isNaN(id)) return strVal;
+
+		const tech = technicians.find(t => t.id === id);
+		return tech ? tech.name : `Сотрудник ID: ${id}`;
+	};
+
+	const renderHistoryMessage = (h) => {
+		if (h.action === 'CREATED') return 'Заявка создана';
+		if (h.action === 'STATUS_CHANGED') return `Статус изменен: ${h.old_value || '—'} → ${h.new_value}`;
+		if (h.action === 'PAYMENT_CHANGED') return `Статус оплаты: ${h.new_value === 'true' ? 'Оплачено' : 'Ожидает оплаты'}`;
+
+		if (h.action === 'ASSIGNED' || h.action === 'TECHNICIAN_ASSIGNED' || h.action === 'TECHNICIAN_CHANGED') {
+			if (h.old_value && h.old_value !== 'null' && h.old_value !== 'None' && !String(h.old_value).includes('NaN')) {
+				return `Монтажник изменен: ${getTechName(h.old_value)} → ${getTechName(h.new_value)}`;
+			}
+			return `Назначен монтажник: ${getTechName(h.new_value)}`;
+		}
+		return h.action;
+	};
+
+	if (!isOpen) return null;
+
+	const formatDate = (dateString) => {
+		if (!dateString) return '—';
+		const d = new Date(dateString);
+		return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+	};
+
+	return (
 		<div className='modal-overlay open' onClick={onClose}>
 			<div className='custom-detail-window' onClick={e => e.stopPropagation()}>
 				<div className='modal-header'>
@@ -310,27 +310,27 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 												>
 													{mapTypeToUI(
 														request.client_type ||
-															request.type ||
-															request.client?.type,
+														request.type ||
+														request.client?.type,
 													)}
 												</span>
 											</div>
 											{['TOO', 'IP', 'ТОО', 'ИП'].includes(
 												String(
 													request.client_type ||
-														request.type ||
-														request.client?.type,
+													request.type ||
+													request.client?.type,
 												).toUpperCase(),
 											) && (
-												<div className='info-row'>
-													<span className='info-key'>Наименование</span>
-													<span className='info-val'>
-														{request.company_name ||
-															request.client?.company_name ||
-															'—'}
-													</span>
-												</div>
-											)}
+													<div className='info-row'>
+														<span className='info-key'>Наименование</span>
+														<span className='info-val'>
+															{request.company_name ||
+																request.client?.company_name ||
+																'—'}
+														</span>
+													</div>
+												)}
 											<div className='info-row'>
 												<span className='info-key'>ФИО</span>
 												<span className='info-val'>
@@ -453,17 +453,10 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 														alignItems: 'center',
 													}}
 												>
-													<span
-														className={`status-badge ${request.is_paid ? 'status-progress' : 'status-new'}`}
-														style={{
-															padding: '2px 8px',
-															fontSize: '11px',
-															display: 'inline-block',
-														}}
-													>
-														{request.is_paid ? 'Оплачено' : 'Ожидает оплаты'}
+													<span className={`status-badge ${Boolean(request.is_paid) ? 'status-progress' : 'status-new'}`} style={{ padding: '2px 8px', fontSize: '11px', display: 'inline-block' }}>
+														{Boolean(request.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}
 													</span>
-													{request.is_paid && request.paid_at && (
+													{Boolean(request.is_paid) && request.paid_at && (
 														<span style={{ fontSize: '12px', color: '#888' }}>
 															(Дата: {formatDate(request.paid_at)})
 														</span>
@@ -553,7 +546,7 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 
 								{activeTab === 'equipment' && (
 									<div className='tab-content'>
-										<RequestEquipmentPanel requestId={requestId} />
+										<RequestEquipmentPanel requestId={requestId} vehicleId={request.vehicle_id} />
 									</div>
 								)}
 							</>
@@ -588,7 +581,7 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 								}}
 							>
 								{userRole !== 'TECHNICIAN' &&
-								userRole !== 'SENIOR_TECHNICIAN' ? (
+									userRole !== 'SENIOR_TECHNICIAN' ? (
 									<div className='footer-group'>
 										<span style={{ fontSize: '13px' }}>Статус:</span>
 										<select
@@ -634,13 +627,8 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 										</select>
 									</div>
 								) : (
-									<div className='footer-group'>
-										<span style={{ fontSize: '13px' }}>
-											Оплата:{' '}
-											<strong>
-												{request.is_paid ? 'Оплачено' : 'Ожидает оплаты'}
-											</strong>
-										</span>
+									<div className="footer-group">
+										<span style={{ fontSize: '13px' }}>Оплата: <strong>{Boolean(request.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}</strong></span>
 									</div>
 								)}
 							</div>
@@ -673,8 +661,8 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 							}}
 						>
 							{(userRole === 'ADMIN' || userRole === 'SENIOR_TECHNICIAN') &&
-							request.status !== 'COMPLETED' &&
-							request.status !== 'CANCELLED' ? (
+								request.status !== 'COMPLETED' &&
+								request.status !== 'CANCELLED' ? (
 								<div className='footer-group'>
 									<span style={{ fontSize: '13px' }}>Монтажник:</span>
 									<select
