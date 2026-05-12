@@ -143,6 +143,58 @@ export default function Requests() {
     setActiveDropdown(prev => prev === reqId ? null : reqId);
   };
 
+  // --- ИСПРАВЛЕННЫЕ ФУНКЦИИ КНОПОК ---
+  
+  // 1. Оплата заявки (для Бухгалтера)
+  const handlePayRequest = async (e, reqId) => {
+    e.stopPropagation();
+    if (!window.confirm('Отметить заявку как оплаченную?')) return;
+    
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ is_paid: true })
+      });
+      if (!res.ok) throw new Error('Ошибка при обновлении статуса оплаты');
+      
+      fetchRequests(); 
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+ // 2. Принятие заявки (для Монтажника) - ИСПРАВЛЕНО ПОД НОВЫЙ РОУТ БЭКЕНДА
+  const handleAcceptRequest = async (e, req) => {
+    e.stopPropagation();
+    if (!window.confirm('Принять эту заявку в работу?')) return;
+    
+    try {
+      const token = localStorage.getItem('access_token');
+      
+      // Бэкендер сделал роут /accept, который сам берет ID из токена, 
+      // назначает заявку и меняет статус на IN_PROGRESS за один запрос!
+      const res = await fetch(`http://127.0.0.1:8000/requests/${req.id}/accept`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Authorization': `Bearer ${token}` 
+        }
+        // body больше не нужен, бэкенд сам все поймет по токену!
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || 'Ошибка при принятии заявки');
+      }
+
+      fetchRequests(); 
+    } catch (err) {
+      alert(`Ошибка: ${err.message}`);
+    }
+  };
+
   const handleDeleteRequest = async (e, reqId) => {
     e.stopPropagation();
     setActiveDropdown(null);
@@ -428,6 +480,8 @@ export default function Requests() {
 							</div>
 						</div>
 
+						{/* --- ИСПРАВЛЕННАЯ ВЕРСТКА ДЛЯ КНОПОК --- */}
+						{/* --- ВЕРХНИЙ ПРАВЫЙ УГОЛ: Детали и меню --- */}
 						<div
 							className='card-actions-wrapper'
 							style={{
@@ -457,7 +511,74 @@ export default function Requests() {
 							</div>
 
 							{activeDropdown === req.id && (
-								<div className='dropdown-menu'>
+								<div className='dropdown-menu' style={{ top: '35px', right: '0' }}>
+									<div className='dropdown-item' onClick={e => handleMenuOpen(e, req.id)}>
+										<svg viewBox='0 0 24 24'><path d='M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2z' /></svg> Открыть
+									</div>
+									{userRole !== 'TECHNICIAN' && (
+										<div className='dropdown-item' onClick={e => handleMenuEdit(e, req)}>
+											<svg viewBox='0 0 24 24'><path d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z' /></svg> Редактировать
+										</div>
+									)}
+									<div className='dropdown-item' onClick={e => handleMenuDownload(e, req.id)}>
+										<svg viewBox='0 0 24 24'><path d='M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z' /></svg> Скачать заявку
+									</div>
+									<div className='dropdown-divider'></div>
+									<div className='dropdown-item' onClick={e => handleMenuHistory(e, req.id)}>
+										<svg viewBox='0 0 24 24'><path d='M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z' /></svg> История изменений
+									</div>
+									{userRole === 'ADMIN' && (
+										<>
+											<div className='dropdown-divider'></div>
+											<div className='dropdown-item' style={{ color: '#c62828' }} onClick={e => handleDeleteRequest(e, req.id)}>
+												<svg viewBox='0 0 24 24' fill='#c62828'><path d='M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z' /></svg> Удалить заявку
+											</div>
+										</>
+									)}
+								</div>
+							)}
+						</div>
+
+						{/* --- НИЖНИЙ ПРАВЫЙ УГОЛ: Кнопки действий по ролям --- */}
+						<div
+							className='role-actions-wrapper'
+							style={{
+								position: 'absolute',
+								bottom: '15px', /* Прижимаем к низу карточки */
+								right: '15px',  /* Прижимаем к правому краю */
+								display: 'flex',
+								gap: '10px'
+							}}
+						>
+							{userRole === 'ACCOUNTANT' && !req.is_paid && (
+								<button
+									className='btn-green'
+									style={{ padding: '6px 14px', fontSize: '13px', borderRadius: '6px' }}
+									onClick={e => handlePayRequest(e, req.id)}
+								>
+									Оплатить
+								</button>
+							)}
+
+							{(userRole === 'TECHNICIAN' || userRole === 'SENIOR_TECHNICIAN') && !req.assigned_to && (
+								<button
+									className='btn-green'
+									style={{ 
+										padding: '6px 14px', 
+										fontSize: '13px', 
+										borderRadius: '6px',
+										backgroundColor: '#0288d1',
+										borderColor: '#0288d1',
+										color: '#fff'
+									}}
+									onClick={e => handleAcceptRequest(e, req)}
+								>
+									Принять заявку
+								</button>
+							)}
+					
+							{activeDropdown === req.id && (
+								<div className='dropdown-menu' style={{ top: '35px', right: '0' }}>
 									<div
 										className='dropdown-item'
 										onClick={e => handleMenuOpen(e, req.id)}

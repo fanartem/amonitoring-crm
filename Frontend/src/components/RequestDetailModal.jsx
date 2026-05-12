@@ -50,9 +50,9 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 			setActiveTab(initialTab);
 			fetchRequestDetails();
 			fetchComments();
-			if (userRole === 'ADMIN' || userRole === 'SENIOR_TECHNICIAN') {
-				fetchTechnicians();
-			}
+			// Убрали проверку ролей! Теперь список монтажников грузится для всех, 
+			// чтобы у всех красиво отображались имена вместо ID.
+			fetchTechnicians();
 		}
 	}, [isOpen, requestId, initialTab]);
 
@@ -218,6 +218,8 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 		};
 
 		if (h.action === 'CREATED') return 'Заявка создана';
+
+		if (h.action === 'SELF_ACCEPTED') return 'Заявка принята в работу';
 		
 		if (h.action === 'STATUS_CHANGED') {
 			const statusMap = { 'NEW': 'В ожидании', 'IN_PROGRESS': 'В процессе', 'COMPLETED': 'Завершено', 'CANCELLED': 'Отменено' };
