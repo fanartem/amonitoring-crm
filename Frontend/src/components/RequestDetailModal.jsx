@@ -157,7 +157,6 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 	const handleAssign = async () => {
 		try {
 			const token = localStorage.getItem('access_token');
-			// Если пусто — отправляем null (снятие монтажника)
 			const techId = selectedTech ? parseInt(selectedTech, 10) : null;
 
 			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}/assign`, {
@@ -168,7 +167,6 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 
 			if (!res.ok) throw new Error('Ошибка при назначении/снятии сотрудника');
 
-			// Выводим правильное уведомление
 			if (!techId) alert('Монтажник успешно снят с заявки!');
 			else alert(request.assigned_to ? 'Монтажник успешно заменен!' : 'Монтажник назначен!');
 
@@ -177,7 +175,6 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 		} catch (err) { alert(err.message); }
 	};
 
-	// ФУНКЦИЯ УДАЛЕНИЯ ЗАЯВКИ
 	const handleDeleteRequest = async () => {
 		if (!window.confirm('Вы уверены, что хотите удалить эту заявку? Она будет перемещена в Корзину.')) return;
 
@@ -192,8 +189,8 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 				throw new Error(errData || 'Ошибка при удалении заявки');
 			}
 			alert('Заявка удалена!');
-			onUpdated(); // Обновляем список на главной
-			onClose();   // Закрываем модалку
+			onUpdated(); 
+			onClose();   
 		} catch (err) {
 			alert(err.message);
 		}
@@ -210,18 +207,58 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 		return tech ? tech.name : `Сотрудник ID: ${id}`;
 	};
 
+	// === НОВЫЙ УМНЫЙ ПЕРЕВОДЧИК ИСТОРИИ ===
 	const renderHistoryMessage = (h) => {
+		const extractId = (str) => {
+			if (!str) return null;
+			const match = String(str).match(/assigned_to=(\d+)/);
+			if (match) return parseInt(match[1], 10);
+			const num = parseInt(str, 10);
+			return isNaN(num) ? null : num;
+		};
+
 		if (h.action === 'CREATED') return 'Заявка создана';
-		if (h.action === 'STATUS_CHANGED') return `Статус изменен: ${h.old_value || '—'} → ${h.new_value}`;
-		if (h.action === 'PAYMENT_CHANGED') return `Статус оплаты: ${h.new_value === 'true' ? 'Оплачено' : 'Ожидает оплаты'}`;
+		
+		if (h.action === 'STATUS_CHANGED') {
+			const statusMap = { 'NEW': 'В ожидании', 'IN_PROGRESS': 'В процессе', 'COMPLETED': 'Завершено', 'CANCELLED': 'Отменено' };
+			return `Статус изменен: ${statusMap[h.old_value] || h.old_value} → ${statusMap[h.new_value] || h.new_value}`;
+		}
+		
+		if (h.action === 'PAYMENT_CHANGED' || h.action === 'PAYMENT_UPDATED') {
+			const isPaid = String(h.new_value).toLowerCase().includes('true');
+			return `Статус оплаты: ${isPaid ? 'Оплачено' : 'Ожидает оплаты'}`;
+		}
 
 		if (h.action === 'ASSIGNED' || h.action === 'TECHNICIAN_ASSIGNED' || h.action === 'TECHNICIAN_CHANGED') {
-			if (h.old_value && h.old_value !== 'null' && h.old_value !== 'None' && !String(h.old_value).includes('NaN')) {
-				return `Монтажник изменен: ${getTechName(h.old_value)} → ${getTechName(h.new_value)}`;
+			const oldId = extractId(h.old_value);
+			const newId = extractId(h.new_value);
+			if (oldId && oldId !== newId) {
+				return `Монтажник изменен: ${getTechName(oldId)} → ${getTechName(newId)}`;
 			}
-			return `Назначен монтажник: ${getTechName(h.new_value)}`;
+			return `Назначен монтажник: ${getTechName(newId)}`;
 		}
-		return h.action;
+
+		if (h.action === 'UNASSIGNED') {
+			const oldId = extractId(h.old_value);
+			return `Монтажник снят: ${getTechName(oldId)}`;
+		}
+
+		if (h.action === 'EQUIPMENT_ATTACHED') {
+			const eq = h.new_value ? h.new_value.replace(/, quantity=\d+/, '') : '';
+			return `Привязано оборудование: ${eq}`;
+		}
+
+		if (h.action === 'EQUIPMENT_DETACHED') {
+			const eq = h.old_value ? h.old_value.replace(/, quantity=\d+/, '') : '';
+			return `Отвязано оборудование: ${eq}`;
+		}
+
+		if (h.action === 'CLIENT_CHANGED') return 'Изменен клиент заявки';
+		if (h.action === 'VEHICLE_CHANGED') return 'Изменен автомобиль заявки';
+		if (h.action === 'CITY_CHANGED') return `Город изменен: ${h.new_value}`;
+		if (h.action === 'ADDRESS_CHANGED') return `Адрес изменен: ${h.new_value}`;
+
+		return h.action; 
 	};
 
 	if (!isOpen) return null;
@@ -633,7 +670,6 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 								)}
 							</div>
 
-							{/* КНОПКА УДАЛЕНИЯ ТОЛЬКО ДЛЯ АДМИНА */}
 							{userRole === 'ADMIN' && (
 								<button
 									onClick={handleDeleteRequest}

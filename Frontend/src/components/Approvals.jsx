@@ -149,7 +149,17 @@ export default function Approvals() {
 								<div className='approval-name'>{user.name || 'Без имени'}</div>
 								<div className='approval-email'>{user.email}</div>
 
-								<div className={`approval-role role-badge ${roleClasses[user.role] || 'role-tech'}`}>
+								{/* НОВОЕ: Вывод города, если пользователь его указал */}
+								{user.city && (
+									<div style={{ fontSize: '13px', color: '#666', marginTop: '4px', marginBottom: '8px', fontWeight: '500' }}>
+										📍 {user.city}
+									</div>
+								)}
+
+								<div 
+									className={`approval-role role-badge ${roleClasses[user.role] || 'role-tech'}`}
+									style={{ marginTop: user.city ? '0' : '8px' }}
+								>
 									{roleLabels[user.role] || user.role}
 								</div>
 

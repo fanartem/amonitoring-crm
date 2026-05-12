@@ -13,6 +13,7 @@ export default function Employees() {
 		name: '',
 		password: '',
 		role: '',
+		city: '', // Добавили поле города в состояние формы
 	})
 
   const currentUser = JSON.parse(localStorage.getItem('user_data') || 'null') || {}
@@ -93,6 +94,7 @@ export default function Employees() {
 			name: emp.name || '',
 			password: '',
 			role: emp.role || '',
+			city: emp.city || '', // Подтягиваем город при редактировании
 		})
 		setIsModalOpen(true)
 	}
@@ -118,9 +120,10 @@ export default function Employees() {
 				body.password = formData.password
 			}
 
-			// только админ может менять роль
+			// только админ может менять роль и город
 			if (isAdmin) {
 				body.role = formData.role
+				body.city = formData.city || null // Отправляем город на бэкенд
 			}
 
 			const response = await fetch(
@@ -203,13 +206,22 @@ export default function Employees() {
 							className={`emp-card ${emp.role === 'ADMIN' ? 'admin-card' : ''}`}
 						>
 							<div className='emp-name'>{emp.name}</div>
-							<div className='emp-email'>@{emp.email.split('@')[0]}</div>{' '}
-							{/* Показываем почту в виде @username как на скрине */}
+							<div className='emp-email'>@{emp.email.split('@')[0]}</div>
+							
+							{/* НОВОЕ: Отображение города, если он есть */}
+							{emp.city && (
+								<div style={{ fontSize: '12px', color: '#666', marginTop: '4px', marginBottom: '8px', fontWeight: '500' }}>
+									📍 {emp.city}
+								</div>
+							)}
+
 							<div
 								className={`role-badge ${roleClasses[emp.role] || 'role-tech'}`}
+								style={{ marginTop: emp.city ? '0' : '8px' }}
 							>
 								{roleLabels[emp.role] || emp.role}
 							</div>
+							
 							{/* РЕНДЕРИМ КНОПКИ ТОЛЬКО ДЛЯ АДМИНА */}
 							{(isAdmin || isCurrentUser(emp)) && (
 								<div className='emp-actions'>
@@ -280,22 +292,39 @@ export default function Employees() {
 							</label>
 
 							{isAdmin && (
-								<label>
-									Роль
-									<select
-										name='role'
-										value={formData.role}
-										onChange={handleChange}
-									>
-										{Object.entries(roleLabels).map(
-											([roleValue, roleLabel]) => (
-												<option key={roleValue} value={roleValue}>
-													{roleLabel}
-												</option>
-											),
-										)}
-									</select>
-								</label>
+								<>
+									<label>
+										Роль
+										<select
+											name='role'
+											value={formData.role}
+											onChange={handleChange}
+										>
+											{Object.entries(roleLabels).map(
+												([roleValue, roleLabel]) => (
+													<option key={roleValue} value={roleValue}>
+														{roleLabel}
+													</option>
+												),
+											)}
+										</select>
+									</label>
+
+									{/* НОВОЕ: Выбор города в модалке редактирования */}
+									<label>
+										Город
+										<select
+											name='city'
+											value={formData.city}
+											onChange={handleChange}
+										>
+											<option value=''>Все города (без привязки)</option>
+											<option value='Алматы'>Алматы</option>
+											<option value='Астана'>Астана</option>
+											<option value='Шымкент'>Шымкент</option>
+										</select>
+									</label>
+								</>
 							)}
 						</div>
 

@@ -1,19 +1,17 @@
 import React, { useState } from 'react';
 
 export default function Entrance() {
-  // Базовый URL твоего бэкенда (поменяй, если порт другой)
   const API_BASE_URL = 'http://localhost:8000';
 
-  // Состояния для переключения между логином и регистрацией
   const [isLoginMode, setIsLoginMode] = useState(true);
 
-  // Состояния для форм
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
+  // НОВОЕ: Состояние для города
+  const [city, setCity] = useState('');
 
-  // Состояния для сообщений
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -29,9 +27,8 @@ export default function Entrance() {
     }
 
     try {
-      // FastAPI OAuth2PasswordRequestForm ожидает x-www-form-urlencoded
       const params = new URLSearchParams();
-      params.append('username', email); // В FastAPI поле называется username
+      params.append('username', email); 
       params.append('password', password);
 
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
@@ -43,15 +40,12 @@ export default function Entrance() {
       const data = await response.json();
 
       if (!response.ok) {
-        // Бэкенд сам вернет 403, если is_approved == False
         throw new Error(data.detail || 'Неверный логин или пароль');
       }
 
-      // Сохраняем токен и данные юзера
       localStorage.setItem('access_token', data.access_token);
       localStorage.setItem('user_data', JSON.stringify(data.user));
 
-      // Перенаправляем в CRM (или перезагружаем страницу)
       window.location.href = '/'; 
 
     } catch (err) {
@@ -66,7 +60,13 @@ export default function Entrance() {
     setSuccess('');
 
     if (!name || !email || !password || !role) {
-      setError('Заполните все поля');
+      setError('Заполните все обязательные поля');
+      return;
+    }
+
+    // НОВОЕ: Заставляем монтажников обязательно выбирать город
+    if (['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(role) && !city) {
+      setError('Для монтажников необходимо обязательно указать город!');
       return;
     }
 
@@ -74,7 +74,8 @@ export default function Entrance() {
       const response = await fetch(`${API_BASE_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, role }),
+        // НОВОЕ: Отправляем город на бэкенд
+        body: JSON.stringify({ name, email, password, role, city: city || null }),
       });
 
       const data = await response.json();
@@ -84,15 +85,13 @@ export default function Entrance() {
       }
 
       setSuccess('Заявка отправлена! Ожидайте одобрения администратора.');
-      // Очищаем форму
-      setName(''); setEmail(''); setPassword(''); setRole('');
+      setName(''); setEmail(''); setPassword(''); setRole(''); setCity('');
 
     } catch (err) {
       setError(err.message);
     }
   };
 
-  // Переключатель режимов
   const toggleMode = () => {
     setIsLoginMode(!isLoginMode);
     setError('');
@@ -100,12 +99,8 @@ export default function Entrance() {
   };
 
   return (
-    // Обертка на весь экран с зеленым фоном
     <div className="login-screen">
       
-      {/* ══════════════════════════════════════
-               КАРТОЧКА ВХОДА (LOGIN)
-      ══════════════════════════════════════ */}
       {isLoginMode ? (
         <form className="login-card" onSubmit={handleLogin}>
           <div className="login-logo">
@@ -154,9 +149,6 @@ export default function Entrance() {
         </form>
       ) : (
 
-      /* ══════════════════════════════════════
-            КАРТОЧКА РЕГИСТРАЦИИ (REGISTER)
-      ══════════════════════════════════════ */
         <form className="login-card" style={{ maxWidth: '420px' }} onSubmit={handleRegister}>
           <div className="login-logo">
             <img src="/logo.png" alt="Amonitoring" onError={(e) => e.target.style.display='none'} />
@@ -187,7 +179,17 @@ export default function Entrance() {
             </div>
           </div>
 
-       <div className="login-field">
+          <div className="login-field">
+            <label className="login-label">Город <span style={{ color: '#e53e3e' }}>*</span></label>
+            <select className="login-input" style={{ cursor: 'pointer' }} value={city} onChange={(e) => setCity(e.target.value)}>
+              <option value="">— выберите город —</option>
+              <option value="Алматы">Алматы</option>
+              <option value="Астана">Астана</option>
+              <option value="Шымкент">Шымкент</option>
+            </select>
+          </div>
+
+          <div className="login-field">
             <label className="login-label">Роль <span style={{ color: '#e53e3e' }}>*</span></label>
             <select className="login-input" style={{ cursor: 'pointer' }} value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="">— выберите роль —</option>

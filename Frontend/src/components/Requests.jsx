@@ -143,7 +143,6 @@ export default function Requests() {
     setActiveDropdown(prev => prev === reqId ? null : reqId);
   };
 
-  // ФУНКЦИЯ УДАЛЕНИЯ ИЗ ТРЁХ ТОЧЕК
   const handleDeleteRequest = async (e, reqId) => {
     e.stopPropagation();
     setActiveDropdown(null);
@@ -181,14 +180,12 @@ export default function Requests() {
     setCreateModalOpen(true);
   };
 
-const handleMenuDownload = async (e, reqId) => {
+  const handleMenuDownload = async (e, reqId) => {
     e.stopPropagation();
     setActiveDropdown(null);
     
     try {
       const token = localStorage.getItem('access_token');
-      
-      // 1. Запрашиваем полные данные заявки (у нас уже есть этот эндпоинт!)
       const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -198,7 +195,6 @@ const handleMenuDownload = async (e, reqId) => {
       const data = await res.json();
       const req = data.request;
 
-      // 2. Формируем красивые данные для Excel
       const excelData = [
         { 'Параметр': 'Номер заявки', 'Значение': req.id },
         { 'Параметр': 'Дата создания', 'Значение': formatDate(req.created_at) },
@@ -216,19 +212,14 @@ const handleMenuDownload = async (e, reqId) => {
         { 'Параметр': 'VIN-код', 'Значение': req.vin || req.vehicle?.vin || '—' },
         { 'Параметр': 'Наличие маяка', 'Значение': req.has_beacon ? 'Да' : 'Нет' },
         { 'Параметр': 'Наличие блокировки', 'Значение': req.has_blocking ? 'Да' : 'Нет' },
-        { 'Параметр': 'Статус оплаты', 'Значение': req.is_paid ? 'Оплачено' : 'Ожидает оплаты' }
+        { 'Параметр': 'Статус оплаты', 'Значение': Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты' }
       ];
 
-      // 3. Создаем лист и книгу Excel
       const worksheet = XLSX.utils.json_to_sheet(excelData);
-      
-      // Делаем колонки пошире для красоты
       worksheet['!cols'] = [{ wch: 25 }, { wch: 40 }];
       
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, `Заявка ${reqId}`);
-
-      // 4. Скачиваем файл!
       XLSX.writeFile(workbook, `Заявка_№${reqId}.xlsx`);
 
     } catch (err) {
@@ -417,10 +408,10 @@ const handleMenuDownload = async (e, reqId) => {
 									}}
 								>
 									<div
-										className={`status-badge ${req.is_paid ? 'status-progress' : 'status-new'}`}
+										className={`status-badge ${Boolean(req.is_paid) ? 'status-progress' : 'status-new'}`}
 										style={{ padding: '2px 10px', fontSize: '11px' }}
 									>
-										{req.is_paid ? 'Оплачено' : 'Ожидает оплаты'}
+										{Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}
 									</div>
 									{Boolean(req.is_paid) && req.paid_at && (
 										<span
@@ -507,7 +498,6 @@ const handleMenuDownload = async (e, reqId) => {
 										История изменений
 									</div>
 
-									{/* НОВОЕ: Кнопка удаления в трёх точках */}
 									{userRole === 'ADMIN' && (
 										<>
 											<div className='dropdown-divider'></div>
