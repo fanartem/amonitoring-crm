@@ -649,10 +649,10 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
             )
             tech = cursor.fetchone()
 
-            if not tech or tech["role"] != "TECHNICIAN":
+            if not tech or tech["role"] not in ["TECHNICIAN", "SENIOR_TECHNICIAN", "ADMIN", "WAREHOUSE_MANAGER"]:
                 raise HTTPException(
                     status_code=400,
-                    detail="Назначить можно только обычного монтажника (TECHNICIAN)"
+                    detail="Нельзя назначить на заявку менеджера или бухгалтера"
                 )
 
             # Назначать нового монтажника можно только на NEW

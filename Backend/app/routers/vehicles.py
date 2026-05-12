@@ -32,7 +32,6 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
     finally:
         connection.close()
 
-
 @router.get("")
 def get_vehicles(client_id: int, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
@@ -51,7 +50,6 @@ def get_vehicles(client_id: int, current_user: dict = Depends(get_current_user))
             return cursor.fetchall()
     finally:
         connection.close()
-
 
 @router.get("/deleted")
 def get_deleted_vehicles(current_user: dict = Depends(get_current_user)):
@@ -259,7 +257,6 @@ def delete_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_use
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
-
 
 @router.patch("/{vehicle_id}/restore")
 def restore_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_user)):
