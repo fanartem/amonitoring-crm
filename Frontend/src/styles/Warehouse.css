@@ -228,6 +228,54 @@
   cursor: not-allowed;
 }
 
+/* --- Import result modal --- */
+
+.import-result-modal {
+  width: 560px;
+  max-width: 95%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: #fcfcfc;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.import-result-body {
+  flex: 1;
+  background: #f7f7f7;
+  padding: 20px;
+}
+
+.import-result-textarea {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 14px;
+  font-family: monospace;
+  color: #222;
+  background: #fff;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.import-result-textarea:focus {
+  border-color: #5e9424;
+  box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.import-result-hint {
+  margin-top: 10px;
+  color: #888;
+  font-size: 12px;
+}
+
+.import-result-footer {
+  gap: 12px;
+}
 
 /* --- Small screens --- */
 

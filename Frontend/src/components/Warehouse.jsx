@@ -18,6 +18,7 @@ export default function Warehouse() {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [importResult, setImportResult] = useState(null);
 
   const fileInputRef = useRef(null);
 
@@ -88,7 +89,7 @@ export default function Warehouse() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Ошибка импорта');
       
-	  alert(buildImportMessage(data));
+	  setImportResult(buildImportMessage(data));
       fetchItems();
     } catch (err) {
       alert(`Ошибка: ${err.message}`);
@@ -381,6 +382,61 @@ export default function Warehouse() {
 					fetchItems()
 				}}
 			/>
+
+			{importResult && (
+				<div
+					className='modal-overlay open'
+					onClick={() => setImportResult(null)}
+				>
+					<div
+						className='modal-window import-result-modal'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>Результат импорта</span>
+							<button
+								className='modal-close'
+								type='button'
+								onClick={() => setImportResult(null)}
+							>
+								&times;
+							</button>
+						</div>
+
+						<div className='import-result-body'>
+							<textarea
+								className='import-result-textarea'
+								value={importResult}
+								readOnly
+							/>
+
+							<div className='import-result-hint'>
+								Список можно скопировать и использовать для проверки пропущенных
+								устройств.
+							</div>
+						</div>
+
+						<div className='modal-footer import-result-footer'>
+							<button
+								className='modal-cancel-btn'
+								type='button'
+								onClick={() => setImportResult(null)}
+							>
+								Закрыть
+							</button>
+
+							<button
+								className='warehouse-submit-btn'
+								type='button'
+								onClick={() => navigator.clipboard.writeText(importResult)}
+							>
+								Скопировать
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+			
 		</div>
 	)
 }
