@@ -11,7 +11,7 @@ def get_technicians(current_user: dict = Depends(get_current_user)):
     try:
         with connection.cursor() as cursor:
             # Ищем только тех, у кого роль TECHNICIAN и аккаунт одобрен (is_approved = 1)
-            cursor.execute("SELECT id, name FROM users WHERE role = 'TECHNICIAN' AND is_approved = 1")
+            cursor.execute("SELECT id, name FROM users WHERE role IN ('TECHNICIAN', 'SENIOR_TECHNICIAN', 'ADMIN', 'WAREHOUSE_MANAGER') AND is_approved = 1")
             return cursor.fetchall()
     finally:
         connection.close()
