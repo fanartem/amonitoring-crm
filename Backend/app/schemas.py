@@ -68,11 +68,13 @@ class UserCreate(BaseModel):
     password: str
     name: str
     role: str
+    city: str | None = None
 
 class UserUpdate(BaseModel):
     email: Optional[str] = None
     password: Optional[str] = None
     role: Optional[str] = None
+    city: Optional[str] = None
 
 class WarehouseItemCreate(BaseModel):
     category: str

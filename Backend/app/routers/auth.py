@@ -32,10 +32,10 @@ def register(data: UserCreate):
             # Хэшируем пароль и сохраняем
             hashed = hash_password(data.password)
             sql = """
-            INSERT INTO users (email, hashed_password, name, role, is_approved)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO users (email, hashed_password, name, city, role, is_approved)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """
-            cursor.execute(sql, (data.email, hashed, data.name, final_role, is_approved))
+            cursor.execute(sql, (data.email, hashed, data.name, data.city, final_role, is_approved))
             connection.commit()
             
             if is_approved:
@@ -71,7 +71,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
             access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
             
             access_token = create_access_token(
-                data={"sub": str(user["id"]), "role": user["role"]},
+                data={
+                    "sub": str(user["id"]),
+                    "role": user["role"],
+                    "city": user["city"]
+                },
                 expires_delta=access_token_expires
             )
             
@@ -81,7 +85,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
                 "user": {
                     "id": user["id"],
                     "name": user["name"],
-                    "role": user["role"]
+                    "role": user["role"],
+                    "city": user["city"]
                 }
             }
     finally:

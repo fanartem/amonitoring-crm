@@ -14,6 +14,7 @@ def sync_db():
                         email VARCHAR(255) UNIQUE NOT NULL,
                         hashed_password VARCHAR(255) NOT NULL,
                         name VARCHAR(255) NOT NULL,
+                        city VARCHAR(100) NULL,
                         role ENUM('ADMIN', 'MANAGER', 'TECHNICIAN', 'SENIOR_TECHNICIAN', 'ACCOUNTANT', 'WAREHOUSE_MANAGER') NOT NULL,
                         is_approved BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

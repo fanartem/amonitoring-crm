@@ -11,7 +11,7 @@ def get_pending_users(admin: dict = Depends(get_current_admin)):
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT id, email, name, role, created_at 
+                SELECT id, email, name, role, city, created_at 
                 FROM users 
                 WHERE is_approved = FALSE
             """)
@@ -102,7 +102,7 @@ def update_user(
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
 
-            allowed_fields = {"email", "name", "password", "role"}
+            allowed_fields = {"email", "name", "password", "role", "city"}
             for key in data.keys():
                 if key not in allowed_fields:
                     raise HTTPException(status_code=400, detail=f"Invalid field: {key}")
@@ -132,6 +132,10 @@ def update_user(
             if "name" in data:
                 updates.append("name = %s")
                 values.append(data["name"])
+
+            if "city" in data:
+                updates.append("city = %s")
+                values.append(data["city"])
 
             if "password" in data:
                 from app.security import hash_password
@@ -163,7 +167,7 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT id, name, email, role
+                SELECT id, name, email, role, city
                 FROM users
                 WHERE is_approved = 1
             """)
