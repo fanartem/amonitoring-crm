@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File
 from io import StringIO
 import csv
 
@@ -115,15 +114,15 @@ def parse_int(value, default=0):
         raise HTTPException(status_code=400, detail=f"Некорректное числовое значение: {value}")
 
 @router.get("/template")
-def download_warehouse_csv_template(current_user: dict = Depends(get_current_user)):
+def download_warehouse_template(current_user: dict = Depends(get_current_user)):
     """
-    Скачать CSV-шаблон для импорта склада.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
+    Скачать CSV-шаблон для импорта оборудования.
     """
     require_warehouse_manage(current_user)
 
     output = StringIO()
-    writer = csv.writer(output)
+
+    writer = csv.writer(output, delimiter=";")
 
     writer.writerow([
         "category",
@@ -135,7 +134,7 @@ def download_warehouse_csv_template(current_user: dict = Depends(get_current_use
         "serial_number",
         "is_serialized",
         "quantity",
-        "note",
+        "note"
     ])
 
     writer.writerow([
@@ -148,7 +147,7 @@ def download_warehouse_csv_template(current_user: dict = Depends(get_current_use
         "",
         "true",
         "1",
-        "GPS tracker example",
+        "Основной GPS-трекер"
     ])
 
     writer.writerow([
@@ -161,7 +160,7 @@ def download_warehouse_csv_template(current_user: dict = Depends(get_current_use
         "",
         "true",
         "1",
-        "BLE sensor example",
+        "BLE-датчик"
     ])
 
     writer.writerow([
@@ -174,18 +173,17 @@ def download_warehouse_csv_template(current_user: dict = Depends(get_current_use
         "",
         "false",
         "50",
-        "Quantity-based stock item example",
+        "Расходник"
     ])
 
-    output.seek(0)
-
-    return StreamingResponse(
-        output,
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": "attachment; filename=warehouse_import_template.csv"
-        }
+    response = Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8"
     )
+
+    response.headers["Content-Disposition"] = "attachment; filename=warehouse_import_template.csv"
+
+    return response
 
 @router.post("/import")
 async def import_warehouse_items(
@@ -209,7 +207,16 @@ async def import_warehouse_items(
         raise HTTPException(status_code=400, detail="CSV должен быть в кодировке UTF-8")
 
     csv_file = StringIO(decoded_content)
-    reader = csv.DictReader(csv_file)
+
+    try:
+        sample = decoded_content[:2048]
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,")
+    except csv.Error:
+        dialect = csv.excel
+        dialect.delimiter = ";"
+
+    csv_file.seek(0)
+    reader = csv.DictReader(csv_file, dialect=dialect)
 
     required_columns = [
         "category",

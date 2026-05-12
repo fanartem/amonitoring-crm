@@ -4,7 +4,7 @@ import '../styles/Warehouse.css'
 import WarehouseItemModal from './WarehouseItemModal';
 
 const CATEGORIES = {
-  GPS_TRACKER: 'GPS-трекер', BEACON: 'Маяк', FUEL_SENSOR: 'ДУТ', BLE_SENSOR: 'BLE-датчик',
+  GPS_TRACKER: 'Трекер', BEACON: 'Маяк', FUEL_SENSOR: 'ДУТ', BLE_SENSOR: 'BLE-датчик',
   WIRED_SENSOR: 'Пров. датчик', RELAY: 'Реле', CABLE: 'Кабель', OTHER: 'Другое'
 };
 
@@ -88,7 +88,7 @@ export default function Warehouse() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Ошибка импорта');
       
-      alert(`Импорт завершен!\nДобавлено: ${data.imported_count}\nПропущено/Ошибок: ${data.skipped_count}`);
+	  alert(buildImportMessage(data));
       fetchItems();
     } catch (err) {
       alert(`Ошибка: ${err.message}`);
@@ -97,6 +97,30 @@ export default function Warehouse() {
     }
   };
 
+  const buildImportMessage = data => {
+		const lines = []
+
+		lines.push(`Добавлено: ${data.imported_count || 0}`)
+
+		const errors = data.errors || []
+
+		if (errors.length > 0) {
+			lines.push('Пропущено:')
+
+			errors.forEach(err => {
+				if (err.identifier_type && err.identifier_value) {
+					lines.push(`${err.identifier_type}: ${err.identifier_value}`)
+				} else if (err.row && err.error) {
+					lines.push(`Строка ${err.row}: ${err.error}`)
+				} else if (err.error) {
+					lines.push(err.error)
+				}
+			})
+		}
+
+		return lines.join('\n')
+	}
+  
   // СКАЧАТЬ ШАБЛОН CSV
   const downloadTemplate = async () => {
     const token = localStorage.getItem('access_token');
