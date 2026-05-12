@@ -45,18 +45,18 @@ export default function Sidebar() {
 				>
 					Сотрудники
 				</NavLink>
-				{isWarehouseManager || isAdmin && (
+
+				{(isWarehouseManager || isAdmin) && (
 					<NavLink
 						to='/warehouse'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 					>
 						Склад
-				</NavLink>)}
-				
+					</NavLink>
+				)}
 
 				{/* Только для администратора */}
 				{isAdmin && (
-					
 					<NavLink
 						to='/approvals'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -65,8 +65,8 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-                {/* НОВОЕ: Корзина для Админов и Менеджеров */}
-                {(isAdmin || isManager) && (
+				{/* НОВОЕ: Корзина для Админов и Менеджеров */}
+				{(isAdmin || isManager) && (
 					<NavLink
 						to='/trash'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
