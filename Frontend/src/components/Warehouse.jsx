@@ -12,93 +12,187 @@ const STATUSES = { IN_STOCK: 'На складе', RESERVED: 'Резерв', INST
 const STATUS_COLORS = { IN_STOCK: '#5e9424', RESERVED: '#f57c00', INSTALLED: '#1976d2', WRITTEN_OFF: '#c62828' };
 
 export default function Warehouse() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({ search: '', category: '', status: '' });
-  
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [importResult, setImportResult] = useState(null);
+	const [items, setItems] = useState([])
+	const [loading, setLoading] = useState(false)
+	const [filters, setFilters] = useState({
+		search: '',
+		category: '',
+		status: '',
+	})
+	const [viewMode, setViewMode] = useState('active'); // active | trash
 
-  const fileInputRef = useRef(null);
+	const [isModalOpen, setIsModalOpen] = useState(false)
+	const [editItem, setEditItem] = useState(null)
+	const [importResult, setImportResult] = useState(null)
 
-  useEffect(() => {
-    fetchItems();
-  }, [filters]);
+	const fileInputRef = useRef(null)
 
-  const fetchItems = async () => {
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('access_token');
-      // Собираем query-параметры
-      const params = new URLSearchParams();
-      if (filters.category) params.append('category', filters.category);
-      if (filters.status) params.append('status', filters.status);
-      if (filters.search) params.append('search', filters.search);
+	useEffect(() => {
+		if (viewMode === 'active') {
+			fetchItems()
+		} else {
+			fetchDeletedItems()
+		}
+	}, [filters, viewMode])
 
-      const res = await fetch(`http://127.0.0.1:8000/warehouse/items?${params.toString()}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setItems(await res.json());
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+	const fetchItems = async () => {
+		setLoading(true)
+		try {
+			const token = localStorage.getItem('access_token')
+			// Собираем query-параметры
+			const params = new URLSearchParams()
+			if (filters.category) params.append('category', filters.category)
+			if (filters.status) params.append('status', filters.status)
+			if (filters.search) params.append('search', filters.search)
 
-  const handleFilterChange = (e) => setFilters({ ...filters, [e.target.name]: e.target.value });
-  const resetFilters = () => setFilters({ search: '', category: '', status: '' });
+			const res = await fetch(
+				`http://127.0.0.1:8000/warehouse/items?${params.toString()}`,
+				{
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			)
+			if (res.ok) {
+				setItems(await res.json())
+			}
+		} catch (err) {
+			console.error(err)
+		} finally {
+			setLoading(false)
+		}
+	}
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Переместить оборудование в корзину?')) return;
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/warehouse/items/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail);
-      }
-      fetchItems();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+	const fetchDeletedItems = async () => {
+		setLoading(true)
 
-  // ИМПОРТ CSV
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+		try {
+			const token = localStorage.getItem('access_token')
 
-    const formData = new FormData();
-    formData.append('file', file);
+			const res = await fetch('http://127.0.0.1:8000/warehouse/deleted', {
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			})
 
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch('http://127.0.0.1:8000/warehouse/import', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData // Fetch сам поставит правильный Content-Type для FormData
-      });
-      
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Ошибка импорта');
-      
-	  setImportResult(buildImportMessage(data));
-      fetchItems();
-    } catch (err) {
-      alert(`Ошибка: ${err.message}`);
-    } finally {
-      e.target.value = ''; // Сброс инпута
-    }
-  };
+			if (!res.ok) {
+				const err = await res.json().catch(() => null)
+				throw new Error(err?.detail || 'Не удалось загрузить корзину склада')
+			}
 
-  const buildImportMessage = data => {
+			const data = await res.json()
+
+			let result = Array.isArray(data) ? data : []
+
+			if (filters.search) {
+				const s = filters.search.toLowerCase()
+
+				result = result.filter(
+					item =>
+						(item.name && item.name.toLowerCase().includes(s)) ||
+						(item.model && item.model.toLowerCase().includes(s)) ||
+						(item.manufacturer &&
+							item.manufacturer.toLowerCase().includes(s)) ||
+						(item.identifier_value &&
+							item.identifier_value.toLowerCase().includes(s)) ||
+						(item.serial_number &&
+							item.serial_number.toLowerCase().includes(s)),
+				)
+			}
+
+			if (filters.category) {
+				result = result.filter(item => item.category === filters.category)
+			}
+
+			if (filters.status) {
+				result = result.filter(item => item.status === filters.status)
+			}
+
+			setItems(result)
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	const handleFilterChange = e =>
+		setFilters({ ...filters, [e.target.name]: e.target.value })
+	const resetFilters = () =>
+		setFilters({ search: '', category: '', status: '' })
+
+	const handleDelete = async id => {
+		if (!window.confirm('Переместить оборудование в корзину?')) return
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(`http://127.0.0.1:8000/warehouse/items/${id}`, {
+				method: 'DELETE',
+				headers: { Authorization: `Bearer ${token}` },
+			})
+			if (!res.ok) {
+				const err = await res.json()
+				throw new Error(err.detail)
+			}
+			fetchItems()
+		} catch (err) {
+			alert(err.message)
+		}
+	}
+
+	const handleRestore = async id => {
+		if (!window.confirm('Восстановить оборудование из корзины?')) return
+
+		try {
+			const token = localStorage.getItem('access_token')
+
+			const res = await fetch(
+				`http://127.0.0.1:8000/warehouse/items/${id}/restore`,
+				{
+					method: 'PATCH',
+					headers: {
+						Authorization: `Bearer ${token}`,
+					},
+				},
+			)
+
+			if (!res.ok) {
+				const err = await res.json().catch(() => null)
+				throw new Error(err?.detail || 'Ошибка восстановления')
+			}
+
+			fetchDeletedItems()
+		} catch (err) {
+			alert(err.message)
+		}
+	}
+
+	// ИМПОРТ CSV
+	const handleFileUpload = async e => {
+		const file = e.target.files[0]
+		if (!file) return
+
+		const formData = new FormData()
+		formData.append('file', file)
+
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch('http://127.0.0.1:8000/warehouse/import', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}` },
+				body: formData, // Fetch сам поставит правильный Content-Type для FormData
+			})
+
+			const data = await res.json()
+			if (!res.ok) throw new Error(data.detail || 'Ошибка импорта')
+
+			setImportResult(buildImportMessage(data))
+			fetchItems()
+		} catch (err) {
+			alert(`Ошибка: ${err.message}`)
+		} finally {
+			e.target.value = '' // Сброс инпута
+		}
+	}
+
+	const buildImportMessage = data => {
 		const lines = []
 
 		lines.push(`Добавлено: ${data.imported_count || 0}`)
@@ -121,74 +215,98 @@ export default function Warehouse() {
 
 		return lines.join('\n')
 	}
-  
-  // СКАЧАТЬ ШАБЛОН CSV
-  const downloadTemplate = async () => {
-    const token = localStorage.getItem('access_token');
-    const res = await fetch('http://127.0.0.1:8000/warehouse/template', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'warehouse_template.csv';
-      a.click();
-    }
-  };
 
-  const openEdit = (item) => {
-    setEditItem(item);
-    setIsModalOpen(true);
-  };
+	// СКАЧАТЬ ШАБЛОН CSV
+	const downloadTemplate = async () => {
+		const token = localStorage.getItem('access_token')
+		const res = await fetch('http://127.0.0.1:8000/warehouse/template', {
+			headers: { Authorization: `Bearer ${token}` },
+		})
+		if (res.ok) {
+			const blob = await res.blob()
+			const url = window.URL.createObjectURL(blob)
+			const a = document.createElement('a')
+			a.href = url
+			a.download = 'warehouse_template.csv'
+			a.click()
+		}
+	}
 
-  return (
+	const openEdit = item => {
+		setEditItem(item)
+		setIsModalOpen(true)
+	}
+
+	return (
 		<div className='requests-page-container'>
 			<div className='clients-header-bar' style={{ marginBottom: '15px' }}>
 				<h2>Склад оборудования</h2>
 				<div style={{ display: 'flex', gap: '10px' }}>
-					<button
-						onClick={downloadTemplate}
-						style={{
-							padding: '8px 12px',
-							background: '#f5f5f5',
-							border: '1px solid #ddd',
-							borderRadius: '6px',
-							cursor: 'pointer',
-						}}
-					>
-						Шаблон CSV
-					</button>
-					<input
-						type='file'
-						accept='.csv'
-						ref={fileInputRef}
-						style={{ display: 'none' }}
-						onChange={handleFileUpload}
-					/>
-					<button
-						onClick={() => fileInputRef.current.click()}
-						style={{
-							padding: '8px 12px',
-							background: '#e3f2fd',
-							color: '#1565c0',
-							border: '1px solid #bbdefb',
-							borderRadius: '6px',
-							cursor: 'pointer',
-						}}
-					>
-						Импорт CSV
-					</button>
-					<button
-						className='btn-green'
-						onClick={() => {
-							setEditItem(null)
-							setIsModalOpen(true)
-						}}
-					>
-						+ Добавить
-					</button>
+					{viewMode === 'active' && (
+						<>
+							<button
+								onClick={downloadTemplate}
+								style={{
+									padding: '8px 12px',
+									background: '#f5f5f5',
+									border: '1px solid #ddd',
+									borderRadius: '6px',
+									cursor: 'pointer',
+								}}
+							>
+								📥 Шаблон CSV
+							</button>
+
+							<input
+								type='file'
+								accept='.csv'
+								ref={fileInputRef}
+								style={{ display: 'none' }}
+								onChange={handleFileUpload}
+							/>
+
+							<button
+								onClick={() => fileInputRef.current.click()}
+								style={{
+									padding: '8px 12px',
+									background: '#e3f2fd',
+									color: '#1565c0',
+									border: '1px solid #bbdefb',
+									borderRadius: '6px',
+									cursor: 'pointer',
+								}}
+							>
+								⬆️ Импорт CSV
+							</button>
+
+							<button
+								className='btn-green'
+								onClick={() => {
+									setEditItem(null)
+									setIsModalOpen(true)
+								}}
+							>
+								+ Добавить
+							</button>
+						</>
+					)}
+					<div className='warehouse-view-toggle'>
+						<button
+							type='button'
+							className={`warehouse-toggle-btn ${viewMode === 'active' ? 'active' : ''}`}
+							onClick={() => setViewMode('active')}
+						>
+							Активные
+						</button>
+
+						<button
+							type='button'
+							className={`warehouse-toggle-btn ${viewMode === 'trash' ? 'active' : ''}`}
+							onClick={() => setViewMode('trash')}
+						>
+							Корзина
+						</button>
+					</div>
 				</div>
 			</div>
 
@@ -295,7 +413,9 @@ export default function Warehouse() {
 										color: '#888',
 									}}
 								>
-									Оборудование не найдено
+									{viewMode === 'active'
+										? 'Оборудование не найдено'
+										: 'Корзина склада пуста'}
 								</td>
 							</tr>
 						) : (
@@ -303,9 +423,28 @@ export default function Warehouse() {
 								<tr key={item.id} style={{ borderBottom: '1px solid #eee' }}>
 									<td style={{ padding: '12px 15px' }}>
 										<strong>{item.name}</strong>
+
 										{item.model && (
 											<div style={{ fontSize: '12px', color: '#888' }}>
 												{item.manufacturer} {item.model}
+											</div>
+										)}
+
+										{viewMode === 'trash' && (
+											<div
+												style={{
+													fontSize: '12px',
+													color: '#c62828',
+													marginTop: '4px',
+												}}
+											>
+												Удалено:{' '}
+												{item.deleted_at
+													? new Date(item.deleted_at).toLocaleString('ru-RU')
+													: 'дата не указана'}
+												{item.deleted_by_name
+													? ` · ${item.deleted_by_name}`
+													: ''}
 											</div>
 										)}
 									</td>
@@ -344,23 +483,32 @@ export default function Warehouse() {
 										</span>
 									</td>
 									<td style={{ padding: '12px 15px', textAlign: 'right' }}>
-										<div className='warehouse-actions'>
-											<button
-												className='warehouse-action-btn warehouse-edit-btn'
-												onClick={() => openEdit(item)}
-												title='Редактировать'
-											>
-												✎
-											</button>
+										{viewMode === 'active' ? (
+											<div className='warehouse-actions'>
+												<button
+													className='warehouse-action-btn warehouse-edit-btn'
+													onClick={() => openEdit(item)}
+													title='Редактировать'
+												>
+													✎
+												</button>
 
+												<button
+													className='warehouse-action-btn warehouse-delete-btn'
+													onClick={() => handleDelete(item.id)}
+													title='Переместить в корзину'
+												>
+													🗑
+												</button>
+											</div>
+										) : (
 											<button
-												className='warehouse-action-btn warehouse-delete-btn'
-												onClick={() => handleDelete(item.id)}
-												title='Переместить в корзину'
+												className='warehouse-restore-btn'
+												onClick={() => handleRestore(item.id)}
 											>
-												🗑
+												Восстановить
 											</button>
-										</div>
+										)}
 									</td>
 								</tr>
 							))
@@ -436,7 +584,6 @@ export default function Warehouse() {
 					</div>
 				</div>
 			)}
-			
 		</div>
 	)
 }
