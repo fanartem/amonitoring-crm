@@ -439,12 +439,13 @@ export default function Clients() {
 														>
 															Редактировать
 														</div>
-														<div
-															className='dropdown-item'
-															style={{
-																padding: '8px 15px',
-																cursor: 'pointer',
-																fontSize: '14px',
+														{(userRole === 'ADMIN') && (
+															<div
+																className='dropdown-item'
+																style={{
+																	padding: '8px 15px',
+																	cursor: 'pointer',
+																	fontSize: '14px',
 																color: '#c62828',
 															}}
 															onClick={e =>
@@ -456,7 +457,7 @@ export default function Clients() {
 															}
 														>
 															Удалить
-														</div>
+														</div>)}
 													</div>
 												)}
 											</div>

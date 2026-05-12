@@ -66,7 +66,7 @@ export default function Sidebar() {
 				)}
 
 				{/* НОВОЕ: Корзина для Админов и Менеджеров */}
-				{(isAdmin || isManager) && (
+				{isAdmin && (
 					<NavLink
 						to='/trash'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}

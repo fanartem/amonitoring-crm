@@ -555,7 +555,7 @@ export default function Requests() {
 									className='btn-green'
 									style={{
 										marginBottom: '12px',
-										marginRight: '5px',
+										marginRight: '30px',
 									}}
 									onClick={e => handlePayRequest(e, req.id)}
 								>
@@ -568,7 +568,7 @@ export default function Requests() {
 									className='btn-green'
 									style={{ 
 										marginBottom: '12px',
-										marginRight: '5px',
+										marginRight: '30px',
 									}}
 									onClick={e => handleAcceptRequest(e, req)}
 								>

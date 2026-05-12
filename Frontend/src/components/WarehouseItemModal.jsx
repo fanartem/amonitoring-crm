@@ -3,7 +3,7 @@ import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 
 const CATEGORIES = {
-	GPS_TRACKER: 'GPS-трекер',
+	GPS_TRACKER: 'Трекер',
 	BEACON: 'Маяк',
 	FUEL_SENSOR: 'Датчик уровня топлива (ДУТ)',
 	BLE_SENSOR: 'BLE-датчик',
