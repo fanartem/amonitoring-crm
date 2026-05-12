@@ -846,3 +846,137 @@ def get_comments(request_id: int, current_user: dict = Depends(get_current_user)
             return cursor.fetchall()
     finally:
         connection.close()
+
+@router.post("/{request_id}/accept")
+def accept_request(
+    request_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Самостоятельное принятие заявки монтажником.
+    TECHNICIAN может принять только свободную заявку своего города.
+    """
+    if current_user["role"] not in ["TECHNICIAN", "SENIOR_TECHNICIAN"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Самостоятельно принять заявку могут только монтажники"
+        )
+
+    connection = get_connection()
+    try:
+        with connection.cursor() as cursor:
+            # Берём актуальный город пользователя из БД
+            cursor.execute(
+                """
+                SELECT id, role, city
+                FROM users
+                WHERE id = %s
+                """,
+                (current_user["id"],)
+            )
+            user = cursor.fetchone()
+
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+
+            if not user["city"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="У пользователя не указан город"
+                )
+
+            # Проверяем заявку
+            cursor.execute(
+                """
+                SELECT id, city, status, assigned_to, is_deleted
+                FROM requests
+                WHERE id = %s
+                """,
+                (request_id,)
+            )
+            request = cursor.fetchone()
+
+            if not request:
+                raise HTTPException(status_code=404, detail="Request not found")
+
+            if request["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя принять удалённую заявку"
+                )
+
+            if request["city"] != user["city"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Нельзя принять заявку другого города"
+                )
+
+            if request["assigned_to"] is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Заявка уже назначена другому монтажнику"
+                )
+
+            if request["status"] not in ["NEW"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Можно принять только новую заявку"
+                )
+
+            # Назначаем заявку на себя
+            cursor.execute(
+                """
+                UPDATE requests
+                SET assigned_to = %s,
+                    status = 'IN_PROGRESS'
+                WHERE id = %s
+                  AND assigned_to IS NULL
+                  AND status = 'NEW'
+                """,
+                (current_user["id"], request_id)
+            )
+
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Заявку уже успели принять или изменить"
+                )
+
+            # История
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    old_value,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "SELF_ACCEPTED",
+                    "assigned_to=NULL, status=NEW",
+                    f"assigned_to={current_user['id']}, status=IN_PROGRESS"
+                )
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Заявка принята",
+                "request_id": request_id,
+                "assigned_to": current_user["id"],
+                "status": "IN_PROGRESS"
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
