@@ -6,6 +6,42 @@ from datetime import datetime
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
+CITY_RESTRICTED_ROLES = ["TECHNICIAN", "SENIOR_TECHNICIAN"]
+
+
+def is_city_restricted_user(current_user: dict) -> bool:
+    return current_user.get("role") in CITY_RESTRICTED_ROLES
+
+
+def get_current_user_city(cursor, current_user: dict):
+    """
+    Берём city из current_user, если он уже есть.
+    Если нет — достаём из БД.
+    """
+    if current_user.get("city"):
+        return current_user["city"]
+
+    cursor.execute(
+        """
+        SELECT city
+        FROM users
+        WHERE id = %s
+        """,
+        (current_user["id"],)
+    )
+    user = cursor.fetchone()
+
+    if not user:
+        return None
+
+    return user.get("city")
+
+
+def normalize_city(city):
+    if city is None:
+        return None
+    return str(city).strip().lower()
+
 @router.post("")
 def create_request(data: RequestCreate, current_user: dict = Depends(get_current_user)):
     # ПРОЛЕЖА 1: Только Админ и Менеджер могут создавать заявки
@@ -44,10 +80,35 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
 
 @router.get("")
 def get_requests(status: str = Query(None), current_user: dict = Depends(get_current_user)):
-    # Читать могут ВСЕ авторизованные пользователи
+    """
+    Список заявок.
+
+    ADMIN / MANAGER / ACCOUNTANT / WAREHOUSE_MANAGER:
+        видят все города.
+
+    TECHNICIAN / SENIOR_TECHNICIAN:
+        видят только заявки своего города.
+    """
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
+            values = []
+            conditions = ["r.is_deleted = 0"]
+
+            if status:
+                conditions.append("r.status = %s")
+                values.append(status)
+
+            if is_city_restricted_user(current_user):
+                user_city = get_current_user_city(cursor, current_user)
+
+                # Если у монтажника не указан город — не отдаём вообще никаких заявок
+                if not user_city:
+                    return []
+
+                conditions.append("r.city = %s")
+                values.append(user_city)
+
             base_sql = """
             SELECT 
                 r.id,
@@ -82,15 +143,16 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
             LEFT JOIN clients c ON r.client_id = c.id
             LEFT JOIN vehicles v ON r.vehicle_id = v.id
             LEFT JOIN installation_details i ON r.id = i.request_id
-            WHERE r.is_deleted = 0
+            WHERE {where_clause}
+            ORDER BY r.created_at DESC
             """
-            if status:
-                base_sql += " AND r.status = %s ORDER BY r.created_at DESC"
-                cursor.execute(base_sql, (status,))
-            else:
-                base_sql += " ORDER BY r.created_at DESC"
-                cursor.execute(base_sql)
+
+            where_clause = " AND ".join(conditions)
+            final_sql = base_sql.format(where_clause=where_clause)
+
+            cursor.execute(final_sql, tuple(values))
             return cursor.fetchall()
+
     finally:
         connection.close()
 
