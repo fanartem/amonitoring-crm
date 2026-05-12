@@ -27,6 +27,7 @@ export default function Clients() {
   const [clientVehicles, setClientVehicles] = useState([]); 
   const [isVehiclesLoading, setIsVehiclesLoading] = useState(false);
   const [technicians, setTechnicians] = useState([]); 
+  const [vehicleEquipmentMap, setVehicleEquipmentMap] = useState({})
 
   const [isCreateModalOpen, setCreateModalOpen] = useState(false);
   const [editClientData, setEditClientData] = useState(null); 
@@ -123,22 +124,55 @@ export default function Clients() {
 		return getClientTypeLabel(clientType)
 	}
 
-  const handleClientClick = async (client) => {
-    setSelectedClient(client);
-    setClientVehicles([]); 
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/clients/${client.id}/requests`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setClientRequests(data);
-      }
-    } catch (err) {
-      console.error('Ошибка загрузки заявок клиента:', err);
-    }
-  };
+	const getEquipmentBadgeText = item => {
+		const titleParts = []
+
+		if (item.name) titleParts.push(item.name)
+		if (item.model) titleParts.push(item.model)
+
+		const title = titleParts.join(' ') || 'Оборудование'
+
+		const quantity = Number(item.quantity || 1)
+		const quantityText = quantity > 1 ? ` ${quantity} шт.` : ''
+
+		if (item.identifier_value) {
+			return `${title}: ${item.identifier_type || 'ID'} ${item.identifier_value}${quantityText}`
+		}
+
+		if (item.serial_number) {
+			return `${title}: S/N ${item.serial_number}${quantityText}`
+		}
+
+		return `${title}${quantityText}`
+	}
+
+	const getVehicleEquipment = vehicleId => {
+		return vehicleEquipmentMap[vehicleId] || []
+	}
+
+  const handleClientClick = async client => {
+		setSelectedClient(client)
+		setClientVehicles([])
+		setVehicleEquipmentMap({})
+
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(
+				`http://127.0.0.1:8000/clients/${client.id}/requests`,
+				{
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			)
+
+			if (res.ok) {
+				const data = await res.json()
+				setClientRequests(data)
+				fetchEquipmentForClientRequests(data)
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки заявок клиента:', err)
+		}
+	}
 
   const fetchClientVehicles = async (clientId) => {
     setIsVehiclesLoading(true);
@@ -158,6 +192,57 @@ export default function Clients() {
       setIsVehiclesLoading(false);
     }
   };
+
+  const fetchEquipmentForClientRequests = async requestsList => {
+		try {
+			const token = localStorage.getItem('access_token')
+			const equipmentByVehicle = {}
+
+			await Promise.all(
+				requestsList.map(async req => {
+					if (!req.id || !req.vehicle_id) return
+
+					try {
+						const res = await fetch(
+							`http://127.0.0.1:8000/warehouse/requests/${req.id}/equipment`,
+							{
+								headers: { Authorization: `Bearer ${token}` },
+							},
+						)
+
+						if (!res.ok) return
+
+						const equipment = await res.json()
+
+						if (!Array.isArray(equipment) || equipment.length === 0) return
+
+						if (!equipmentByVehicle[req.vehicle_id]) {
+							equipmentByVehicle[req.vehicle_id] = []
+						}
+
+						equipment.forEach(item => {
+							const alreadyExists = equipmentByVehicle[req.vehicle_id].some(
+								existing => existing.link_id === item.link_id,
+							)
+
+							if (!alreadyExists) {
+								equipmentByVehicle[req.vehicle_id].push({
+									...item,
+									request_id: req.id,
+								})
+							}
+						})
+					} catch (err) {
+						console.error(`Ошибка загрузки оборудования заявки ${req.id}:`, err)
+					}
+				}),
+			)
+
+			setVehicleEquipmentMap(equipmentByVehicle)
+		} catch (err) {
+			console.error('Ошибка загрузки оборудования по машинам:', err)
+		}
+	}
 
   const handleDeleteClient = async (e, clientId, clientName) => {
     e.stopPropagation();
@@ -513,23 +598,49 @@ export default function Clients() {
 										Транспорт клиента ({clientVehicles.length}):
 									</h4>
 									<div style={{ display: 'grid', gap: '10px' }}>
-                    {clientVehicles.map(v => (
-                      <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '10px 15px', borderRadius: '6px', border: '1px solid #eee' }}>
-                         <div>
-                            <div style={{marginBottom: '4px'}}>
-                               <strong style={{fontSize: '14px'}}>{v.brand} {v.model}</strong> 
-                               <span style={{fontSize: '12px', background: '#e0f7fa', color: '#006064', padding: '2px 8px', borderRadius: '4px', marginLeft: '10px', fontWeight: '500'}}>
-                                  IMEI: {v.imei || 'Не указан'}
-                               </span>
-                            </div>
-                            <span style={{ color: '#888', fontSize: '12px' }}>Гос. номер: {v.plate_number || 'б/н'} • VIN: {v.vin || '—'} • Год: {v.year || '—'}</span>
-                         </div>
-                         {(userRole === 'ADMIN' || userRole === 'MANAGER') && (
-                            <button className="btn-details" style={{padding: '4px 10px', fontSize: '12px'}} onClick={() => setEditingVehicle(v)}>✎ Изменить</button>
-                         )}
-                      </div>
-                    ))}
-                  </div>
+										{clientVehicles.map(v => (
+											<div key={v.id} className='vehicle-card'>
+												<div className='vehicle-card-main'>
+													<div className='vehicle-card-header'>
+														<strong className='vehicle-card-title'>
+															{v.brand} {v.model}
+														</strong>
+
+														<div className='vehicle-equipment-badges'>
+															{getVehicleEquipment(v.id).length > 0 ? (
+																getVehicleEquipment(v.id).map(item => (
+																	<span
+																		key={item.link_id}
+																		className='vehicle-equipment-badge'
+																	>
+																		{getEquipmentBadgeText(item)}
+																	</span>
+																))
+															) : (
+																<span className='vehicle-equipment-badge empty'>
+																	Устройства не привязаны
+																</span>
+															)}
+														</div>
+													</div>
+
+													<div className='vehicle-card-meta'>
+														Гос. номер: {v.plate_number || 'б/н'} • VIN:{' '}
+														{v.vin || '—'} • Год: {v.year || '—'}
+													</div>
+												</div>
+
+												{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+													<button
+														className='btn-details vehicle-edit-btn'
+														onClick={() => setEditingVehicle(v)}
+													>
+														✎ Изменить
+													</button>
+												)}
+											</div>
+										))}
+									</div>
 								</div>
 							)}
 						</div>
@@ -559,7 +670,6 @@ export default function Clients() {
 								style={{ position: 'relative', cursor: 'default' }}
 							>
 								<div className='card-column'>
-									
 									<div className='card-item'>
 										<span className='card-label'>Статус</span>
 										<div
@@ -690,45 +800,161 @@ export default function Clients() {
 				</div>
 			)}
 
-      {/* МОДАЛКА РЕДАКТИРОВАНИЯ АВТОМОБИЛЯ (БЕЗ РУЧНОГО ВВОДА IMEI) */}
-      {editingVehicle && (
-        <div className="modal-overlay open" onClick={() => setEditingVehicle(null)}>
-            <div className="modal-window" onClick={e => e.stopPropagation()} style={{maxWidth: '400px'}}>
-                <div className="modal-header">
-                    <span className="modal-title">Редактирование авто</span>
-                    <button className="modal-close" onClick={() => setEditingVehicle(null)}>&times;</button>
-                </div>
-                <div className="modal-body" style={{padding: '20px', background: '#f7f7f7'}}>
-                    <form onSubmit={handleVehicleSubmit} id="vehicle-form" style={{display: 'flex', flexDirection: 'column', gap: '15px'}}>
-                        <div>
-                            <label className="field-label req-mark">Марка:</label>
-                            <input className="form-input" style={{width: '100%'}} value={editingVehicle.brand || ''} onChange={e => setEditingVehicle({...editingVehicle, brand: e.target.value})} required/>
-                        </div>
-                        <div>
-                            <label className="field-label req-mark">Модель:</label>
-                            <input className="form-input" style={{width: '100%'}} value={editingVehicle.model || ''} onChange={e => setEditingVehicle({...editingVehicle, model: e.target.value})} required/>
-                        </div>
-                        <div>
-                            <label className="field-label">Гос. номер:</label>
-                            <input className="form-input" style={{width: '100%'}} value={editingVehicle.plate_number || ''} onChange={e => setEditingVehicle({...editingVehicle, plate_number: e.target.value})} />
-                        </div>
-                        <div>
-                            <label className="field-label">VIN-код:</label>
-                            <input className="form-input" style={{width: '100%'}} maxLength="17" value={editingVehicle.vin || ''} onChange={e => setEditingVehicle({...editingVehicle, vin: e.target.value})} />
-                        </div>
-                        <div>
-                            <label className="field-label">Год выпуска:</label>
-                            <input className="form-input" type="number" style={{width: '100%'}} value={editingVehicle.year || ''} onChange={e => setEditingVehicle({...editingVehicle, year: e.target.value})} />
-                        </div>
-                    </form>
-                </div>
-                <div className="modal-footer">
-                    <button className="modal-submit-btn" type="button" style={{borderColor: '#aaa', color: '#888'}} onClick={() => setEditingVehicle(null)}>Отмена</button>
-                    <button className="modal-submit-btn" type="submit" form="vehicle-form">Сохранить</button>
-                </div>
-            </div>
-        </div>
-      )}
+			{/* МОДАЛКА РЕДАКТИРОВАНИЯ АВТОМОБИЛЯ (БЕЗ РУЧНОГО ВВОДА IMEI) */}
+			{editingVehicle && (
+				<div
+					className='modal-overlay open'
+					onClick={() => setEditingVehicle(null)}
+				>
+					<div
+						className='modal-window vehicle-modal-window'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>Редактирование авто</span>
+							<button
+								className='modal-close'
+								onClick={() => setEditingVehicle(null)}
+								type='button'
+							>
+								&times;
+							</button>
+						</div>
+
+						<div className='vehicle-modal-body'>
+							<form onSubmit={handleVehicleSubmit} id='vehicle-form'>
+								<div className='vehicle-form-card'>
+									<div className='vehicle-form-section-title'>
+										Основная информация
+									</div>
+
+									<div className='vehicle-form-grid'>
+										<label className='vehicle-field'>
+											<span className='vehicle-label required'>Марка</span>
+											<input
+												className='vehicle-input'
+												value={editingVehicle.brand || ''}
+												onChange={e =>
+													setEditingVehicle({
+														...editingVehicle,
+														brand: e.target.value,
+													})
+												}
+												required
+											/>
+										</label>
+
+										<label className='vehicle-field'>
+											<span className='vehicle-label required'>Модель</span>
+											<input
+												className='vehicle-input'
+												value={editingVehicle.model || ''}
+												onChange={e =>
+													setEditingVehicle({
+														...editingVehicle,
+														model: e.target.value,
+													})
+												}
+												required
+											/>
+										</label>
+
+										<label className='vehicle-field'>
+											<span className='vehicle-label'>Гос. номер</span>
+											<input
+												className='vehicle-input'
+												value={editingVehicle.plate_number || ''}
+												onChange={e =>
+													setEditingVehicle({
+														...editingVehicle,
+														plate_number: e.target.value,
+													})
+												}
+											/>
+										</label>
+
+										<label className='vehicle-field'>
+											<span className='vehicle-label'>Год выпуска</span>
+											<input
+												className='vehicle-input'
+												type='number'
+												value={editingVehicle.year || ''}
+												onChange={e =>
+													setEditingVehicle({
+														...editingVehicle,
+														year: e.target.value,
+													})
+												}
+											/>
+										</label>
+
+										<label className='vehicle-field vehicle-full'>
+											<span className='vehicle-label'>VIN-код</span>
+											<input
+												className='vehicle-input'
+												maxLength='17'
+												value={editingVehicle.vin || ''}
+												onChange={e =>
+													setEditingVehicle({
+														...editingVehicle,
+														vin: e.target.value,
+													})
+												}
+											/>
+										</label>
+									</div>
+								</div>
+
+								<div className='vehicle-form-card'>
+									<div className='vehicle-form-section-title'>
+										Привязанное оборудование
+									</div>
+
+									<div className='vehicle-equipment-badges modal-equipment-badges'>
+										{getVehicleEquipment(editingVehicle.id).length > 0 ? (
+											getVehicleEquipment(editingVehicle.id).map(item => (
+												<span
+													key={item.link_id}
+													className='vehicle-equipment-badge'
+												>
+													{getEquipmentBadgeText(item)}
+												</span>
+											))
+										) : (
+											<span className='vehicle-equipment-badge empty'>
+												Устройства не привязаны
+											</span>
+										)}
+									</div>
+
+									<div className='vehicle-equipment-hint'>
+										Устройства привязываются к автомобилю через заявку и склад.
+										Здесь они отображаются только для просмотра.
+									</div>
+								</div>
+							</form>
+						</div>
+
+						<div className='modal-footer vehicle-modal-footer'>
+							<button
+								className='vehicle-cancel-btn'
+								type='button'
+								onClick={() => setEditingVehicle(null)}
+							>
+								Отмена
+							</button>
+
+							<button
+								className='vehicle-submit-btn'
+								type='submit'
+								form='vehicle-form'
+							>
+								Сохранить
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 
 			<CreateClientModal
 				isOpen={isCreateModalOpen}
