@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import '../styles/RequestEquipmentPanel.css'
 
 const CATEGORIES = {
-	GPS_TRACKER: 'GPS-трекер',
+	GPS_TRACKER: 'Трекер',
 	BEACON: 'Маяк',
 	FUEL_SENSOR: 'ДУТ',
 	BLE_SENSOR: 'BLE-датчик',
