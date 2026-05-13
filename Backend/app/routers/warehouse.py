@@ -404,9 +404,30 @@ def get_warehouse_items(
                 wi.note,
                 wi.created_at,
                 wi.updated_at,
-                u.name AS created_by_name
+                u.name AS created_by_name,
+                
+                -- Новые поля для фронтенда
+                c.type AS client_type,
+                c.name AS client_name,
+                c.company_name,
+                v.plate_number,
+                v.vin
+                
             FROM warehouse_items wi
             LEFT JOIN users u ON wi.created_by = u.id
+            
+            -- Ищем последнюю заявку, куда был привязан этот трекер
+            LEFT JOIN (
+                SELECT warehouse_item_id, MAX(request_id) as last_request_id
+                FROM request_equipment
+                GROUP BY warehouse_item_id
+            ) latest_eq ON wi.id = latest_eq.warehouse_item_id
+            
+            -- Подтягиваем саму заявку, клиента и машину
+            LEFT JOIN requests r ON latest_eq.last_request_id = r.id AND r.is_deleted = 0
+            LEFT JOIN clients c ON r.client_id = c.id
+            LEFT JOIN vehicles v ON r.vehicle_id = v.id
+            
             WHERE wi.is_deleted = 0
             """
             values = []

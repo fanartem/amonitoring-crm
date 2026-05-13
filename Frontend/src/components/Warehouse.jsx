@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import '../styles/Requests.css'; // Используем классы из заявок для унификации дизайна
-import '../styles/Warehouse.css'
+import '../styles/Requests.css'; 
+import '../styles/Warehouse.css';
 import WarehouseItemModal from './WarehouseItemModal';
 
 const CATEGORIES = {
@@ -177,7 +177,7 @@ export default function Warehouse() {
 			const res = await fetch('http://127.0.0.1:8000/warehouse/import', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: formData, // Fetch сам поставит правильный Content-Type для FormData
+				body: formData, 
 			})
 
 			const data = await res.json()
@@ -188,7 +188,7 @@ export default function Warehouse() {
 		} catch (err) {
 			alert(`Ошибка: ${err.message}`)
 		} finally {
-			e.target.value = '' // Сброс инпута
+			e.target.value = '' 
 		}
 	}
 
@@ -236,6 +236,25 @@ export default function Warehouse() {
 		setEditItem(item)
 		setIsModalOpen(true)
 	}
+
+	// --- НОВЫЕ ФУНКЦИИ-ПОМОЩНИКИ ДЛЯ ОТРИСОВКИ КЛИЕНТА И АВТО ---
+	const renderClientInfo = (item) => {
+		if (item.status !== 'INSTALLED' && item.status !== 'Установлено') {
+			return <span style={{ color: '#aaa' }}>—</span>;
+		}
+		const type = String(item.client_type || '').toUpperCase();
+		if (type === 'TOO' || type === 'IP' || type === 'ТОО' || type === 'ИП') {
+			return item.company_name || item.client_name || '—';
+		}
+		return item.client_name || '—';
+	};
+
+	const renderCarInfo = (item, field) => {
+		if (item.status !== 'INSTALLED' && item.status !== 'Установлено') {
+			return <span style={{ color: '#aaa' }}>—</span>;
+		}
+		return item[field] || '—';
+	};
 
 	return (
 		<div className='requests-page-container'>
@@ -388,16 +407,20 @@ export default function Warehouse() {
 							<th style={{ padding: '12px 15px' }}>Идентификатор</th>
 							<th style={{ padding: '12px 15px' }}>Кол-во</th>
 							<th style={{ padding: '12px 15px' }}>Статус</th>
-							<th style={{ padding: '12px 15px', textAlign: 'right' }}>
-								Действия
-							</th>
+							
+							{/* --- НОВЫЕ ЗАГОЛОВКИ --- */}
+							<th style={{ padding: '12px 15px' }}>Клиент</th>
+							<th style={{ padding: '12px 15px' }}>Гос. номер</th>
+							<th style={{ padding: '12px 15px' }}>VIN-код</th>
+
+							<th style={{ padding: '12px 15px', textAlign: 'right' }}>Действия</th>
 						</tr>
 					</thead>
 					<tbody>
 						{loading ? (
 							<tr>
 								<td
-									colSpan='6'
+									colSpan='9'
 									style={{ padding: '20px', textAlign: 'center' }}
 								>
 									Загрузка...
@@ -406,7 +429,7 @@ export default function Warehouse() {
 						) : items.length === 0 ? (
 							<tr>
 								<td
-									colSpan='6'
+									colSpan='9'
 									style={{
 										padding: '20px',
 										textAlign: 'center',
@@ -482,6 +505,18 @@ export default function Warehouse() {
 											{STATUSES[item.status] || item.status}
 										</span>
 									</td>
+
+									{/* --- НОВЫЕ ЯЧЕЙКИ --- */}
+									<td style={{ padding: '12px 15px', fontSize: '13px', fontWeight: '500' }}>
+										{renderClientInfo(item)}
+									</td>
+									<td style={{ padding: '12px 15px', fontSize: '13px' }}>
+										{renderCarInfo(item, 'plate_number')}
+									</td>
+									<td style={{ padding: '12px 15px', fontSize: '12px', color: '#666' }}>
+										{renderCarInfo(item, 'vin')}
+									</td>
+
 									<td style={{ padding: '12px 15px', textAlign: 'right' }}>
 										{viewMode === 'active' ? (
 											<div className='warehouse-actions'>
