@@ -128,11 +128,10 @@ export default function Requests() {
 	}
 
 	const getVehicleInstallText = vehicle => {
-		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${
-			vehicle.has_beacon ? 'Маяк' : 'Без маяка'
-		}`
+		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${vehicle.has_beacon ? 'Маяк' : 'Без маяка'
+			}`
 	}
-	
+
 	useEffect(() => {
 		let result = requests
 		if (filters.search) {
@@ -225,7 +224,7 @@ export default function Requests() {
 		document.body.removeChild(link)
 		URL.revokeObjectURL(url)
 	}
-	
+
 	const toggleDropdown = (e, reqId) => {
 		e.stopPropagation()
 		setActiveDropdown(prev => (prev === reqId ? null : reqId))
@@ -506,6 +505,17 @@ export default function Requests() {
 										{getClientSubtitle(req)}
 									</span>
 								)}
+
+								{/* --- ДОБАВЛЯЕМ ВИД РАБОТЫ ТУТ --- */}
+								<span style={{
+									fontSize: '12px',
+									fontWeight: '600',
+									color: req.work_type === 'INSTALLATION' ? '#1565c0' : req.work_type === 'REMOVAL' ? '#c62828' : '#e65100',
+									marginTop: '12px',
+									display: 'inline-block'
+								}}>
+									{req.work_type === 'INSTALLATION' ? '🛠 Установка' : req.work_type === 'REMOVAL' ? '🔧 Снятие' : '🔍 Диагностика'}
+								</span>
 							</div>
 							<div className='card-item'>
 								<span className='card-label'>Статус</span>
@@ -563,8 +573,8 @@ export default function Requests() {
 
 								<div className='client-request-lines'>
 									{req.work_type === 'INSTALLATION' &&
-									req.vehicles &&
-									req.vehicles.length > 0 ? (
+										req.vehicles &&
+										req.vehicles.length > 0 ? (
 										req.vehicles.map((vehicle, index) => {
 											const title =
 												`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() ||
@@ -587,7 +597,19 @@ export default function Requests() {
 							<div className='card-item'>
 								<span className='card-label'>Формат</span>
 								<span className='card-value'>
-									{req.visit_type === 'ON_SITE' ? 'Выезд к клиенту' : 'В офисе'}
+									{req.visit_type === 'ON_SITE' ? (
+										<>
+											Выезд к клиенту
+											{/* --- НОВОЕ: Вывод адреса при выезде --- */}
+											{req.address && (
+												<div style={{ fontSize: '12px', color: '#666', marginTop: '3px', fontWeight: 'normal', lineHeight: '1.2' }}>
+													📍 {req.address}
+												</div>
+											)}
+										</>
+									) : (
+										'В офисе'
+									)}
 								</span>
 							</div>
 						</div>

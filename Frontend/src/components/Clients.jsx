@@ -725,15 +725,30 @@ export default function Clients() {
 								style={{ position: 'relative', cursor: 'default' }}
 							>
 								<div className='card-column'>
-									<div className='card-item'>
-										<span className='card-label'>Статус</span>
-										<div
-											className={`status-badge ${statusClasses[req.status] || 'status-new'}`}
-										>
-											{statusLabels[req.status] || req.status}
-										</div>
-									</div>
-									{req.assigned_to && (
+                                    <div className='card-item'>
+                                        <span className='card-label'>Статус</span>
+                                        <div
+                                            className={`status-badge ${statusClasses[req.status] || 'status-new'}`}
+                                        >
+                                            {statusLabels[req.status] || req.status}
+                                        </div>
+                                    </div>
+
+                                    {/* --- НОВОЕ: Вид работы прямо под статусом --- */}
+                                    <div className='card-item' style={{ marginTop: '8px' }}>
+                                        <span className='card-label'>Вид работы</span>
+                                        <span style={{
+                                            fontSize: '13px', 
+                                            fontWeight: '600', 
+                                            color: req.work_type === 'INSTALLATION' ? '#1565c0' : req.work_type === 'REMOVAL' ? '#c62828' : '#e65100'
+                                        }}>
+
+											
+                                            {req.work_type === 'INSTALLATION' ? '🛠 Установка' : req.work_type === 'REMOVAL' ? '🔧 Снятие' : '🔍 Диагностика'}
+                                        </span>
+                                    </div>
+
+                                    {req.assigned_to && (
 										<div className='card-item' style={{ marginTop: '5px' }}>
 											<span className='card-label'>Исполнитель</span>
 											<span
@@ -804,14 +819,30 @@ export default function Clients() {
 											)}
 										</div>
 									</div>
-									<div className='card-item'>
-										<span className='card-label'>Формат</span>
-										<span className='card-value'>
-											{req.visit_type === 'ON_SITE'
-												? 'Выезд к клиенту'
-												: 'В офисе'}
-										</span>
-									</div>
+								<div className='card-item'>
+                                        <span className='card-label'>Формат</span>
+                                        <span className='card-value'>
+                                            {req.visit_type === 'ON_SITE' ? (
+                                                <>
+                                                    Выезд к клиенту
+                                                    {/* --- НОВОЕ: Вывод адреса при выезде --- */}
+                                                    {req.address && (
+                                                        <div style={{ 
+                                                            fontSize: '12px', 
+                                                            color: '#666', 
+                                                            marginTop: '3px', 
+                                                            fontWeight: 'normal', 
+                                                            lineHeight: '1.2' 
+                                                        }}>
+                                                            📍 {req.address}
+                                                        </div>
+                                                    )}
+                                                </>
+                                            ) : (
+                                                'В офисе'
+                                            )}
+                                        </span>
+                                    </div>
 								</div>
 
 								<div className='card-column'>
