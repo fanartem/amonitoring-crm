@@ -24,6 +24,17 @@ const mapTypeToUI = (dbType) => {
 	return 'Физ. лицо';
 };
 
+const vehicleTypeLabels = {
+	car: 'Легковая',
+	electric: 'Электромобиль',
+	special: 'Спецтехника',
+}
+
+const formatVehicleType = type => {
+	if (!type) return '—'
+	return vehicleTypeLabels[type] || type
+}
+
 export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdated, initialTab = 'info', onEditClick }) {
 	const [activeTab, setActiveTab] = useState(initialTab);
 	const [request, setRequest] = useState(null);
@@ -349,27 +360,27 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 												>
 													{mapTypeToUI(
 														request.client_type ||
-														request.type ||
-														request.client?.type,
+															request.type ||
+															request.client?.type,
 													)}
 												</span>
 											</div>
 											{['TOO', 'IP', 'ТОО', 'ИП'].includes(
 												String(
 													request.client_type ||
-													request.type ||
-													request.client?.type,
+														request.type ||
+														request.client?.type,
 												).toUpperCase(),
 											) && (
-													<div className='info-row'>
-														<span className='info-key'>Наименование</span>
-														<span className='info-val'>
-															{request.company_name ||
-																request.client?.company_name ||
-																'—'}
-														</span>
-													</div>
-												)}
+												<div className='info-row'>
+													<span className='info-key'>Наименование</span>
+													<span className='info-val'>
+														{request.company_name ||
+															request.client?.company_name ||
+															'—'}
+													</span>
+												</div>
+											)}
 											<div className='info-row'>
 												<span className='info-key'>ФИО</span>
 												<span className='info-val'>
@@ -385,54 +396,81 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 										</div>
 
 										<div className='info-card'>
-											<div className='info-card-title'>Транспорт</div>
-											<div className='info-row'>
-												<span className='info-key'>Тип техники</span>
-												<span className='info-val'>
-													{request.vehicle_type ||
-														request.car_type ||
-														request.vehicle?.type ||
-														'Легковая'}
-												</span>
+											<div className='info-card-title'>
+												Транспорт ({request.vehicles?.length || 0})
 											</div>
-											<div className='info-row'>
-												<span className='info-key'>Марка</span>
-												<span className='info-val'>
-													{request.brand || request.vehicle?.brand || '—'}
-												</span>
-											</div>
-											<div className='info-row'>
-												<span className='info-key'>Модель</span>
-												<span className='info-val'>
-													{request.model || request.vehicle?.model || '—'}
-												</span>
-											</div>
-											<div className='info-row'>
-												<span className='info-key'>Год выпуска</span>
-												<span className='info-val'>
-													{request.year ||
-														request.vehicle_year ||
-														request.vehicle?.year ||
-														'—'}
-												</span>
-											</div>
-											<div className='info-row'>
-												<span className='info-key'>VIN-код</span>
-												<span className='info-val'>
-													{request.vin ||
-														request.vehicle_vin ||
-														request.vehicle?.vin ||
-														'—'}
-												</span>
-											</div>
-											<div className='info-row'>
-												<span className='info-key'>Гос. номер</span>
-												<span className='info-val'>
-													{request.plate_number ||
-														request.vehicle?.plate_number ||
-														'—'}
-												</span>
-											</div>
+
+											{!request.vehicles || request.vehicles.length === 0 ? (
+												<div
+													className='empty-state'
+													style={{ padding: '15px 0' }}
+												>
+													Автомобили не указаны
+												</div>
+											) : (
+												<div className='request-vehicles-list'>
+													{request.vehicles.map((vehicle, index) => (
+														<div
+															key={
+																vehicle.request_vehicle_id ||
+																vehicle.vehicle_id ||
+																index
+															}
+															className='request-vehicle-card'
+														>
+															<div className='request-vehicle-header'>
+																<div>
+																	<div className='request-vehicle-title'>
+																		{index + 1}. {vehicle.brand || '—'}{' '}
+																		{vehicle.model || ''}
+																	</div>
+
+																	<div className='request-vehicle-subtitle'>
+																		{vehicle.plate_number || 'б/н'} ·{' '}
+																		{formatVehicleType(vehicle.vehicle_type)}
+																	</div>
+																</div>
+
+																{request.work_type === 'INSTALLATION' && (
+																	<div className='request-vehicle-install-badges'>
+																		<span
+																			className={`install-badge ${vehicle.has_blocking ? 'active' : ''}`}
+																		>
+																			{vehicle.has_blocking
+																				? 'С блокировкой'
+																				: 'Без блокировки'}
+																		</span>
+
+																		<span
+																			className={`install-badge ${vehicle.has_beacon ? 'active' : ''}`}
+																		>
+																			{vehicle.has_beacon
+																				? 'С маяком'
+																				: 'Без маяка'}
+																		</span>
+																	</div>
+																)}
+															</div>
+
+															<div className='request-vehicle-grid'>
+																<div className='info-row'>
+																	<span className='info-key'>Год выпуска</span>
+																	<span className='info-val'>
+																		{vehicle.year || '—'}
+																	</span>
+																</div>
+
+																<div className='info-row'>
+																	<span className='info-key'>VIN-код</span>
+																	<span className='info-val'>
+																		{vehicle.vin || '—'}
+																	</span>
+																</div>
+															</div>
+														</div>
+													))}
+												</div>
+											)}
 										</div>
 
 										<div className='info-card'>
@@ -492,8 +530,17 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 														alignItems: 'center',
 													}}
 												>
-													<span className={`status-badge ${Boolean(request.is_paid) ? 'status-progress' : 'status-new'}`} style={{ padding: '2px 8px', fontSize: '11px', display: 'inline-block' }}>
-														{Boolean(request.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}
+													<span
+														className={`status-badge ${Boolean(request.is_paid) ? 'status-progress' : 'status-new'}`}
+														style={{
+															padding: '2px 8px',
+															fontSize: '11px',
+															display: 'inline-block',
+														}}
+													>
+														{Boolean(request.is_paid)
+															? 'Оплачено'
+															: 'Ожидает оплаты'}
 													</span>
 													{Boolean(request.is_paid) && request.paid_at && (
 														<span style={{ fontSize: '12px', color: '#888' }}>
@@ -503,26 +550,6 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 												</span>
 											</div>
 										</div>
-
-										{request.work_type === 'INSTALLATION' && (
-											<div className='info-card'>
-												<div className='info-card-title'>Установка</div>
-												<div className='info-row'>
-													<span className='info-key'>Блокировка</span>
-													<span className='info-val'>
-														{request.has_blocking
-															? 'С блокировкой'
-															: 'Без блокировки'}
-													</span>
-												</div>
-												<div className='info-row'>
-													<span className='info-key'>Маяк</span>
-													<span className='info-val'>
-														{request.has_beacon ? 'С маяком' : 'Без маяка'}
-													</span>
-												</div>
-											</div>
-										)}
 									</div>
 								)}
 
@@ -585,7 +612,10 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 
 								{activeTab === 'equipment' && (
 									<div className='tab-content'>
-										<RequestEquipmentPanel requestId={requestId} vehicleId={request.vehicle_id} />
+										<RequestEquipmentPanel
+											requestId={requestId}
+											vehicles={request.vehicles || []}
+										/>
 									</div>
 								)}
 							</>
@@ -620,7 +650,7 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 								}}
 							>
 								{userRole !== 'TECHNICIAN' &&
-									userRole !== 'SENIOR_TECHNICIAN' ? (
+								userRole !== 'SENIOR_TECHNICIAN' ? (
 									<div className='footer-group'>
 										<span style={{ fontSize: '13px' }}>Статус:</span>
 										<select
@@ -666,8 +696,15 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 										</select>
 									</div>
 								) : (
-									<div className="footer-group">
-										<span style={{ fontSize: '13px' }}>Оплата: <strong>{Boolean(request.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}</strong></span>
+									<div className='footer-group'>
+										<span style={{ fontSize: '13px' }}>
+											Оплата:{' '}
+											<strong>
+												{Boolean(request.is_paid)
+													? 'Оплачено'
+													: 'Ожидает оплаты'}
+											</strong>
+										</span>
 									</div>
 								)}
 							</div>
@@ -699,8 +736,8 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 							}}
 						>
 							{(userRole === 'ADMIN' || userRole === 'SENIOR_TECHNICIAN') &&
-								request.status !== 'COMPLETED' &&
-								request.status !== 'CANCELLED' ? (
+							request.status !== 'COMPLETED' &&
+							request.status !== 'CANCELLED' ? (
 								<div className='footer-group'>
 									<span style={{ fontSize: '13px' }}>Монтажник:</span>
 									<select

@@ -1,82 +1,93 @@
-import React, { useState, useEffect } from 'react';
-import '../styles/Requests.css';
-import CreateRequestModal from './CreateRequestModal';
-import RequestDetailModal from './RequestDetailModal';
-import * as XLSX from 'xlsx';
+import React, { useState, useEffect } from 'react'
+import '../styles/Requests.css'
+import CreateRequestModal from './CreateRequestModal'
+import RequestDetailModal from './RequestDetailModal'
 
 const getUserRole = () => {
-  try {
-    const token = localStorage.getItem('access_token');
-    if (!token) return null;
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
-    return JSON.parse(jsonPayload).role;
-  } catch (error) {
-    return null;
-  }
-};
+	try {
+		const token = localStorage.getItem('access_token')
+		if (!token) return null
+		const base64Url = token.split('.')[1]
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+		const jsonPayload = decodeURIComponent(
+			atob(base64)
+				.split('')
+				.map(function (c) {
+					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+				})
+				.join(''),
+		)
+		return JSON.parse(jsonPayload).role
+	} catch (error) {
+		return null
+	}
+}
 
 export default function Requests() {
-  const [requests, setRequests] = useState([]);
-  const [filteredRequests, setFilteredRequests] = useState([]);
-  const [technicians, setTechnicians] = useState([]); 
-  
-  const [isCreateModalOpen, setCreateModalOpen] = useState(false);
-  const [selectedRequestId, setSelectedRequestId] = useState(null);
-  const [editRequestData, setEditRequestData] = useState(null);
-  const [activeDropdown, setActiveDropdown] = useState(null);
-  const [detailModalTab, setDetailModalTab] = useState('info');
+	const [requests, setRequests] = useState([])
+	const [filteredRequests, setFilteredRequests] = useState([])
+	const [technicians, setTechnicians] = useState([])
 
-  const [filters, setFilters] = useState({ search: '', status: '', city: '', format: '' });
-  const userRole = getUserRole();
+	const [isCreateModalOpen, setCreateModalOpen] = useState(false)
+	const [selectedRequestId, setSelectedRequestId] = useState(null)
+	const [editRequestData, setEditRequestData] = useState(null)
+	const [activeDropdown, setActiveDropdown] = useState(null)
+	const [detailModalTab, setDetailModalTab] = useState('info')
 
-  useEffect(() => {
-    fetchRequests();
-    fetchTechnicians();
-  }, []);
+	const [filters, setFilters] = useState({
+		search: '',
+		status: '',
+		city: '',
+		format: '',
+	})
+	const userRole = getUserRole()
 
-  useEffect(() => {
-    const handleClickOutside = () => setActiveDropdown(null);
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, []);
+	useEffect(() => {
+		fetchRequests()
+		fetchTechnicians()
+	}, [])
 
-  const fetchRequests = async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch('http://127.0.0.1:8000/requests', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setRequests(data);
-        setFilteredRequests(data);
-      }
-    } catch (err) {
-      console.error('Ошибка загрузки заявок:', err);
-    }
-  };
+	useEffect(() => {
+		const handleClickOutside = () => setActiveDropdown(null)
+		document.addEventListener('click', handleClickOutside)
+		return () => document.removeEventListener('click', handleClickOutside)
+	}, [])
 
-  const fetchTechnicians = async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch('http://127.0.0.1:8000/users/technicians', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) setTechnicians(await res.json());
-    } catch (err) { console.error(err); }
-  };
+	const fetchRequests = async () => {
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch('http://127.0.0.1:8000/requests', {
+				headers: { Authorization: `Bearer ${token}` },
+			})
+			if (res.ok) {
+				const data = await res.json()
+				setRequests(data)
+				setFilteredRequests(data)
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки заявок:', err)
+		}
+	}
 
-  const getTechName = (techId) => {
-    if (!techId) return null;
-    const tech = technicians.find(t => t.id === techId);
-    return tech ? tech.name : `ID: ${techId}`;
-  };
+	const fetchTechnicians = async () => {
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch('http://127.0.0.1:8000/users/technicians', {
+				headers: { Authorization: `Bearer ${token}` },
+			})
+			if (res.ok) setTechnicians(await res.json())
+		} catch (err) {
+			console.error(err)
+		}
+	}
 
-  const clientTypeLabels = {
+	const getTechName = techId => {
+		if (!techId) return null
+		const tech = technicians.find(t => t.id === techId)
+		return tech ? tech.name : `ID: ${techId}`
+	}
+
+	const clientTypeLabels = {
 		TOO: 'ТОО',
 		IP: 'ИП',
 		INDIVIDUAL: 'Физ. лицо',
@@ -106,193 +117,306 @@ export default function Requests() {
 		return null
 	}
 
-  useEffect(() => {
-    let result = requests;
-    if (filters.search) {
-      const s = filters.search.toLowerCase();
-      result = result.filter(r => 
-        (r.client_name && r.client_name.toLowerCase().includes(s)) || 
-        (r.company_name && r.company_name.toLowerCase().includes(s)) ||
-        (r.phone && r.phone.toLowerCase().includes(s)) ||
-        (r.plate_number && r.plate_number.toLowerCase().includes(s)) ||
-        (r.vin && r.vin.toLowerCase().includes(s)) ||
-        (r.brand && r.brand.toLowerCase().includes(s)) ||
-        (r.model && r.model.toLowerCase().includes(s))
-      );
-    }
-    if (filters.status) result = result.filter(r => r.status === filters.status);
-    if (filters.format) result = result.filter(r => r.visit_type === filters.format);
-    if (filters.city) result = result.filter(r => r.city === filters.city);
-    setFilteredRequests(result);
-  }, [filters, requests]);
+	const getVehicleTitle = (vehicle, index) => {
+		const title =
+			`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() ||
+			`Авто ${index + 1}`
 
-  const handleFilterChange = (e) => setFilters({ ...filters, [e.target.name]: e.target.value });
-  const resetFilters = () => setFilters({ search: '', status: '', city: '', format: '' });
+		const plate = vehicle.plate_number || 'б/н'
 
-  const statusLabels = { 'NEW': 'В ожидании', 'IN_PROGRESS': 'В процессе установки', 'DONE': 'Работы завершены', 'CANCELLED': 'Отменено', 'COMPLETED': 'Работы завершены' };
-  const statusClasses = { 'NEW': 'status-new', 'IN_PROGRESS': 'status-progress', 'DONE': 'status-done', 'COMPLETED': 'status-done', 'CANCELLED': 'status-cancelled' };
+		return `${title} (${plate})`
+	}
 
-  const formatDate = (dateString) => {
-    if (!dateString) return '—';
-    const d = new Date(dateString);
-    return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
-  };
+	const getVehicleInstallText = vehicle => {
+		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${
+			vehicle.has_beacon ? 'Маяк' : 'Без маяка'
+		}`
+	}
+	
+	useEffect(() => {
+		let result = requests
+		if (filters.search) {
+			const s = filters.search.toLowerCase()
 
-  const toggleDropdown = (e, reqId) => {
-    e.stopPropagation(); 
-    setActiveDropdown(prev => prev === reqId ? null : reqId);
-  };
+			result = result.filter(r => {
+				const clientMatch =
+					(r.client_name && r.client_name.toLowerCase().includes(s)) ||
+					(r.company_name && r.company_name.toLowerCase().includes(s)) ||
+					(r.phone && r.phone.toLowerCase().includes(s))
 
-  // --- ИСПРАВЛЕННЫЕ ФУНКЦИИ КНОПОК ---
-  
-  // 1. Оплата заявки (для Бухгалтера)
-  const handlePayRequest = async (e, reqId) => {
-    e.stopPropagation();
-    if (!window.confirm('Отметить заявку как оплаченную?')) return;
-    
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ is_paid: true })
-      });
-      if (!res.ok) throw new Error('Ошибка при обновлении статуса оплаты');
-      
-      fetchRequests(); 
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+				const vehicleMatch =
+					Array.isArray(r.vehicles) &&
+					r.vehicles.some(
+						v =>
+							(v.plate_number && v.plate_number.toLowerCase().includes(s)) ||
+							(v.vin && v.vin.toLowerCase().includes(s)) ||
+							(v.brand && v.brand.toLowerCase().includes(s)) ||
+							(v.model && v.model.toLowerCase().includes(s)),
+					)
 
- // 2. Принятие заявки (для Монтажника) - ИСПРАВЛЕНО ПОД НОВЫЙ РОУТ БЭКЕНДА
-  const handleAcceptRequest = async (e, req) => {
-    e.stopPropagation();
-    if (!window.confirm('Принять эту заявку в работу?')) return;
-    
-    try {
-      const token = localStorage.getItem('access_token');
-      
-      // Бэкендер сделал роут /accept, который сам берет ID из токена, 
-      // назначает заявку и меняет статус на IN_PROGRESS за один запрос!
-      const res = await fetch(`http://127.0.0.1:8000/requests/${req.id}/accept`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json', 
-          'Authorization': `Bearer ${token}` 
-        }
-        // body больше не нужен, бэкенд сам все поймет по токену!
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Ошибка при принятии заявки');
-      }
+				return clientMatch || vehicleMatch
+			})
+		}
+		if (filters.status) result = result.filter(r => r.status === filters.status)
+		if (filters.format)
+			result = result.filter(r => r.visit_type === filters.format)
+		if (filters.city) result = result.filter(r => r.city === filters.city)
+		setFilteredRequests(result)
+	}, [filters, requests])
 
-      fetchRequests(); 
-    } catch (err) {
-      alert(`Ошибка: ${err.message}`);
-    }
-  };
+	const handleFilterChange = e =>
+		setFilters({ ...filters, [e.target.name]: e.target.value })
+	const resetFilters = () =>
+		setFilters({ search: '', status: '', city: '', format: '' })
 
-  const handleDeleteRequest = async (e, reqId) => {
-    e.stopPropagation();
-    setActiveDropdown(null);
-    if (!window.confirm('Вы уверены, что хотите удалить эту заявку? Она будет перемещена в Корзину.')) return;
+	const statusLabels = {
+		NEW: 'В ожидании',
+		IN_PROGRESS: 'В процессе установки',
+		DONE: 'Работы завершены',
+		CANCELLED: 'Отменено',
+		COMPLETED: 'Работы завершены',
+	}
+	const statusClasses = {
+		NEW: 'status-new',
+		IN_PROGRESS: 'status-progress',
+		DONE: 'status-done',
+		COMPLETED: 'status-done',
+		CANCELLED: 'status-cancelled',
+	}
 
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        alert('Заявка удалена!');
-        fetchRequests();
-      } else {
-        const errData = await res.text();
-        throw new Error(errData || 'Ошибка при удалении заявки');
-      }
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+	const formatDate = dateString => {
+		if (!dateString) return '—'
+		const d = new Date(dateString)
+		return (
+			d.toLocaleDateString('ru-RU') +
+			' ' +
+			d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+		)
+	}
 
-  const handleMenuOpen = (e, reqId) => {
-    e.stopPropagation();
-    setActiveDropdown(null);
-    setDetailModalTab('info');
-    setSelectedRequestId(reqId);
-  };
+	const escapeCsvValue = value => {
+		if (value === null || value === undefined) return ''
 
-  const handleMenuEdit = (e, req) => {
-    e.stopPropagation();
-    setActiveDropdown(null);
-    setEditRequestData(req);
-    setCreateModalOpen(true);
-  };
+		const str = String(value)
 
-  const handleMenuDownload = async (e, reqId) => {
-    e.stopPropagation();
-    setActiveDropdown(null);
-    
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+		if (str.includes(';') || str.includes('"') || str.includes('\n')) {
+			return `"${str.replace(/"/g, '""')}"`
+		}
 
-      if (!res.ok) throw new Error('Не удалось загрузить данные заявки');
-      
-      const data = await res.json();
-      const req = data.request;
+		return str
+	}
 
-      const excelData = [
-        { 'Параметр': 'Номер заявки', 'Значение': req.id },
-        { 'Параметр': 'Дата создания', 'Значение': formatDate(req.created_at) },
-        { 'Параметр': 'Статус', 'Значение': statusLabels[req.status] || req.status },
-        { 'Параметр': 'Город', 'Значение': req.city || '—' },
-        { 'Параметр': 'Адрес выезда', 'Значение': req.address || '—' },
-        { 'Параметр': 'Тип работ', 'Значение': req.work_type === 'INSTALLATION' ? 'Установка' : req.work_type === 'REMOVAL' ? 'Снятие' : 'Диагностика' },
-        { 'Параметр': 'Формат', 'Значение': req.visit_type === 'ON_SITE' ? 'Выезд к клиенту' : 'В офисе' },
-        { 'Параметр': 'Клиент', 'Значение': req.client_name || req.client?.name || '—' },
-        { 'Параметр': 'Компания', 'Значение': req.company_name || req.client?.company_name || '—' },
-        { 'Параметр': 'Телефон', 'Значение': req.phone || req.client?.phone || '—' },
-        { 'Параметр': 'Марка авто', 'Значение': req.brand || req.vehicle?.brand || '—' },
-        { 'Параметр': 'Модель авто', 'Значение': req.model || req.vehicle?.model || '—' },
-        { 'Параметр': 'Гос. номер', 'Значение': req.plate_number || req.vehicle?.plate_number || '—' },
-        { 'Параметр': 'VIN-код', 'Значение': req.vin || req.vehicle?.vin || '—' },
-        { 'Параметр': 'Наличие маяка', 'Значение': req.has_beacon ? 'Да' : 'Нет' },
-        { 'Параметр': 'Наличие блокировки', 'Значение': req.has_blocking ? 'Да' : 'Нет' },
-        { 'Параметр': 'Статус оплаты', 'Значение': Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты' }
-      ];
+	const downloadCsv = (rows, filename) => {
+		const csvContent = rows
+			.map(row => row.map(escapeCsvValue).join(';'))
+			.join('\n')
 
-      const worksheet = XLSX.utils.json_to_sheet(excelData);
-      worksheet['!cols'] = [{ wch: 25 }, { wch: 40 }];
-      
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, `Заявка ${reqId}`);
-      XLSX.writeFile(workbook, `Заявка_№${reqId}.xlsx`);
+		const blob = new Blob(['\ufeff' + csvContent], {
+			type: 'text/csv;charset=utf-8;',
+		})
 
-    } catch (err) {
-      alert(`Ошибка при скачивании: ${err.message}`);
-    }
-  };
+		const url = URL.createObjectURL(blob)
+		const link = document.createElement('a')
 
-  const handleMenuHistory = (e, reqId) => {
-    e.stopPropagation();
-    setActiveDropdown(null);
-    setDetailModalTab('history');
-    setSelectedRequestId(reqId);
-  };
+		link.href = url
+		link.setAttribute('download', filename)
+		document.body.appendChild(link)
+		link.click()
+		document.body.removeChild(link)
+		URL.revokeObjectURL(url)
+	}
+	
+	const toggleDropdown = (e, reqId) => {
+		e.stopPropagation()
+		setActiveDropdown(prev => (prev === reqId ? null : reqId))
+	}
 
-  const handleOpenEditFromDetail = (reqData) => {
-    setSelectedRequestId(null);
-    setEditRequestData(reqData);
-    setCreateModalOpen(true);
-  };
+	// --- ИСПРАВЛЕННЫЕ ФУНКЦИИ КНОПОК ---
 
-  return (
+	// 1. Оплата заявки (для Бухгалтера)
+	const handlePayRequest = async (e, reqId) => {
+		e.stopPropagation()
+		if (!window.confirm('Отметить заявку как оплаченную?')) return
+
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
+				method: 'PATCH',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ is_paid: true }),
+			})
+			if (!res.ok) throw new Error('Ошибка при обновлении статуса оплаты')
+
+			fetchRequests()
+		} catch (err) {
+			alert(err.message)
+		}
+	}
+
+	// 2. Принятие заявки (для Монтажника) - ИСПРАВЛЕНО ПОД НОВЫЙ РОУТ БЭКЕНДА
+	const handleAcceptRequest = async (e, req) => {
+		e.stopPropagation()
+		if (!window.confirm('Принять эту заявку в работу?')) return
+
+		try {
+			const token = localStorage.getItem('access_token')
+
+			// Бэкендер сделал роут /accept, который сам берет ID из токена,
+			// назначает заявку и меняет статус на IN_PROGRESS за один запрос!
+			const res = await fetch(
+				`http://127.0.0.1:8000/requests/${req.id}/accept`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${token}`,
+					},
+					// body больше не нужен, бэкенд сам все поймет по токену!
+				},
+			)
+
+			if (!res.ok) {
+				const errData = await res.json()
+				throw new Error(errData.detail || 'Ошибка при принятии заявки')
+			}
+
+			fetchRequests()
+		} catch (err) {
+			alert(`Ошибка: ${err.message}`)
+		}
+	}
+
+	const handleDeleteRequest = async (e, reqId) => {
+		e.stopPropagation()
+		setActiveDropdown(null)
+		if (
+			!window.confirm(
+				'Вы уверены, что хотите удалить эту заявку? Она будет перемещена в Корзину.',
+			)
+		)
+			return
+
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
+				method: 'DELETE',
+				headers: { Authorization: `Bearer ${token}` },
+			})
+			if (res.ok) {
+				alert('Заявка удалена!')
+				fetchRequests()
+			} else {
+				const errData = await res.text()
+				throw new Error(errData || 'Ошибка при удалении заявки')
+			}
+		} catch (err) {
+			alert(err.message)
+		}
+	}
+
+	const handleMenuOpen = (e, reqId) => {
+		e.stopPropagation()
+		setActiveDropdown(null)
+		setDetailModalTab('info')
+		setSelectedRequestId(reqId)
+	}
+
+	const handleMenuEdit = (e, req) => {
+		e.stopPropagation()
+		setActiveDropdown(null)
+		setEditRequestData(req)
+		setCreateModalOpen(true)
+	}
+
+	const handleMenuDownload = async (e, reqId) => {
+		e.stopPropagation()
+		setActiveDropdown(null)
+
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
+				headers: { Authorization: `Bearer ${token}` },
+			})
+
+			if (!res.ok) throw new Error('Не удалось загрузить данные заявки')
+
+			const data = await res.json()
+			const req = data.request
+			const vehicles = data.vehicles || req.vehicles || []
+
+			const rows = [
+				['Параметр', 'Значение'],
+				['Номер заявки', req.id],
+				['Дата создания', formatDate(req.created_at)],
+				['Статус', statusLabels[req.status] || req.status],
+				['Город', req.city || '—'],
+				['Адрес выезда', req.address || '—'],
+				[
+					'Тип работ',
+					req.work_type === 'INSTALLATION'
+						? 'Установка'
+						: req.work_type === 'REMOVAL'
+							? 'Снятие'
+							: 'Диагностика',
+				],
+				[
+					'Формат',
+					req.visit_type === 'ON_SITE' ? 'Выезд к клиенту' : 'В офисе',
+				],
+				['Клиент', getClientDisplayName(req)],
+				['Компания', req.company_name || '—'],
+				['Телефон', req.phone || '—'],
+				['Статус оплаты', Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'],
+				[],
+				['Автомобили в заявке', ''],
+			]
+
+			if (vehicles.length === 0) {
+				rows.push(['Авто', 'Не указаны'])
+			} else {
+				vehicles.forEach((vehicle, index) => {
+					rows.push([])
+					rows.push([`Автомобиль ${index + 1}`, ''])
+					rows.push(['Марка', vehicle.brand || '—'])
+					rows.push(['Модель', vehicle.model || '—'])
+					rows.push(['Гос. номер', vehicle.plate_number || 'б/н'])
+					rows.push(['VIN-код', vehicle.vin || '—'])
+					rows.push(['Год выпуска', vehicle.year || '—'])
+					rows.push(['Тип техники', vehicle.vehicle_type || '—'])
+
+					if (req.work_type === 'INSTALLATION') {
+						rows.push([
+							'Блокировка',
+							vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки',
+						])
+						rows.push(['Маяк', vehicle.has_beacon ? 'С маяком' : 'Без маяка'])
+					}
+				})
+			}
+
+			downloadCsv(rows, `Заявка_№${reqId}.csv`)
+		} catch (err) {
+			alert(`Ошибка при скачивании: ${err.message}`)
+		}
+	}
+
+	const handleMenuHistory = (e, reqId) => {
+		e.stopPropagation()
+		setActiveDropdown(null)
+		setDetailModalTab('history')
+		setSelectedRequestId(reqId)
+	}
+
+	const handleOpenEditFromDetail = reqData => {
+		setSelectedRequestId(null)
+		setEditRequestData(reqData)
+		setCreateModalOpen(true)
+	}
+
+	return (
 		<div className='requests-page-container'>
 			<div className='filters-bar'>
 				<div className='filter-group' style={{ flex: '1.5' }}>
@@ -411,12 +535,21 @@ export default function Requests() {
 						<div className='card-column'>
 							<div className='card-item'>
 								<span className='card-label'>Авто</span>
-								<span className='card-value'>
-									{req.brand} {req.model}{' '}
-									<span style={{ color: '#888', fontSize: '12px' }}>
-										({req.plate_number || 'б/н'})
-									</span>
-								</span>
+
+								<div className='client-request-lines'>
+									{req.vehicles && req.vehicles.length > 0 ? (
+										req.vehicles.map((vehicle, index) => (
+											<div
+												key={vehicle.request_vehicle_id || index}
+												className='client-request-line'
+											>
+												{getVehicleTitle(vehicle, index)}
+											</div>
+										))
+									) : (
+										<span className='card-value'>Авто не указаны</span>
+									)}
+								</div>
 							</div>
 							<div className='card-item'>
 								<span className='card-label'>Город</span>
@@ -426,14 +559,30 @@ export default function Requests() {
 
 						<div className='card-column'>
 							<div className='card-item'>
-								<span className='card-label'>Оборудование</span>
-								<span className='card-value' style={{ fontSize: '13px' }}>
-									{req.work_type === 'INSTALLATION' ? (
-										`${req.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${req.has_beacon ? 'Маяк' : 'Без маяка'}`
+								<span className='card-label'>Параметры</span>
+
+								<div className='client-request-lines'>
+									{req.work_type === 'INSTALLATION' &&
+									req.vehicles &&
+									req.vehicles.length > 0 ? (
+										req.vehicles.map((vehicle, index) => {
+											const title =
+												`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() ||
+												`Авто ${index + 1}`
+
+											return (
+												<div
+													key={vehicle.request_vehicle_id || index}
+													className='client-request-line'
+												>
+													{title}: {getVehicleInstallText(vehicle)}
+												</div>
+											)
+										})
 									) : (
 										<span style={{ color: '#aaa' }}>—</span>
 									)}
-								</span>
+								</div>
 							</div>
 							<div className='card-item'>
 								<span className='card-label'>Формат</span>

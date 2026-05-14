@@ -19,6 +19,23 @@ const mapTypeToDB = uiType => {
 	return 'INDIVIDUAL'
 }
 
+const createEmptyRequestVehicle = () => ({
+	local_id: crypto.randomUUID
+		? crypto.randomUUID()
+		: `${Date.now()}-${Math.random()}`,
+
+	car_id: '',
+	car_type: 'Легковая',
+	car_brand: '',
+	car_model: '',
+	car_vin: '',
+	car_plate: '',
+	car_year: '',
+
+	blocking: 'С блокировкой',
+	beacon: 'С маяком',
+})
+
 export default function CreateRequestModal({
 	isOpen,
 	onClose,
@@ -30,6 +47,10 @@ export default function CreateRequestModal({
 	const [clientKind, setClientKind] = useState('new')
 	const [clientsList, setClientsList] = useState([])
 	const [clientVehicles, setClientVehicles] = useState([])
+
+	const [requestVehicles, setRequestVehicles] = useState([
+		createEmptyRequestVehicle(),
+	])
 
 	const [formData, setFormData] = useState({
 		client_id: '',
@@ -44,16 +65,6 @@ export default function CreateRequestModal({
 		work_address: '',
 		work_date: '',
 
-		car_id: '',
-		car_type: 'Легковая',
-		car_brand: '',
-		car_model: '',
-		car_vin: '',
-		car_plate: '',
-		car_year: '',
-
-		blocking: 'С блокировкой',
-		beacon: 'С маяком',
 		manager_comment: '',
 	})
 
@@ -74,16 +85,6 @@ export default function CreateRequestModal({
 		work_address: '',
 		work_date: '',
 
-		car_id: '',
-		car_type: 'Легковая',
-		car_brand: '',
-		car_model: '',
-		car_vin: '',
-		car_plate: '',
-		car_year: '',
-
-		blocking: 'С блокировкой',
-		beacon: 'С маяком',
 		manager_comment: '',
 	}
 
@@ -122,26 +123,12 @@ export default function CreateRequestModal({
 				work_address: editRequestData.address || '',
 				work_date: '',
 
-				car_id: editRequestData.vehicle_id || '',
-				car_type:
-					editRequestData.vehicle_type ||
-					editRequestData.car_type ||
-					'Легковая',
-				car_brand: editRequestData.brand || '',
-				car_model: editRequestData.model || '',
-				car_vin: editRequestData.vin || '',
-				car_plate: editRequestData.plate_number || '',
-				car_year: editRequestData.year || '',
-
-				blocking: editRequestData.has_blocking
-					? 'С блокировкой'
-					: 'Без блокировки',
-				beacon: editRequestData.has_beacon ? 'С маяком' : 'Без маяка',
 				manager_comment: '',
 			})
 		} else {
 			setClientKind('new')
 			setClientVehicles([])
+			setRequestVehicles([createEmptyRequestVehicle()])
 			setFormData(emptyForm)
 		}
 	}, [isOpen, editRequestData, isEditMode])
@@ -217,17 +204,10 @@ export default function CreateRequestModal({
 				client_name: client.name || '',
 				phone: client.phone || '',
 				company_name: client.company_name || '',
-
-				car_id: '',
-				car_brand: '',
-				car_model: '',
-				car_plate: '',
-				car_vin: '',
-				car_year: '',
-				car_type: 'Легковая',
 			}))
 
 			fetchClientVehicles(client.id)
+			setRequestVehicles([createEmptyRequestVehicle()])
 
 			setMissingFields(prev =>
 				prev.filter(f => !['client_name', 'phone'].includes(f)),
@@ -246,44 +226,84 @@ export default function CreateRequestModal({
 		}
 	}
 
-	const handleExistingVehicleSelect = e => {
-		const selectedId = e.target.value
-
+	const handleExistingVehicleSelect = (localId, selectedId) => {
 		if (!selectedId) {
-			setFormData(prev => ({
-				...prev,
-				car_id: '',
-				car_brand: '',
-				car_model: '',
-				car_plate: '',
-				car_vin: '',
-				car_year: '',
-				car_type: 'Легковая',
-			}))
+			setRequestVehicles(prev =>
+				prev.map(vehicle =>
+					vehicle.local_id === localId
+						? {
+								...vehicle,
+								car_id: '',
+								car_type: 'Легковая',
+								car_brand: '',
+								car_model: '',
+								car_plate: '',
+								car_vin: '',
+								car_year: '',
+							}
+						: vehicle,
+				),
+			)
 
 			return
 		}
 
-		const vehicle = clientVehicles.find(v => v.id === Number(selectedId))
+		const selectedVehicle = clientVehicles.find(
+			v => v.id === Number(selectedId),
+		)
 
-		if (vehicle) {
-			setFormData(prev => ({
-				...prev,
-				car_id: vehicle.id,
-				car_type: vehicle.type || 'Легковая',
-				car_brand: vehicle.brand || '',
-				car_model: vehicle.model || '',
-				car_plate: vehicle.plate_number || '',
-				car_vin: vehicle.vin || '',
-				car_year: vehicle.year || '',
-			}))
+		if (!selectedVehicle) return
 
-			setMissingFields(prev =>
-				prev.filter(f => !['car_brand', 'car_model'].includes(f)),
-			)
-		}
+		setRequestVehicles(prev =>
+			prev.map(vehicle =>
+				vehicle.local_id === localId
+					? {
+							...vehicle,
+							car_id: selectedVehicle.id,
+							car_type: selectedVehicle.type || 'Легковая',
+							car_brand: selectedVehicle.brand || '',
+							car_model: selectedVehicle.model || '',
+							car_plate: selectedVehicle.plate_number || '',
+							car_vin: selectedVehicle.vin || '',
+							car_year: selectedVehicle.year || '',
+						}
+					: vehicle,
+			),
+		)
+
+		setMissingFields(prev =>
+			prev.filter(
+				f => ![`car_brand_${localId}`, `car_model_${localId}`].includes(f),
+			),
+		)
 	}
 
+	const handleVehicleChange = (localId, fieldName, value) => {
+		setRequestVehicles(prev =>
+			prev.map(vehicle =>
+				vehicle.local_id === localId
+					? {
+							...vehicle,
+							[fieldName]: value,
+						}
+					: vehicle,
+			),
+		)
+
+		clearMissingField(`${fieldName}_${localId}`)
+	}
+	
+	const addRequestVehicle = () => {
+		setRequestVehicles(prev => [...prev, createEmptyRequestVehicle()])
+	}
+
+	const removeRequestVehicle = localId => {
+		setRequestVehicles(prev => {
+			if (prev.length === 1) return prev
+			return prev.filter(vehicle => vehicle.local_id !== localId)
+		})
+	}
+	
 	const handleClose = () => {
 		setClientKind('new')
 		setError('')
@@ -310,8 +330,21 @@ export default function CreateRequestModal({
 
 		if (!isEditMode) {
 			if (!formData.work_date) required.push('work_date')
-			if (!formData.car_brand) required.push('car_brand')
-			if (!formData.car_model) required.push('car_model')
+			if (!isEditMode) {
+				if (!formData.work_date) required.push('work_date')
+
+				requestVehicles.forEach(vehicle => {
+					if (!vehicle.car_brand) required.push(`car_brand_${vehicle.local_id}`)
+					if (!vehicle.car_model) required.push(`car_model_${vehicle.local_id}`)
+				})
+
+				if (
+					formData.work_format === 'Выезд к клиенту' &&
+					!formData.work_address
+				) {
+					required.push('work_address')
+				}
+			}
 
 			if (
 				formData.work_format === 'Выезд к клиенту' &&
@@ -362,15 +395,6 @@ export default function CreateRequestModal({
 					formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
 			}
 
-			if (formData.work_type === 'Установка') {
-				basePayload.installation = {
-					has_beacon: formData.beacon === 'С маяком',
-					has_blocking: formData.blocking === 'С блокировкой',
-				}
-			} else {
-				basePayload.installation = null
-			}
-
 			if (isEditMode) {
 				const updateRes = await fetch(
 					`http://127.0.0.1:8000/requests/${editRequestData.id}`,
@@ -419,31 +443,50 @@ export default function CreateRequestModal({
 				finalClientId = parseInt(clientData.id || clientData.client_id, 10)
 			}
 
-			let finalVehicleId = formData.car_id
-				? parseInt(formData.car_id, 10)
-				: null
+			const finalVehicles = []
 
-			if (!finalVehicleId) {
-				const vehicleRes = await fetch('http://127.0.0.1:8000/vehicles', {
-					method: 'POST',
-					headers,
-					body: JSON.stringify({
-						client_id: finalClientId,
-						type: formData.car_type,
-						brand: formData.car_brand,
-						model: formData.car_model,
-						plate_number: formData.car_plate || 'Нет',
-						vin: formData.car_vin || null,
-						year: formData.car_year ? parseInt(formData.car_year, 10) : null,
-					}),
-				})
+			for (const vehicle of requestVehicles) {
+				let finalVehicleId = vehicle.car_id
+					? parseInt(vehicle.car_id, 10)
+					: null
 
-				if (!vehicleRes.ok) {
-					throw new Error(`Ошибка автомобиля: ${await vehicleRes.text()}`)
+				if (!finalVehicleId) {
+					const vehicleRes = await fetch('http://127.0.0.1:8000/vehicles', {
+						method: 'POST',
+						headers,
+						body: JSON.stringify({
+							client_id: finalClientId,
+							type: vehicle.car_type,
+							brand: vehicle.car_brand,
+							model: vehicle.car_model,
+							plate_number: vehicle.car_plate || 'без ГРНЗ',
+							vin: vehicle.car_vin || null,
+							year: vehicle.car_year ? parseInt(vehicle.car_year, 10) : null,
+						}),
+					})
+
+					if (!vehicleRes.ok) {
+						throw new Error(`Ошибка автомобиля: ${await vehicleRes.text()}`)
+					}
+
+					const vehicleData = await vehicleRes.json()
+					finalVehicleId = parseInt(
+						vehicleData.id || vehicleData.vehicle_id,
+						10,
+					)
 				}
 
-				const vehicleData = await vehicleRes.json()
-				finalVehicleId = parseInt(vehicleData.id || vehicleData.vehicle_id, 10)
+				finalVehicles.push({
+					vehicle_id: finalVehicleId,
+					has_beacon:
+						formData.work_type === 'Установка'
+							? vehicle.beacon === 'С маяком'
+							: false,
+					has_blocking:
+						formData.work_type === 'Установка'
+							? vehicle.blocking === 'С блокировкой'
+							: false,
+				})
 			}
 
 			const requestRes = await fetch('http://127.0.0.1:8000/requests', {
@@ -451,8 +494,11 @@ export default function CreateRequestModal({
 				headers,
 				body: JSON.stringify({
 					client_id: finalClientId,
-					vehicle_id: finalVehicleId,
 					...basePayload,
+					scheduled_at: formData.work_date
+						? `${formData.work_date}T00:00:00`
+						: null,
+					vehicles: finalVehicles,
 				}),
 			})
 
@@ -494,7 +540,7 @@ export default function CreateRequestModal({
 
 	return (
 		<div className='modal-overlay open'>
-			<div className='modal-window request-modal-window'>
+			<div className='request-modal-window'>
 				<div className='modal-header'>
 					<span className='modal-title'>
 						{isEditMode ? 'Редактирование заявки' : 'Создание заявки'}
@@ -717,161 +763,285 @@ export default function CreateRequestModal({
 							)}
 						</div>
 
-						<div className='request-modal-card'>
-							<div className='request-modal-section-title'>
-								Данные транспорта
-							</div>
-
-							{isExisting && clientVehicles.length > 0 && !isEditMode && (
-								<label className='request-modal-field request-modal-full request-existing-vehicle-box'>
-									<span className='request-modal-label'>Выберите авто</span>
-									<select
-										className='request-modal-input'
-										onChange={handleExistingVehicleSelect}
-										value={formData.car_id}
-									>
-										<option value=''>— Новая машина —</option>
-										{clientVehicles.map(vehicle => (
-											<option key={vehicle.id} value={vehicle.id}>
-												{vehicle.brand} {vehicle.model} (
-												{vehicle.plate_number || 'б/н'})
-											</option>
-										))}
-									</select>
-								</label>
-							)}
-
-							<div className='request-modal-grid'>
-								<label className='request-modal-field'>
-									<span className='request-modal-label required'>
-										Тип техники
-									</span>
-									<select
-										className='request-modal-input'
-										name='car_type'
-										value={formData.car_type}
-										onChange={handleChange}
-										disabled={isVehicleLocked}
-									>
-										<option>Легковая</option>
-										<option>Электромобиль</option>
-										<option>Спецтехника</option>
-									</select>
-								</label>
-
-								<label className='request-modal-field'>
-									<span className='request-modal-label required'>Марка</span>
-									<input
-										className={fieldClass('car_brand')}
-										type='text'
-										name='car_brand'
-										value={formData.car_brand}
-										onChange={handleChange}
-										readOnly={isVehicleLocked}
-									/>
-								</label>
-
-								<label className='request-modal-field'>
-									<span className='request-modal-label required'>Модель</span>
-									<input
-										className={fieldClass('car_model')}
-										type='text'
-										name='car_model'
-										value={formData.car_model}
-										onChange={handleChange}
-										readOnly={isVehicleLocked}
-									/>
-								</label>
-
-								<label className='request-modal-field'>
-									<span className='request-modal-label'>Год выпуска</span>
-									<input
-										className='request-modal-input'
-										type='number'
-										name='car_year'
-										value={formData.car_year}
-										onChange={handleChange}
-										readOnly={isVehicleLocked}
-										placeholder='2020'
-									/>
-								</label>
-
-								<label className='request-modal-field'>
-									<span className='request-modal-label'>VIN-код</span>
-									<input
-										className='request-modal-input'
-										type='text'
-										name='car_vin'
-										value={formData.car_vin}
-										onChange={handleChange}
-										readOnly={isVehicleLocked}
-										placeholder='17 символов'
-										maxLength='17'
-									/>
-								</label>
-
-								<label className='request-modal-field'>
-									<span className='request-modal-label'>Гос. номер</span>
-									<input
-										className='request-modal-input'
-										type='text'
-										name='car_plate'
-										value={formData.car_plate}
-										onChange={handleChange}
-										readOnly={isVehicleLocked}
-									/>
-								</label>
-							</div>
-						</div>
-
-						{formData.work_type === 'Установка' && (
+						{!isEditMode && (
 							<div className='request-modal-card'>
-								<div className='request-modal-section-title'>
-									Параметры установки
+								<div className='request-modal-card-header'>
+									<div className='request-modal-section-title'>
+										Автомобили в заявке
+									</div>
+
+									<button
+										type='button'
+										className='request-add-vehicle-btn'
+										onClick={addRequestVehicle}
+									>
+										+ Добавить автомобиль
+									</button>
 								</div>
 
-								<div className='request-option-group'>
-									<div className='request-modal-label'>Блокировка</div>
+								<div className='request-vehicles-form-list'>
+									{requestVehicles.map((vehicle, index) => {
+										const isVehicleLocked = vehicle.car_id !== ''
 
-									<div className='request-radio-list'>
-										{['С блокировкой', 'Без блокировки'].map(value => (
-											<label
-												key={value}
-												className={`request-radio-pill ${formData.blocking === value ? 'active' : ''}`}
+										return (
+											<div
+												key={vehicle.local_id}
+												className='request-vehicle-form-card'
 											>
-												<input
-													type='radio'
-													name='blocking'
-													value={value}
-													checked={formData.blocking === value}
-													onChange={handleChange}
-												/>
-												{value}
-											</label>
-										))}
-									</div>
-								</div>
+												<div className='request-vehicle-form-header'>
+													<div className='request-vehicle-form-title'>
+														Автомобиль #{index + 1}
+													</div>
 
-								<div className='request-option-group'>
-									<div className='request-modal-label'>Маяк</div>
+													{requestVehicles.length > 1 && (
+														<button
+															type='button'
+															className='request-remove-vehicle-btn'
+															onClick={() =>
+																removeRequestVehicle(vehicle.local_id)
+															}
+														>
+															Удалить
+														</button>
+													)}
+												</div>
 
-									<div className='request-radio-list'>
-										{['С маяком', 'Без маяка'].map(value => (
-											<label
-												key={value}
-												className={`request-radio-pill ${formData.beacon === value ? 'active' : ''}`}
-											>
-												<input
-													type='radio'
-													name='beacon'
-													value={value}
-													checked={formData.beacon === value}
-													onChange={handleChange}
-												/>
-												{value}
-											</label>
-										))}
-									</div>
+												<div className='request-vehicle-two-columns'>
+													<div>
+														<div className='request-modal-section-subtitle'>
+															Данные транспорта
+														</div>
+
+														{isExisting && clientVehicles.length > 0 && (
+															<label className='request-modal-field request-modal-full request-existing-vehicle-box'>
+																<span className='request-modal-label'>
+																	Выберите авто
+																</span>
+																<select
+																	className='request-modal-input'
+																	onChange={e =>
+																		handleExistingVehicleSelect(
+																			vehicle.local_id,
+																			e.target.value,
+																		)
+																	}
+																	value={vehicle.car_id}
+																>
+																	<option value=''>— Новая машина —</option>
+																	{clientVehicles.map(clientVehicle => (
+																		<option
+																			key={clientVehicle.id}
+																			value={clientVehicle.id}
+																		>
+																			{clientVehicle.brand}{' '}
+																			{clientVehicle.model} (
+																			{clientVehicle.plate_number || 'б/н'})
+																		</option>
+																	))}
+																</select>
+															</label>
+														)}
+
+														<div className='request-modal-grid single-column-mobile'>
+															<label className='request-modal-field'>
+																<span className='request-modal-label required'>
+																	Тип техники
+																</span>
+																<select
+																	className='request-modal-input'
+																	value={vehicle.car_type}
+																	onChange={e =>
+																		handleVehicleChange(
+																			vehicle.local_id,
+																			'car_type',
+																			e.target.value,
+																		)
+																	}
+																	disabled={isVehicleLocked}
+																>
+																	<option>Легковая</option>
+																	<option>Электромобиль</option>
+																	<option>Спецтехника</option>
+																</select>
+															</label>
+
+															<label className='request-modal-field'>
+																<span className='request-modal-label required'>
+																	Марка
+																</span>
+																<input
+																	className={
+																		missingFields.includes(
+																			`car_brand_${vehicle.local_id}`,
+																		)
+																			? 'request-modal-input request-field-error'
+																			: 'request-modal-input'
+																	}
+																	type='text'
+																	value={vehicle.car_brand}
+																	onChange={e =>
+																		handleVehicleChange(
+																			vehicle.local_id,
+																			'car_brand',
+																			e.target.value,
+																		)
+																	}
+																	readOnly={isVehicleLocked}
+																/>
+															</label>
+
+															<label className='request-modal-field'>
+																<span className='request-modal-label required'>
+																	Модель
+																</span>
+																<input
+																	className={
+																		missingFields.includes(
+																			`car_model_${vehicle.local_id}`,
+																		)
+																			? 'request-modal-input request-field-error'
+																			: 'request-modal-input'
+																	}
+																	type='text'
+																	value={vehicle.car_model}
+																	onChange={e =>
+																		handleVehicleChange(
+																			vehicle.local_id,
+																			'car_model',
+																			e.target.value,
+																		)
+																	}
+																	readOnly={isVehicleLocked}
+																/>
+															</label>
+
+															<label className='request-modal-field'>
+																<span className='request-modal-label'>
+																	Год выпуска
+																</span>
+																<input
+																	className='request-modal-input'
+																	type='number'
+																	value={vehicle.car_year}
+																	onChange={e =>
+																		handleVehicleChange(
+																			vehicle.local_id,
+																			'car_year',
+																			e.target.value,
+																		)
+																	}
+																	readOnly={isVehicleLocked}
+																	placeholder='2020'
+																/>
+															</label>
+
+															<label className='request-modal-field'>
+																<span className='request-modal-label'>
+																	VIN-код
+																</span>
+																<input
+																	className='request-modal-input'
+																	type='text'
+																	value={vehicle.car_vin}
+																	onChange={e =>
+																		handleVehicleChange(
+																			vehicle.local_id,
+																			'car_vin',
+																			e.target.value,
+																		)
+																	}
+																	readOnly={isVehicleLocked}
+																	placeholder='17 символов'
+																	maxLength='17'
+																/>
+															</label>
+
+															<label className='request-modal-field'>
+																<span className='request-modal-label'>
+																	Гос. номер
+																</span>
+																<input
+																	className='request-modal-input'
+																	type='text'
+																	value={vehicle.car_plate}
+																	onChange={e =>
+																		handleVehicleChange(
+																			vehicle.local_id,
+																			'car_plate',
+																			e.target.value,
+																		)
+																	}
+																	readOnly={isVehicleLocked}
+																/>
+															</label>
+														</div>
+													</div>
+
+													{formData.work_type === 'Установка' && (
+														<div className='request-install-params-card'>
+															<div className='request-modal-section-subtitle'>
+																Параметры установки
+															</div>
+
+															<div className='request-option-group'>
+
+																<div className='request-radio-list vertical'>
+																	{['С блокировкой', 'Без блокировки'].map(
+																		value => (
+																			<label
+																				key={value}
+																				className={`request-radio-pill ${vehicle.blocking === value ? 'active' : ''}`}
+																			>
+																				<input
+																					type='radio'
+																					value={value}
+																					checked={vehicle.blocking === value}
+																					onChange={e =>
+																						handleVehicleChange(
+																							vehicle.local_id,
+																							'blocking',
+																							e.target.value,
+																						)
+																					}
+																				/>
+																				{value}
+																			</label>
+																		),
+																	)}
+																</div>
+															</div>
+
+															<div className='request-option-group'>
+
+																<div className='request-radio-list vertical'>
+																	{['С маяком', 'Без маяка'].map(value => (
+																		<label
+																			key={value}
+																			className={`request-radio-pill ${vehicle.beacon === value ? 'active' : ''}`}
+																		>
+																			<input
+																				type='radio'
+																				value={value}
+																				checked={vehicle.beacon === value}
+																				onChange={e =>
+																					handleVehicleChange(
+																						vehicle.local_id,
+																						'beacon',
+																						e.target.value,
+																					)
+																				}
+																			/>
+																			{value}
+																		</label>
+																	))}
+																</div>
+															</div>
+														</div>
+													)}
+												</div>
+											</div>
+										)
+									})}
 								</div>
 							</div>
 						)}

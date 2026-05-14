@@ -1,95 +1,104 @@
-import React, { useState, useEffect } from 'react';
-import '../styles/Clients.css'; 
-import '../styles/Requests.css';
-import CreateClientModal from './CreateClientModal';
-import RequestDetailModal from './RequestDetailModal';
+import React, { useState, useEffect } from 'react'
+import '../styles/Clients.css'
+import '../styles/Requests.css'
+import CreateClientModal from './CreateClientModal'
+import RequestDetailModal from './RequestDetailModal'
 
 const getUserRole = () => {
-  try {
-    const token = localStorage.getItem('access_token');
-    if (!token) return null;
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
-    return JSON.parse(jsonPayload).role;
-  } catch (error) { return null; }
-};
+	try {
+		const token = localStorage.getItem('access_token')
+		if (!token) return null
+		const base64Url = token.split('.')[1]
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+		const jsonPayload = decodeURIComponent(
+			atob(base64)
+				.split('')
+				.map(function (c) {
+					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+				})
+				.join(''),
+		)
+		return JSON.parse(jsonPayload).role
+	} catch (error) {
+		return null
+	}
+}
 
 export default function Clients() {
-  const [clients, setClients] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  
-  const [selectedClient, setSelectedClient] = useState(null); 
-  const [clientRequests, setClientRequests] = useState([]);
-  const [clientVehicles, setClientVehicles] = useState([]); 
-  const [isVehiclesLoading, setIsVehiclesLoading] = useState(false);
-  const [technicians, setTechnicians] = useState([]); 
-  const [vehicleEquipmentMap, setVehicleEquipmentMap] = useState({})
+	const [clients, setClients] = useState([])
+	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState('')
 
-  const [isCreateModalOpen, setCreateModalOpen] = useState(false);
-  const [editClientData, setEditClientData] = useState(null); 
-  
-  const [selectedRequestId, setSelectedRequestId] = useState(null);
-  const [activeDropdown, setActiveDropdown] = useState(null);
+	const [selectedClient, setSelectedClient] = useState(null)
+	const [clientRequests, setClientRequests] = useState([])
+	const [clientVehicles, setClientVehicles] = useState([])
+	const [isVehiclesLoading, setIsVehiclesLoading] = useState(false)
+	const [technicians, setTechnicians] = useState([])
+	const [vehicleEquipmentMap, setVehicleEquipmentMap] = useState({})
 
-  // Состояние для редактируемого автомобиля
-  const [editingVehicle, setEditingVehicle] = useState(null);
-  
-  const userRole = getUserRole();
+	const [isCreateModalOpen, setCreateModalOpen] = useState(false)
+	const [editClientData, setEditClientData] = useState(null)
 
-  useEffect(() => {
-    fetchClients();
-    fetchTechnicians(); 
-  }, []);
+	const [selectedRequestId, setSelectedRequestId] = useState(null)
+	const [activeDropdown, setActiveDropdown] = useState(null)
 
-  useEffect(() => {
-    const handleClickOutside = () => setActiveDropdown(null);
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, []);
+	// Состояние для редактируемого автомобиля
+	const [editingVehicle, setEditingVehicle] = useState(null)
 
-  const fetchClients = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch('http://127.0.0.1:8000/clients', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+	const userRole = getUserRole()
 
-      if (!response.ok) {
-        throw new Error('Не удалось загрузить список клиентов');
-      }
+	useEffect(() => {
+		fetchClients()
+		fetchTechnicians()
+	}, [])
 
-      const data = await response.json();
-      setClients(data.filter(c => !c.is_deleted));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+	useEffect(() => {
+		const handleClickOutside = () => setActiveDropdown(null)
+		document.addEventListener('click', handleClickOutside)
+		return () => document.removeEventListener('click', handleClickOutside)
+	}, [])
 
-  const fetchTechnicians = async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch('http://127.0.0.1:8000/users/technicians', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) setTechnicians(await res.json());
-    } catch (err) { console.error(err); }
-  };
+	const fetchClients = async () => {
+		setLoading(true)
+		setError('')
+		try {
+			const token = localStorage.getItem('access_token')
+			const response = await fetch('http://127.0.0.1:8000/clients', {
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			})
 
-  const getTechName = (techId) => {
-    if (!techId) return null;
-    const tech = technicians.find(t => t.id === techId);
-    return tech ? tech.name : `ID: ${techId}`;
-  };
+			if (!response.ok) {
+				throw new Error('Не удалось загрузить список клиентов')
+			}
+
+			const data = await response.json()
+			setClients(data.filter(c => !c.is_deleted))
+		} catch (err) {
+			setError(err.message)
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	const fetchTechnicians = async () => {
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch('http://127.0.0.1:8000/users/technicians', {
+				headers: { Authorization: `Bearer ${token}` },
+			})
+			if (res.ok) setTechnicians(await res.json())
+		} catch (err) {
+			console.error(err)
+		}
+	}
+
+	const getTechName = techId => {
+		if (!techId) return null
+		const tech = technicians.find(t => t.id === techId)
+		return tech ? tech.name : `ID: ${techId}`
+	}
 
 	const clientTypeLabels = {
 		TOO: 'ТОО',
@@ -150,7 +159,22 @@ export default function Clients() {
 		return vehicleEquipmentMap[vehicleId] || []
 	}
 
-  const handleClientClick = async client => {
+	const getVehicleTitle = (vehicle, index) => {
+		const title =
+			`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() ||
+			`Авто ${index + 1}`
+		const plate = vehicle.plate_number || 'б/н'
+
+		return `${title} (${plate})`
+	}
+
+	const getVehicleInstallText = vehicle => {
+		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${
+			vehicle.has_beacon ? 'Маяк' : 'Без маяка'
+		}`
+	}
+
+	const handleClientClick = async client => {
 		setSelectedClient(client)
 		setClientVehicles([])
 		setVehicleEquipmentMap({})
@@ -174,33 +198,37 @@ export default function Clients() {
 		}
 	}
 
-  const fetchClientVehicles = async (clientId) => {
-    setIsVehiclesLoading(true);
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/vehicles?client_id=${clientId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setClientVehicles(data);
-        if (data.length === 0) alert('У этого клиента пока нет добавленных автомобилей.');
-      }
-    } catch (err) {
-      console.error('Ошибка загрузки машин:', err);
-    } finally {
-      setIsVehiclesLoading(false);
-    }
-  };
+	const fetchClientVehicles = async clientId => {
+		setIsVehiclesLoading(true)
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(
+				`http://127.0.0.1:8000/vehicles?client_id=${clientId}`,
+				{
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			)
+			if (res.ok) {
+				const data = await res.json()
+				setClientVehicles(data)
+				if (data.length === 0)
+					alert('У этого клиента пока нет добавленных автомобилей.')
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки машин:', err)
+		} finally {
+			setIsVehiclesLoading(false)
+		}
+	}
 
-  const fetchEquipmentForClientRequests = async requestsList => {
+	const fetchEquipmentForClientRequests = async requestsList => {
 		try {
 			const token = localStorage.getItem('access_token')
 			const equipmentByVehicle = {}
 
 			await Promise.all(
 				requestsList.map(async req => {
-					if (!req.id || !req.vehicle_id) return
+					if (!req.id) return
 
 					try {
 						const res = await fetch(
@@ -216,17 +244,19 @@ export default function Clients() {
 
 						if (!Array.isArray(equipment) || equipment.length === 0) return
 
-						if (!equipmentByVehicle[req.vehicle_id]) {
-							equipmentByVehicle[req.vehicle_id] = []
-						}
-
 						equipment.forEach(item => {
-							const alreadyExists = equipmentByVehicle[req.vehicle_id].some(
+							if (!item.vehicle_id) return
+
+							if (!equipmentByVehicle[item.vehicle_id]) {
+								equipmentByVehicle[item.vehicle_id] = []
+							}
+
+							const alreadyExists = equipmentByVehicle[item.vehicle_id].some(
 								existing => existing.link_id === item.link_id,
 							)
 
 							if (!alreadyExists) {
-								equipmentByVehicle[req.vehicle_id].push({
+								equipmentByVehicle[item.vehicle_id].push({
 									...item,
 									request_id: req.id,
 								})
@@ -244,84 +274,107 @@ export default function Clients() {
 		}
 	}
 
-  const handleDeleteClient = async (e, clientId, clientName) => {
-    e.stopPropagation();
-    setActiveDropdown(null);
-    if (!window.confirm(`Вы уверены, что хотите удалить клиента "${clientName}"?`)) return;
+	const handleDeleteClient = async (e, clientId, clientName) => {
+		e.stopPropagation()
+		setActiveDropdown(null)
+		if (
+			!window.confirm(`Вы уверены, что хотите удалить клиента "${clientName}"?`)
+		)
+			return
 
-    try {
-      const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8000/clients/${clientId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (res.ok) {
-        alert('Клиент успешно удален в корзину!');
-        fetchClients(); 
-        if (selectedClient && selectedClient.id === clientId) {
-          setSelectedClient(null); 
-        }
-      } else {
-        const errData = await res.text();
-        throw new Error(errData);
-      }
-    } catch (err) {
-      alert(`Ошибка при удалении: ${err.message}`);
-    }
-  };
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(`http://127.0.0.1:8000/clients/${clientId}`, {
+				method: 'DELETE',
+				headers: { Authorization: `Bearer ${token}` },
+			})
 
-  const handleEditClientClick = (e, client) => {
-    e.stopPropagation();
-    setActiveDropdown(null);
-    setEditClientData(client);
-    setCreateModalOpen(true);
-  };
+			if (res.ok) {
+				alert('Клиент успешно удален в корзину!')
+				fetchClients()
+				if (selectedClient && selectedClient.id === clientId) {
+					setSelectedClient(null)
+				}
+			} else {
+				const errData = await res.text()
+				throw new Error(errData)
+			}
+		} catch (err) {
+			alert(`Ошибка при удалении: ${err.message}`)
+		}
+	}
 
-  const toggleDropdown = (e, clientId) => {
-    e.stopPropagation();
-    setActiveDropdown(prev => prev === clientId ? null : clientId);
-  };
+	const handleEditClientClick = (e, client) => {
+		e.stopPropagation()
+		setActiveDropdown(null)
+		setEditClientData(client)
+		setCreateModalOpen(true)
+	}
 
-  // ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ОТРЕДАКТИРОВАННОГО АВТО (без IMEI, так как он берется со склада)
-  const handleVehicleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-        const token = localStorage.getItem('access_token');
-        const res = await fetch(`http://127.0.0.1:8000/vehicles/${editingVehicle.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({
-                brand: editingVehicle.brand,
-                model: editingVehicle.model,
-                plate_number: editingVehicle.plate_number,
-                vin: editingVehicle.vin,
-                year: editingVehicle.year ? parseInt(editingVehicle.year, 10) : null
-            })
-        });
-        if (!res.ok) throw new Error(await res.text());
-        alert('Данные авто успешно обновлены!');
-        setEditingVehicle(null);
-        fetchClientVehicles(selectedClient.id); 
-    } catch (err) { alert('Ошибка: ' + err.message); }
-  };
+	const toggleDropdown = (e, clientId) => {
+		e.stopPropagation()
+		setActiveDropdown(prev => (prev === clientId ? null : clientId))
+	}
 
-  const statusLabels = { 'NEW': 'В ожидании', 'IN_PROGRESS': 'В процессе установки', 'COMPLETED': 'Работы завершены', 'CANCELLED': 'Отменено' };
-  
-  const statusClasses = { 
-    'NEW': 'status-new', 
-    'IN_PROGRESS': 'status-progress', 
-    'COMPLETED': 'status-done', 
-    'CANCELLED': 'status-cancelled' 
-  };
-  
-  const formatDate = (dateString) => {
-    if (!dateString) return '—';
-    const d = new Date(dateString);
-    return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
-  };
+	// ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ОТРЕДАКТИРОВАННОГО АВТО (без IMEI, так как он берется со склада)
+	const handleVehicleSubmit = async e => {
+		e.preventDefault()
+		try {
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(
+				`http://127.0.0.1:8000/vehicles/${editingVehicle.id}`,
+				{
+					method: 'PATCH',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${token}`,
+					},
+					body: JSON.stringify({
+						brand: editingVehicle.brand,
+						model: editingVehicle.model,
+						plate_number: editingVehicle.plate_number,
+						vin: editingVehicle.vin,
+						year: editingVehicle.year
+							? parseInt(editingVehicle.year, 10)
+							: null,
+					}),
+				},
+			)
+			if (!res.ok) throw new Error(await res.text())
+			alert('Данные авто успешно обновлены!')
+			setEditingVehicle(null)
+			fetchClientVehicles(selectedClient.id)
+			handleClientClick(selectedClient)
+		} catch (err) {
+			alert('Ошибка: ' + err.message)
+		}
+	}
 
-  return (
+	const statusLabels = {
+		NEW: 'В ожидании',
+		IN_PROGRESS: 'В процессе установки',
+		COMPLETED: 'Работы завершены',
+		CANCELLED: 'Отменено',
+	}
+
+	const statusClasses = {
+		NEW: 'status-new',
+		IN_PROGRESS: 'status-progress',
+		COMPLETED: 'status-done',
+		CANCELLED: 'status-cancelled',
+	}
+
+	const formatDate = dateString => {
+		if (!dateString) return '—'
+		const d = new Date(dateString)
+		return (
+			d.toLocaleDateString('ru-RU') +
+			' ' +
+			d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+		)
+	}
+
+	return (
 		<div className='clients-page-container'>
 			{!selectedClient ? (
 				<>
@@ -439,25 +492,26 @@ export default function Clients() {
 														>
 															Редактировать
 														</div>
-														{(userRole === 'ADMIN') && (
+														{userRole === 'ADMIN' && (
 															<div
 																className='dropdown-item'
 																style={{
 																	padding: '8px 15px',
 																	cursor: 'pointer',
 																	fontSize: '14px',
-																color: '#c62828',
-															}}
-															onClick={e =>
-																handleDeleteClient(
-																	e,
-																	client.id,
-																	client.company_name || client.name,
-																)
-															}
-														>
-															Удалить
-														</div>)}
+																	color: '#c62828',
+																}}
+																onClick={e =>
+																	handleDeleteClient(
+																		e,
+																		client.id,
+																		client.company_name || client.name,
+																	)
+																}
+															>
+																Удалить
+															</div>
+														)}
 													</div>
 												)}
 											</div>
@@ -699,12 +753,21 @@ export default function Clients() {
 								<div className='card-column'>
 									<div className='card-item'>
 										<span className='card-label'>Авто</span>
-										<span className='card-value'>
-											{req.brand} {req.model}{' '}
-											<span style={{ color: '#888', fontSize: '12px' }}>
-												({req.plate_number || 'б/н'})
-											</span>
-										</span>
+
+										<div className='client-request-lines'>
+											{req.vehicles && req.vehicles.length > 0 ? (
+												req.vehicles.map((vehicle, index) => (
+													<div
+														key={vehicle.request_vehicle_id || index}
+														className='client-request-line'
+													>
+														{getVehicleTitle(vehicle, index)}
+													</div>
+												))
+											) : (
+												<span className='card-value'>Авто не указаны</span>
+											)}
+										</div>
 									</div>
 									<div className='card-item'>
 										<span className='card-label'>Город</span>
@@ -716,14 +779,30 @@ export default function Clients() {
 
 								<div className='card-column'>
 									<div className='card-item'>
-										<span className='card-label'>Оборудование</span>
-										<span className='card-value' style={{ fontSize: '13px' }}>
-											{req.work_type === 'INSTALLATION' ? (
-												`${req.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${req.has_beacon ? 'Маяк' : 'Без маяка'}`
+										<span className='card-label'>Параметры</span>
+
+										<div className='client-request-lines'>
+											{req.work_type === 'INSTALLATION' &&
+											req.vehicles &&
+											req.vehicles.length > 0 ? (
+												req.vehicles.map((vehicle, index) => {
+													const title =
+														`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() ||
+														`Авто ${index + 1}`
+
+													return (
+														<div
+															key={vehicle.request_vehicle_id || index}
+															className='client-request-line'
+														>
+															{title}: {getVehicleInstallText(vehicle)}
+														</div>
+													)
+												})
 											) : (
 												<span style={{ color: '#aaa' }}>—</span>
 											)}
-										</span>
+										</div>
 									</div>
 									<div className='card-item'>
 										<span className='card-label'>Формат</span>

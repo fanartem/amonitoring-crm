@@ -263,7 +263,7 @@
 /* --- Request detail modal --- */
 
 .custom-detail-window {
-  width: 700px;
+  width: 750px;
   max-width: 95%;
   max-height: 90vh;
   display: flex;
@@ -534,8 +534,106 @@
   padding: 40px 0;
 }
 
+.client-request-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.client-request-line {
+  color: #222;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.client-request-line + .client-request-line {
+  padding-top: 4px;
+  border-top: 1px dashed #e5e5e5;
+}
+
 .request-card.active-dropdown {
   z-index: 100;
+}
+
+.request-vehicles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.request-vehicle-card {
+  background: #fafafa;
+  border: 1px solid #eaeaea;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.request-vehicle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.request-vehicle-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #222;
+}
+
+.request-vehicle-subtitle {
+  margin-top: 4px;
+  font-size: 14px;
+  color: #222;
+}
+
+.request-vehicle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+}
+
+.request-vehicle-install-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.install-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 20px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #f5f5f5;
+  color: #777;
+  border: 1px solid #e0e0e0;
+  white-space: nowrap;
+}
+
+.install-badge.active {
+  background: #e0f7fa;
+  color: #006064;
+  border-color: #b2ebf2;
+}
+
+@media (max-width: 640px) {
+  .request-vehicle-header {
+    flex-direction: column;
+  }
+
+  .request-vehicle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .request-vehicle-install-badges {
+    justify-content: flex-start;
+  }
 }
 
 /* --- Responsive --- */

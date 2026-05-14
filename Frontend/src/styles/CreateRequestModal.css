@@ -127,7 +127,7 @@
 }
 
 .request-option-group {
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .request-radio-list {
@@ -220,6 +220,118 @@
 .request-submit-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.request-modal-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.request-add-vehicle-btn {
+  border: 1px solid #5e9424;
+  background: #f1f8e9;
+  color: #558b2f;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.request-add-vehicle-btn:hover {
+  background: #dcedc8;
+}
+
+.request-vehicles-form-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.request-vehicle-form-card {
+  border: 1px solid #eaeaea;
+  background: #fafafa;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.request-vehicle-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.request-vehicle-form-title {
+  color: #222;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.request-remove-vehicle-btn {
+  border: 1px solid #ffcdd2;
+  background: #ffebee;
+  color: #c62828;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.request-remove-vehicle-btn:hover {
+  background: #ffcdd2;
+}
+
+.request-vehicle-two-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.request-modal-section-subtitle {
+  color: #5e9424;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  letter-spacing: 0.4px;
+}
+
+.request-install-params-card {
+  border: 1px solid #e0e0e0;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.request-radio-list.vertical {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.request-radio-list.vertical .request-radio-pill {
+  justify-content: center;
+}
+
+@media (max-width: 860px) {
+  .request-vehicle-two-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .request-modal-card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .request-add-vehicle-btn {
+    width: 100%;
+  }
 }
 
 @media (max-width: 720px) {

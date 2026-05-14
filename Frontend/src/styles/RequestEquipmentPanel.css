@@ -205,6 +205,26 @@
   cursor: not-allowed;
 }
 
+.equipment-vehicle-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.equipment-vehicle-group {
+  border: 1px solid #eaeaea;
+  border-radius: 8px;
+  background: #fafafa;
+  padding: 12px;
+}
+
+.equipment-vehicle-title {
+  color: #5e9424;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
 @media (max-width: 640px) {
   .equipment-panel-header {
     flex-direction: column;

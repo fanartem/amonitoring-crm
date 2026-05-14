@@ -2,28 +2,27 @@ from datetime import datetime
 from pydantic import BaseModel
 from typing import Optional
 
-class InstallationDetails(BaseModel):
-    has_beacon: bool = False
-    has_blocking: bool = False
-
 class RequestCreate(BaseModel):
     client_id: int
-    vehicle_id: int
     work_type: str
     visit_type: str
     city: str | None = None
-    installation: InstallationDetails | None = None
+    address: str | None = None
+    scheduled_at: datetime | None = None
+    vehicles: list[RequestVehicleInput]
 
 class RequestUpdate(BaseModel):
-    client_id: int | None = None
-    vehicle_id: int | None = None
     visit_type: str | None = None
     address: str | None = None
     city: str | None = None
     scheduled_at: datetime | None = None
     status: str | None = None
     is_paid: Optional[bool] = None
-    installation: InstallationDetails | None = None
+
+class RequestVehicleInput(BaseModel):
+    vehicle_id: int
+    has_beacon: bool = False
+    has_blocking: bool = False
 
 class CommentCreate(BaseModel):
     request_id: int
@@ -108,6 +107,7 @@ class WarehouseItemUpdate(BaseModel):
     note: str | None = None
 
 class RequestEquipmentAttach(BaseModel):
+    request_vehicle_id: int
     warehouse_item_id: int
     quantity: int = 1
     note: str | None = None

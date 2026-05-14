@@ -55,7 +55,10 @@ def get_vehicles(client_id: int, current_user: dict = Depends(get_current_user))
 def get_deleted_vehicles(current_user: dict = Depends(get_current_user)):
     """Список удалённых машин. Только ADMIN и MANAGER."""
     if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут просматривать корзину машин")
+        raise HTTPException(
+            status_code=403,
+            detail="Только Менеджер или Админ могут просматривать корзину машин"
+        )
 
     connection = get_connection()
     try:
@@ -72,17 +75,37 @@ def get_deleted_vehicles(current_user: dict = Depends(get_current_user)):
                 v.type,
                 v.deleted_at,
                 v.deleted_by,
+
                 c.name AS client_name,
+                c.company_name,
+                c.type AS client_type,
+
                 u.name AS deleted_by_name,
-                COUNT(r.id) AS request_count
+
+                COUNT(DISTINCT r.id) AS request_count
             FROM vehicles v
             LEFT JOIN clients c ON v.client_id = c.id
             LEFT JOIN users u ON v.deleted_by = u.id
-            LEFT JOIN requests r ON v.id = r.vehicle_id
+            LEFT JOIN request_vehicles rv ON v.id = rv.vehicle_id
+            LEFT JOIN requests r 
+                ON rv.request_id = r.id
+                AND r.is_deleted = 0
             WHERE v.is_deleted = 1
             GROUP BY 
-                v.id, v.client_id, v.brand, v.model, v.plate_number, v.vin,
-                v.year, v.type, v.deleted_at, v.deleted_by, c.name, u.name
+                v.id,
+                v.client_id,
+                v.brand,
+                v.model,
+                v.plate_number,
+                v.vin,
+                v.year,
+                v.type,
+                v.deleted_at,
+                v.deleted_by,
+                c.name,
+                c.company_name,
+                c.type,
+                u.name
             ORDER BY v.deleted_at DESC
             """
             cursor.execute(sql)
@@ -216,11 +239,12 @@ def delete_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_use
 
             cursor.execute(
                 """
-                SELECT COUNT(*) AS active_count
-                FROM requests
-                WHERE vehicle_id = %s
-                AND is_deleted = 0
-                AND status IN ('NEW', 'IN_PROGRESS')
+                SELECT COUNT(DISTINCT r.id) AS active_count
+                FROM request_vehicles rv
+                INNER JOIN requests r ON rv.request_id = r.id
+                WHERE rv.vehicle_id = %s
+                AND r.is_deleted = 0
+                AND r.status IN ('NEW', 'IN_PROGRESS')
                 """,
                 (vehicle_id,)
             )

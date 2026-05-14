@@ -54,7 +54,6 @@ def sync_db():
                     CREATE TABLE requests (
                         id INT AUTO_INCREMENT PRIMARY KEY,
                         client_id INT,
-                        vehicle_id INT,
                         work_type ENUM('INSTALLATION', 'DIAGNOSTIC', 'REMOVAL'),
                         visit_type ENUM('IN_OFFICE', 'ON_SITE'),
                         address TEXT,
@@ -68,18 +67,24 @@ def sync_db():
                         is_deleted TINYINT DEFAULT 0,
                         deleted_at DATETIME NULL,
                         deleted_by INT NULL,
+
                         FOREIGN KEY (client_id) REFERENCES clients(id),
-                        FOREIGN KEY (vehicle_id) REFERENCES vehicles(id),
                         FOREIGN KEY (assigned_to) REFERENCES users(id)
                     );
                 """,
-                "installation_details": """
-                    CREATE TABLE installation_details (
+                "request_vehicles": """
+                    CREATE TABLE request_vehicles (
                         id INT AUTO_INCREMENT PRIMARY KEY,
-                        request_id INT NOT NULL UNIQUE,
+                        request_id INT NOT NULL,
+                        vehicle_id INT NOT NULL,
+
                         has_beacon TINYINT(1) DEFAULT 0,
                         has_blocking TINYINT(1) DEFAULT 0,
-                        FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
+
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE,
+                        FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
                     );
                 """,
                 "request_comments": """
@@ -143,6 +148,7 @@ def sync_db():
                     CREATE TABLE request_equipment (
                         id INT AUTO_INCREMENT PRIMARY KEY,
                         request_id INT NOT NULL,
+                        request_vehicle_id INT NOT NULL,
                         warehouse_item_id INT NOT NULL,
                         quantity INT DEFAULT 1,
                         attached_by INT NULL,
@@ -150,6 +156,7 @@ def sync_db():
                         note TEXT NULL,
 
                         FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE,
+                        FOREIGN KEY (request_vehicle_id) REFERENCES request_vehicles(id) ON DELETE CASCADE,
                         FOREIGN KEY (warehouse_item_id) REFERENCES warehouse_items(id),
                         FOREIGN KEY (attached_by) REFERENCES users(id) ON DELETE SET NULL
                     );

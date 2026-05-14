@@ -42,39 +42,246 @@ def normalize_city(city):
         return None
     return str(city).strip().lower()
 
+def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
+    """
+    Добавляет к каждой заявке массив vehicles[] из request_vehicles.
+
+    Новая структура:
+    request = шапка заявки
+    vehicles[] = автомобили внутри заявки + параметры установки
+    """
+    if not requests:
+        return requests
+
+    request_ids = [r["id"] for r in requests]
+    placeholders = ", ".join(["%s"] * len(request_ids))
+
+    cursor.execute(
+        f"""
+        SELECT
+            rv.id AS request_vehicle_id,
+            rv.request_id,
+            rv.vehicle_id,
+            rv.has_beacon,
+            rv.has_blocking,
+
+            v.brand,
+            v.model,
+            v.plate_number,
+            v.vin,
+            v.year,
+            v.type AS vehicle_type
+        FROM request_vehicles rv
+        LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+        WHERE rv.request_id IN ({placeholders})
+        ORDER BY rv.id ASC
+        """,
+        tuple(request_ids)
+    )
+
+    rows = cursor.fetchall()
+
+    grouped = {}
+
+    for row in rows:
+        row["has_beacon"] = bool(row["has_beacon"])
+        row["has_blocking"] = bool(row["has_blocking"])
+
+        grouped.setdefault(row["request_id"], []).append(row)
+
+    for req in requests:
+        vehicles = grouped.get(req["id"], [])
+
+        req["vehicles"] = vehicles
+        req["vehicles_count"] = len(vehicles)
+
+        if vehicles:
+            req["vehicles_summary"] = ", ".join(
+                f"{v.get('brand') or ''} {v.get('model') or ''}".strip()
+                for v in vehicles
+            )
+        else:
+            req["vehicles_summary"] = ""
+
+    return requests
+
 @router.post("")
 def create_request(data: RequestCreate, current_user: dict = Depends(get_current_user)):
-    # ПРОЛЕЖА 1: Только Админ и Менеджер могут создавать заявки
+    """
+    Создание заявки с несколькими автомобилями.
+    requests = шапка заявки
+    request_vehicles = автомобили внутри заявки + параметры установки
+    """
     if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут создавать заявки")
+        raise HTTPException(
+            status_code=403,
+            detail="Только Менеджер или Админ могут создавать заявки"
+        )
+
+    if not data.vehicles:
+        raise HTTPException(
+            status_code=400,
+            detail="Нужно добавить хотя бы один автомобиль в заявку"
+        )
+
+    allowed_work_types = ["INSTALLATION", "DIAGNOSTIC", "REMOVAL"]
+    allowed_visit_types = ["IN_OFFICE", "ON_SITE"]
+
+    if data.work_type not in allowed_work_types:
+        raise HTTPException(status_code=400, detail="Некорректный тип работ")
+
+    if data.visit_type not in allowed_visit_types:
+        raise HTTPException(status_code=400, detail="Некорректный формат работ")
 
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
-            sql = """
-            INSERT INTO requests 
-            (client_id, vehicle_id, work_type, visit_type, status, city)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """
-            cursor.execute(sql, (
-                data.client_id, data.vehicle_id, data.work_type, 
-                data.visit_type, "NEW", data.city
-            ))
-            request_id = cursor.lastrowid
-
+            # Проверяем клиента
             cursor.execute(
-                "INSERT INTO request_history (request_id, user_id, action, new_value) VALUES (%s, %s, %s, %s)",
-                (request_id, current_user["id"], "CREATED", "Request created")
+                """
+                SELECT id, is_deleted
+                FROM clients
+                WHERE id = %s
+                """,
+                (data.client_id,)
             )
+            client = cursor.fetchone()
 
-            if data.work_type == "INSTALLATION" and data.installation:
-                cursor.execute(
-                    "INSERT INTO installation_details (request_id, has_beacon, has_blocking) VALUES (%s, %s, %s)",
-                    (request_id, data.installation.has_beacon, data.installation.has_blocking)
+            if not client:
+                raise HTTPException(status_code=404, detail="Клиент не найден")
+
+            if client["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя создать заявку для клиента из корзины"
                 )
 
+            # Проверяем все автомобили до создания заявки
+            vehicle_ids = [v.vehicle_id for v in data.vehicles]
+
+            if len(vehicle_ids) != len(set(vehicle_ids)):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Один и тот же автомобиль нельзя добавить в заявку несколько раз"
+                )
+
+            placeholders = ", ".join(["%s"] * len(vehicle_ids))
+
+            cursor.execute(
+                f"""
+                SELECT id, client_id, is_deleted
+                FROM vehicles
+                WHERE id IN ({placeholders})
+                """,
+                tuple(vehicle_ids)
+            )
+            vehicles_from_db = cursor.fetchall()
+            vehicles_map = {v["id"]: v for v in vehicles_from_db}
+
+            for vehicle_input in data.vehicles:
+                vehicle = vehicles_map.get(vehicle_input.vehicle_id)
+
+                if not vehicle:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Машина {vehicle_input.vehicle_id} не найдена"
+                    )
+
+                if vehicle["is_deleted"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Машина {vehicle_input.vehicle_id} находится в корзине"
+                    )
+
+                if vehicle["client_id"] != data.client_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Машина {vehicle_input.vehicle_id} не принадлежит выбранному клиенту"
+                    )
+
+            # Создаём шапку заявки
+            cursor.execute(
+                """
+                INSERT INTO requests (
+                    client_id,
+                    work_type,
+                    visit_type,
+                    address,
+                    city,
+                    scheduled_at,
+                    status
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    data.client_id,
+                    data.work_type,
+                    data.visit_type,
+                    data.address,
+                    data.city,
+                    data.scheduled_at.replace(tzinfo=None) if data.scheduled_at else None,
+                    "NEW",
+                )
+            )
+
+            request_id = cursor.lastrowid
+
+            # Добавляем автомобили заявки
+            for vehicle_input in data.vehicles:
+                has_beacon = bool(vehicle_input.has_beacon) if data.work_type == "INSTALLATION" else False
+                has_blocking = bool(vehicle_input.has_blocking) if data.work_type == "INSTALLATION" else False
+
+                cursor.execute(
+                    """
+                    INSERT INTO request_vehicles (
+                        request_id,
+                        vehicle_id,
+                        has_beacon,
+                        has_blocking
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        request_id,
+                        vehicle_input.vehicle_id,
+                        has_beacon,
+                        has_blocking,
+                    )
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "CREATED",
+                    f"Request created with {len(data.vehicles)} vehicle(s)"
+                )
+            )
+
             connection.commit()
-            return {"message": "created", "request_id": request_id}
+
+            return {
+                "message": "created",
+                "request_id": request_id,
+                "vehicles_count": len(data.vehicles)
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
 
@@ -82,14 +289,10 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
 def get_requests(status: str = Query(None), current_user: dict = Depends(get_current_user)):
     """
     Список заявок.
-
-    ADMIN / MANAGER / ACCOUNTANT / WAREHOUSE_MANAGER:
-        видят все города.
-
-    TECHNICIAN / SENIOR_TECHNICIAN:
-        видят только заявки своего города.
+    TECHNICIAN / SENIOR_TECHNICIAN видят только заявки своего города.
     """
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
             values = []
@@ -102,56 +305,44 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
             if is_city_restricted_user(current_user):
                 user_city = get_current_user_city(cursor, current_user)
 
-                # Если у монтажника не указан город — не отдаём вообще никаких заявок
                 if not user_city:
                     return []
 
                 conditions.append("r.city = %s")
                 values.append(user_city)
 
-            base_sql = """
-            SELECT 
-                r.id,
-                r.client_id,
-                r.vehicle_id,
-                r.work_type,
-                r.visit_type,
-                r.address,
-                r.city,
-                r.scheduled_at,
-                r.status,
-                r.created_at,
-                r.assigned_to,
-                r.is_paid,
-                r.paid_at,
-
-                c.name AS client_name,
-                c.company_name,
-                c.phone,
-                c.type AS client_type,
-
-                v.brand,
-                v.model,
-                v.plate_number,
-                v.vin,
-                v.year,
-                v.type AS vehicle_type,
-
-                i.has_beacon,
-                i.has_blocking
-            FROM requests r
-            LEFT JOIN clients c ON r.client_id = c.id
-            LEFT JOIN vehicles v ON r.vehicle_id = v.id
-            LEFT JOIN installation_details i ON r.id = i.request_id
-            WHERE {where_clause}
-            ORDER BY r.created_at DESC
-            """
-
             where_clause = " AND ".join(conditions)
-            final_sql = base_sql.format(where_clause=where_clause)
 
-            cursor.execute(final_sql, tuple(values))
-            return cursor.fetchall()
+            cursor.execute(
+                f"""
+                SELECT
+                    r.id,
+                    r.client_id,
+                    r.work_type,
+                    r.visit_type,
+                    r.address,
+                    r.city,
+                    r.scheduled_at,
+                    r.status,
+                    r.created_at,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.paid_at,
+
+                    c.name AS client_name,
+                    c.company_name,
+                    c.phone,
+                    c.type AS client_type
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE {where_clause}
+                ORDER BY r.created_at DESC
+                """,
+                tuple(values)
+            )
+
+            requests = cursor.fetchall()
+            return attach_vehicles_to_requests(cursor, requests)
 
     finally:
         connection.close()
@@ -160,28 +351,50 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
 def get_deleted_requests(current_user: dict = Depends(get_current_user)):
     """Список удалённых заявок. Только ADMIN."""
     if current_user["role"] != "ADMIN":
-        raise HTTPException(status_code=403, detail="Только Админ может просматривать корзину заявок")
+        raise HTTPException(
+            status_code=403,
+            detail="Только Админ может просматривать корзину заявок"
+        )
 
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
-            sql = """
-            SELECT 
-                r.id, r.client_id, r.vehicle_id, r.work_type, r.visit_type, r.city, 
-                r.status, r.created_at, r.assigned_to, r.is_paid, r.paid_at,
-                r.deleted_at, r.deleted_by,
-                c.name AS client_name, c.phone,
-                v.brand, v.model, v.plate_number,
-                u.name AS deleted_by_name
-            FROM requests r
-            LEFT JOIN clients c ON r.client_id = c.id
-            LEFT JOIN vehicles v ON r.vehicle_id = v.id
-            LEFT JOIN users u ON r.deleted_by = u.id
-            WHERE r.is_deleted = 1
-            ORDER BY r.deleted_at DESC
-            """
-            cursor.execute(sql)
-            return cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT
+                    r.id,
+                    r.client_id,
+                    r.work_type,
+                    r.visit_type,
+                    r.address,
+                    r.city,
+                    r.scheduled_at,
+                    r.status,
+                    r.created_at,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.paid_at,
+                    r.deleted_at,
+                    r.deleted_by,
+
+                    c.name AS client_name,
+                    c.company_name,
+                    c.phone,
+                    c.type AS client_type,
+
+                    u.name AS deleted_by_name
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                LEFT JOIN users u ON r.deleted_by = u.id
+                WHERE r.is_deleted = 1
+                ORDER BY r.deleted_at DESC
+                """
+            )
+
+            requests = cursor.fetchall()
+            return attach_vehicles_to_requests(cursor, requests)
+
     finally:
         connection.close()
 
@@ -223,21 +436,23 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
     ALLOWED_TRANSITIONS = {
         "NEW": ["IN_PROGRESS", "CANCELLED"],
         "IN_PROGRESS": ["COMPLETED", "CANCELLED"],
-        "COMPLETED": []
+        "COMPLETED": [],
+        "CANCELLED": []
     }
 
-    # Обычный TECHNICIAN вообще не имеет права редактировать заявку
     if current_user["role"] == "TECHNICIAN":
-        raise HTTPException(status_code=403, detail="Обычный монтажник может только просматривать заявки")
+        raise HTTPException(
+            status_code=403,
+            detail="Обычный монтажник может только просматривать заявки"
+        )
 
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT 
+                SELECT
                     id,
                     client_id,
-                    vehicle_id,
                     work_type,
                     visit_type,
                     address,
@@ -261,8 +476,13 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
             def add_history(action: str, old_value, new_value):
                 cursor.execute(
                     """
-                    INSERT INTO request_history 
-                    (request_id, user_id, action, old_value, new_value)
+                    INSERT INTO request_history (
+                        request_id,
+                        user_id,
+                        action,
+                        old_value,
+                        new_value
+                    )
                     VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
@@ -282,101 +502,59 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     update_values.append(new_value)
                     add_history(history_action, old_value, new_value)
 
-            # --- client_id ---
-            if data.client_id is not None and data.client_id != req["client_id"]:
-                if current_user["role"] not in ["ADMIN", "MANAGER"]:
-                    raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут менять клиента заявки")
-
-                cursor.execute(
-                    """
-                    SELECT id, is_deleted
-                    FROM clients
-                    WHERE id = %s
-                    """,
-                    (data.client_id,)
-                )
-                client = cursor.fetchone()
-
-                if not client:
-                    raise HTTPException(status_code=404, detail="Клиент не найден")
-
-                if client["is_deleted"]:
-                    raise HTTPException(status_code=400, detail="Нельзя привязать заявку к клиенту из корзины")
-
-                add_request_update("client_id", data.client_id, "CLIENT_CHANGED")
-
-            # --- vehicle_id ---
-            if data.vehicle_id is not None and data.vehicle_id != req["vehicle_id"]:
-                if current_user["role"] not in ["ADMIN", "MANAGER"]:
-                    raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут менять машину заявки")
-
-                cursor.execute(
-                    """
-                    SELECT id, client_id, is_deleted
-                    FROM vehicles
-                    WHERE id = %s
-                    """,
-                    (data.vehicle_id,)
-                )
-                vehicle = cursor.fetchone()
-
-                if not vehicle:
-                    raise HTTPException(status_code=404, detail="Машина не найдена")
-
-                if vehicle["is_deleted"]:
-                    raise HTTPException(status_code=400, detail="Нельзя привязать заявку к машине из корзины")
-
-                # Машина должна принадлежать выбранному/текущему клиенту
-                target_client_id = data.client_id if data.client_id is not None else req["client_id"]
-
-                if vehicle["client_id"] != target_client_id:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Выбранная машина не принадлежит выбранному клиенту"
-                    )
-
-                add_request_update("vehicle_id", data.vehicle_id, "VEHICLE_CHANGED")
-
-            # --- visit_type ---
+            # visit_type
             if data.visit_type is not None and data.visit_type != req["visit_type"]:
                 if current_user["role"] not in ["ADMIN", "MANAGER"]:
-                    raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут менять тип визита")
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Только Менеджер или Админ могут менять тип визита"
+                    )
 
-                allowed_visit_types = ["IN_OFFICE", "ON_SITE"]
-
-                if data.visit_type not in allowed_visit_types:
+                if data.visit_type not in ["IN_OFFICE", "ON_SITE"]:
                     raise HTTPException(status_code=400, detail="Некорректный тип визита")
 
                 add_request_update("visit_type", data.visit_type, "VISIT_TYPE_CHANGED")
 
-            # --- address ---
+            # address
             if data.address is not None and data.address != req["address"]:
                 if current_user["role"] not in ["ADMIN", "MANAGER"]:
-                    raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут менять адрес")
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Только Менеджер или Админ могут менять адрес"
+                    )
 
                 add_request_update("address", data.address, "ADDRESS_CHANGED")
 
-            # --- city ---
+            # city
             if data.city is not None and data.city != req["city"]:
                 if current_user["role"] not in ["ADMIN", "MANAGER"]:
-                    raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут менять город")
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Только Менеджер или Админ могут менять город"
+                    )
 
                 add_request_update("city", data.city, "CITY_CHANGED")
 
-            # --- scheduled_at ---
+            # scheduled_at
             if data.scheduled_at is not None:
                 new_scheduled_at = data.scheduled_at.replace(tzinfo=None)
 
                 if req["scheduled_at"] != new_scheduled_at:
                     if current_user["role"] not in ["ADMIN", "MANAGER"]:
-                        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут менять дату заявки")
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Только Менеджер или Админ могут менять дату заявки"
+                        )
 
                     add_request_update("scheduled_at", new_scheduled_at, "SCHEDULED_AT_CHANGED")
 
-            # --- is_paid ---
+            # payment
             if data.is_paid is not None:
                 if current_user["role"] not in ["ADMIN", "ACCOUNTANT"]:
-                    raise HTTPException(status_code=403, detail="Только Бухгалтер или Админ могут менять оплату")
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Только Бухгалтер или Админ могут менять оплату"
+                    )
 
                 old_paid = bool(req["is_paid"])
                 new_paid = bool(data.is_paid)
@@ -392,20 +570,20 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
                     add_history("PAYMENT_UPDATED", f"is_paid={old_paid}", f"is_paid={new_paid}")
 
-            # --- status ---
+            # status
             if data.status is not None and data.status != req["status"]:
                 if current_user["role"] not in ["ADMIN", "MANAGER", "SENIOR_TECHNICIAN"]:
-                    raise HTTPException(status_code=403, detail="Недостаточно прав для изменения статуса")
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для изменения статуса"
+                    )
 
-                allowed_statuses = ["NEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"]
-
-                if data.status not in allowed_statuses:
+                if data.status not in ["NEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"]:
                     raise HTTPException(status_code=400, detail="Некорректный статус заявки")
 
-                # ADMIN и MANAGER могут менять статус на любой
-                # SENIOR_TECHNICIAN — только по разрешённым переходам
                 if current_user["role"] not in ["ADMIN", "MANAGER"]:
                     allowed = ALLOWED_TRANSITIONS.get(req["status"], [])
+
                     if data.status not in allowed:
                         raise HTTPException(
                             status_code=400,
@@ -414,77 +592,17 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
                 add_request_update("status", data.status, "STATUS_CHANGED")
 
-            # --- installation details ---
-            if data.installation and req["work_type"] == "INSTALLATION":
-                if current_user["role"] not in ["ADMIN", "MANAGER"]:
-                    raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут менять детали установки")
-
-                cursor.execute(
-                    """
-                    SELECT has_beacon, has_blocking
-                    FROM installation_details
-                    WHERE request_id = %s
-                    """,
-                    (request_id,)
-                )
-                old_install = cursor.fetchone()
-
-                new_has_beacon = int(data.installation.has_beacon)
-                new_has_blocking = int(data.installation.has_blocking)
-
-                if old_install:
-                    old_has_beacon = int(old_install["has_beacon"])
-                    old_has_blocking = int(old_install["has_blocking"])
-
-                    if old_has_beacon != new_has_beacon:
-                        add_history("HAS_BEACON_CHANGED", old_has_beacon, new_has_beacon)
-
-                    if old_has_blocking != new_has_blocking:
-                        add_history("HAS_BLOCKING_CHANGED", old_has_blocking, new_has_blocking)
-
-                    if old_has_beacon != new_has_beacon or old_has_blocking != new_has_blocking:
-                        cursor.execute(
-                            """
-                            UPDATE installation_details
-                            SET has_beacon = %s,
-                                has_blocking = %s
-                            WHERE request_id = %s
-                            """,
-                            (new_has_beacon, new_has_blocking, request_id)
-                        )
-                else:
-                    cursor.execute(
-                        """
-                        INSERT INTO installation_details
-                        (request_id, has_beacon, has_blocking)
-                        VALUES (%s, %s, %s)
-                        """,
-                        (request_id, new_has_beacon, new_has_blocking)
-                    )
-
-                    add_history(
-                        "INSTALLATION_DETAILS_CREATED",
-                        None,
-                        f"has_beacon={new_has_beacon}, has_blocking={new_has_blocking}"
-                    )
-
-            elif data.installation and req["work_type"] != "INSTALLATION":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Детали установки можно менять только для заявок типа INSTALLATION"
-                )
-
-            # --- основной UPDATE requests ---
             if update_fields:
                 update_values.append(request_id)
 
-                sql = f"""
-                UPDATE requests
-                SET {', '.join(update_fields)}
-                WHERE id = %s
-                """
-
-                cursor.execute(sql, tuple(update_values))
+                cursor.execute(
+                    f"""
+                    UPDATE requests
+                    SET {', '.join(update_fields)}
+                    WHERE id = %s
+                    """,
+                    tuple(update_values)
+                )
 
             connection.commit()
 
@@ -769,64 +887,83 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
 
 @router.get("/{request_id}")
 def get_request_detail(request_id: int, current_user: dict = Depends(get_current_user)):
-    # Читать могут ВСЕ
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
-            sql_request = """
-            SELECT 
-                r.id,
-                r.client_id,
-                r.vehicle_id,
-                r.work_type,
-                r.visit_type,
-                r.address,
-                r.city,
-                r.scheduled_at,
-                r.status,
-                r.created_at,
-                r.assigned_to,
-                r.is_paid,
-                r.paid_at,
+            cursor.execute(
+                """
+                SELECT
+                    r.id,
+                    r.client_id,
+                    r.work_type,
+                    r.visit_type,
+                    r.address,
+                    r.city,
+                    r.scheduled_at,
+                    r.status,
+                    r.created_at,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.paid_at,
 
-                c.name AS client_name,
-                c.company_name,
-                c.phone,
-                c.type AS client_type,
-
-                v.brand,
-                v.model,
-                v.plate_number,
-                v.vin,
-                v.year,
-                v.type AS vehicle_type,
-
-                i.has_beacon,
-                i.has_blocking
-            FROM requests r
-            LEFT JOIN clients c ON r.client_id = c.id
-            LEFT JOIN vehicles v ON r.vehicle_id = v.id
-            LEFT JOIN installation_details i ON r.id = i.request_id
-            WHERE r.id = %s AND r.is_deleted = 0
-            """
-            cursor.execute(sql_request, (request_id,))
+                    c.name AS client_name,
+                    c.company_name,
+                    c.phone,
+                    c.type AS client_type
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s AND r.is_deleted = 0
+                """,
+                (request_id,)
+            )
             request_data = cursor.fetchone()
+
             if not request_data:
                 raise HTTPException(status_code=404, detail="Request not found")
 
+            request_data = attach_vehicles_to_requests(cursor, [request_data])[0]
+
             cursor.execute(
-                "SELECT rc.id, u.name AS author, rc.message, rc.created_at FROM request_comments rc LEFT JOIN users u ON rc.user_id = u.id WHERE rc.request_id = %s ORDER BY rc.created_at ASC",
+                """
+                SELECT
+                    rc.id,
+                    u.name AS author,
+                    rc.message,
+                    rc.created_at
+                FROM request_comments rc
+                LEFT JOIN users u ON rc.user_id = u.id
+                WHERE rc.request_id = %s
+                ORDER BY rc.created_at ASC
+                """,
                 (request_id,)
             )
             comments = cursor.fetchall()
 
             cursor.execute(
-                "SELECT h.action, h.old_value, h.new_value, h.created_at, u.name AS user_name FROM request_history h LEFT JOIN users u ON h.user_id = u.id WHERE h.request_id = %s ORDER BY h.created_at ASC",
+                """
+                SELECT
+                    h.action,
+                    h.old_value,
+                    h.new_value,
+                    h.created_at,
+                    u.name AS user_name
+                FROM request_history h
+                LEFT JOIN users u ON h.user_id = u.id
+                WHERE h.request_id = %s
+                ORDER BY h.created_at ASC
+                """,
                 (request_id,)
             )
             history = cursor.fetchall()
 
-            return {"request": request_data, "comments": comments, "history": history}
+            return {
+                "request": request_data,
+                "vehicles": request_data["vehicles"],
+                "comments": comments,
+                "history": history
+            }
+
     finally:
         connection.close()
 

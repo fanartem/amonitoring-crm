@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import '../styles/RequestEquipmentPanel.css'
 
 const CATEGORIES = {
@@ -52,9 +52,20 @@ const getItemIdentifier = item => {
 	return null
 }
 
-export default function RequestEquipmentPanel({ requestId }) {
+const getVehicleTitle = vehicle => {
+	if (!vehicle) return 'Автомобиль'
+
+	const title =
+		`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() || 'Автомобиль'
+	const plate = vehicle.plate_number ? ` · ${vehicle.plate_number}` : ''
+
+	return `${title}${plate}`
+}
+
+export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 	const [attachedItems, setAttachedItems] = useState([])
 	const [warehouseItems, setWarehouseItems] = useState([])
+	const [selectedRequestVehicleId, setSelectedRequestVehicleId] = useState('')
 	const [selectedItemId, setSelectedItemId] = useState('')
 	const [quantity, setQuantity] = useState(1)
 	const [note, setNote] = useState('')
@@ -67,6 +78,16 @@ export default function RequestEquipmentPanel({ requestId }) {
 	const canManageEquipment =
 		userRole === 'ADMIN' || userRole === 'WAREHOUSE_MANAGER'
 
+	const vehiclesByRequestVehicleId = useMemo(() => {
+		const map = {}
+
+		vehicles.forEach(vehicle => {
+			map[String(vehicle.request_vehicle_id)] = vehicle
+		})
+
+		return map
+	}, [vehicles])
+
 	useEffect(() => {
 		if (!requestId) return
 
@@ -76,6 +97,12 @@ export default function RequestEquipmentPanel({ requestId }) {
 			fetchWarehouseItems()
 		}
 	}, [requestId, canManageEquipment])
+
+	useEffect(() => {
+		if (vehicles.length === 1 && !selectedRequestVehicleId) {
+			setSelectedRequestVehicleId(String(vehicles[0].request_vehicle_id))
+		}
+	}, [vehicles, selectedRequestVehicleId])
 
 	useEffect(() => {
 		if (!canManageEquipment) return
@@ -151,11 +178,17 @@ export default function RequestEquipmentPanel({ requestId }) {
 	const selectedItem = warehouseItems.find(
 		item => item.id === Number(selectedItemId),
 	)
+
 	const isSelectedSerialized = selectedItem
 		? Boolean(selectedItem.is_serialized)
 		: true
 
 	const handleAttach = async () => {
+		if (!selectedRequestVehicleId) {
+			setError('Выберите автомобиль, к которому нужно привязать оборудование')
+			return
+		}
+
 		if (!selectedItemId) {
 			setError('Выберите оборудование для привязки')
 			return
@@ -171,9 +204,10 @@ export default function RequestEquipmentPanel({ requestId }) {
 
 		try {
 			const token = localStorage.getItem('access_token')
+			const requestVehicleId = Number(selectedRequestVehicleId)
 
 			const res = await fetch(
-				`http://127.0.0.1:8000/warehouse/requests/${requestId}/equipment`,
+				`http://127.0.0.1:8000/warehouse/request-vehicles/${requestVehicleId}/equipment`,
 				{
 					method: 'POST',
 					headers: {
@@ -181,6 +215,7 @@ export default function RequestEquipmentPanel({ requestId }) {
 						Authorization: `Bearer ${token}`,
 					},
 					body: JSON.stringify({
+						request_vehicle_id: requestVehicleId,
 						warehouse_item_id: Number(selectedItemId),
 						quantity: isSelectedSerialized ? 1 : Number(quantity),
 						note: note.trim() || null,
@@ -207,8 +242,11 @@ export default function RequestEquipmentPanel({ requestId }) {
 	}
 
 	const handleDetach = async linkId => {
-		if (!window.confirm('Отвязать оборудование от заявки и вернуть на склад?'))
+		if (
+			!window.confirm('Отвязать оборудование от заявки и вернуть на склад?')
+		) {
 			return
+		}
 
 		setSaving(true)
 		setError('')
@@ -240,13 +278,29 @@ export default function RequestEquipmentPanel({ requestId }) {
 		}
 	}
 
+	const groupedAttachedItems = useMemo(() => {
+		const map = {}
+
+		attachedItems.forEach(item => {
+			const key = String(item.request_vehicle_id || 'unknown')
+
+			if (!map[key]) {
+				map[key] = []
+			}
+
+			map[key].push(item)
+		})
+
+		return map
+	}, [attachedItems])
+
 	return (
 		<div className='equipment-panel'>
 			<div className='equipment-panel-header'>
 				<div>
 					<div className='equipment-panel-title'>Оборудование заявки</div>
 					<div className='equipment-panel-subtitle'>
-						Привязанное оборудование списывается или резервируется со склада.
+						Оборудование привязывается к конкретному автомобилю внутри заявки.
 					</div>
 				</div>
 
@@ -269,6 +323,26 @@ export default function RequestEquipmentPanel({ requestId }) {
 					<div className='equipment-section-title'>Привязать оборудование</div>
 
 					<div className='equipment-form-grid'>
+						<label className='equipment-field equipment-full'>
+							<span>Автомобиль в заявке</span>
+							<select
+								className='equipment-input'
+								value={selectedRequestVehicleId}
+								onChange={e => setSelectedRequestVehicleId(e.target.value)}
+							>
+								<option value=''>— выберите автомобиль —</option>
+
+								{vehicles.map(vehicle => (
+									<option
+										key={vehicle.request_vehicle_id}
+										value={vehicle.request_vehicle_id}
+									>
+										{getVehicleTitle(vehicle)}
+									</option>
+								))}
+							</select>
+						</label>
+
 						<label className='equipment-field equipment-full'>
 							<span>Поиск на складе</span>
 							<input
@@ -333,9 +407,9 @@ export default function RequestEquipmentPanel({ requestId }) {
 						className='equipment-attach-btn'
 						type='button'
 						onClick={handleAttach}
-						disabled={saving || !selectedItemId}
+						disabled={saving || !selectedItemId || !selectedRequestVehicleId}
 					>
-						{saving ? 'Привязка...' : 'Привязать к заявке'}
+						{saving ? 'Привязка...' : 'Привязать к автомобилю'}
 					</button>
 				</div>
 			)}
@@ -352,53 +426,84 @@ export default function RequestEquipmentPanel({ requestId }) {
 						К этой заявке пока не привязано оборудование
 					</div>
 				) : (
-					<div className='equipment-list'>
-						{attachedItems.map(item => (
-							<div key={item.link_id} className='equipment-item'>
-								<div className='equipment-item-main'>
-									<div className='equipment-item-title'>
-										{CATEGORIES[item.category] || item.category} ·{' '}
-										{getItemTitle(item)}
-									</div>
+					<div className='equipment-vehicle-groups'>
+						{Object.entries(groupedAttachedItems).map(
+							([requestVehicleId, items]) => {
+								const vehicle = vehiclesByRequestVehicleId[requestVehicleId]
+								const fallbackVehicle = items[0]
 
-									<div className='equipment-item-meta'>
-										{getItemIdentifier(item) && (
-											<span>{getItemIdentifier(item)}</span>
-										)}
+								const title = vehicle
+									? getVehicleTitle(vehicle)
+									: `${fallbackVehicle.brand || ''} ${fallbackVehicle.vehicle_model || ''} ${fallbackVehicle.plate_number ? `· ${fallbackVehicle.plate_number}` : ''}`.trim() ||
+										'Автомобиль'
 
-										<span>Кол-во: {item.quantity}</span>
-
-										{item.status && (
-											<span>{STATUSES[item.status] || item.status}</span>
-										)}
-									</div>
-
-									<div className='equipment-item-meta'>
-										<span>Привязал: {item.attached_by_name || '—'}</span>
-										<span>
-											{item.attached_at
-												? new Date(item.attached_at).toLocaleString('ru-RU')
-												: 'Дата не указана'}
-										</span>
-									</div>
-
-									{item.note && (
-										<div className='equipment-item-note'>{item.note}</div>
-									)}
-								</div>
-
-								{canManageEquipment && (
-									<button
-										className='equipment-detach-btn'
-										type='button'
-										onClick={() => handleDetach(item.link_id)}
-										disabled={saving}
+								return (
+									<div
+										key={requestVehicleId}
+										className='equipment-vehicle-group'
 									>
-										Отвязать
-									</button>
-								)}
-							</div>
-						))}
+										<div className='equipment-vehicle-title'>{title}</div>
+
+										<div className='equipment-list'>
+											{items.map(item => (
+												<div key={item.link_id} className='equipment-item'>
+													<div className='equipment-item-main'>
+														<div className='equipment-item-title'>
+															{CATEGORIES[item.category] || item.category} ·{' '}
+															{getItemTitle(item)}
+														</div>
+
+														<div className='equipment-item-meta'>
+															{getItemIdentifier(item) && (
+																<span>{getItemIdentifier(item)}</span>
+															)}
+
+															<span>Кол-во: {item.quantity}</span>
+
+															{item.status && (
+																<span>
+																	{STATUSES[item.status] || item.status}
+																</span>
+															)}
+														</div>
+
+														<div className='equipment-item-meta'>
+															<span>
+																Привязал: {item.attached_by_name || '—'}
+															</span>
+															<span>
+																{item.attached_at
+																	? new Date(item.attached_at).toLocaleString(
+																			'ru-RU',
+																		)
+																	: 'Дата не указана'}
+															</span>
+														</div>
+
+														{item.note && (
+															<div className='equipment-item-note'>
+																{item.note}
+															</div>
+														)}
+													</div>
+
+													{canManageEquipment && (
+														<button
+															className='equipment-detach-btn'
+															type='button'
+															onClick={() => handleDetach(item.link_id)}
+															disabled={saving}
+														>
+															Отвязать
+														</button>
+													)}
+												</div>
+											))}
+										</div>
+									</div>
+								)
+							},
+						)}
 					</div>
 				)}
 			</div>

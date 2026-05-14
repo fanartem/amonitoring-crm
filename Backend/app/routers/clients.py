@@ -5,6 +5,65 @@ from app.security import get_current_user
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
+def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
+    """
+    Добавляет к каждой заявке массив vehicles[] из request_vehicles.
+    """
+    if not requests:
+        return requests
+
+    request_ids = [r["id"] for r in requests]
+    placeholders = ", ".join(["%s"] * len(request_ids))
+
+    cursor.execute(
+        f"""
+        SELECT
+            rv.id AS request_vehicle_id,
+            rv.request_id,
+            rv.vehicle_id,
+            rv.has_beacon,
+            rv.has_blocking,
+
+            v.brand,
+            v.model,
+            v.plate_number,
+            v.vin,
+            v.year,
+            v.type AS vehicle_type
+        FROM request_vehicles rv
+        LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+        WHERE rv.request_id IN ({placeholders})
+        ORDER BY rv.id ASC
+        """,
+        tuple(request_ids)
+    )
+
+    rows = cursor.fetchall()
+
+    grouped = {}
+
+    for row in rows:
+        row["has_beacon"] = bool(row["has_beacon"])
+        row["has_blocking"] = bool(row["has_blocking"])
+
+        grouped.setdefault(row["request_id"], []).append(row)
+
+    for req in requests:
+        vehicles = grouped.get(req["id"], [])
+
+        req["vehicles"] = vehicles
+        req["vehicles_count"] = len(vehicles)
+
+        if vehicles:
+            req["vehicles_summary"] = ", ".join(
+                f"{v.get('brand') or ''} {v.get('model') or ''}".strip()
+                for v in vehicles
+            )
+        else:
+            req["vehicles_summary"] = ""
+
+    return requests
+
 @router.get("")
 def get_clients(current_user: dict = Depends(get_current_user)):
     connection = get_connection()
@@ -205,6 +264,7 @@ def delete_client(client_id: int, current_user: dict = Depends(get_current_user)
                 SELECT COUNT(*) AS active_count
                 FROM requests
                 WHERE client_id = %s
+                AND is_deleted = 0
                 AND status IN ('NEW', 'IN_PROGRESS')
                 """,
                 (client_id,)
@@ -300,39 +360,46 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            sql = """
-            SELECT 
-                r.id,
-                r.client_id,
-                r.vehicle_id,
-                r.work_type,
-                r.visit_type,
-                r.address,
-                r.city,
-                r.scheduled_at,
-                r.status,
-                r.created_at,
-                r.assigned_to,
-                r.is_paid,
-                r.paid_at,
+            # Проверяем, что клиент существует и не удалён
+            cursor.execute(
+                """
+                SELECT id
+                FROM clients
+                WHERE id = %s
+                  AND is_deleted = 0
+                """,
+                (client_id,)
+            )
+            client = cursor.fetchone()
 
-                v.brand,
-                v.model,
-                v.plate_number,
-                v.vin,
-                v.year,
-                v.type AS vehicle_type,
+            if not client:
+                raise HTTPException(status_code=404, detail="Клиент не найден")
 
-                i.has_beacon,
-                i.has_blocking
-            FROM requests r
-            LEFT JOIN vehicles v ON r.vehicle_id = v.id
-            LEFT JOIN installation_details i ON r.id = i.request_id
-            WHERE r.client_id = %s
-              AND r.is_deleted = 0
-            ORDER BY r.created_at DESC
-            """
-            cursor.execute(sql, (client_id,))
-            return cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT
+                    r.id,
+                    r.client_id,
+                    r.work_type,
+                    r.visit_type,
+                    r.address,
+                    r.city,
+                    r.scheduled_at,
+                    r.status,
+                    r.created_at,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.paid_at
+                FROM requests r
+                WHERE r.client_id = %s
+                  AND r.is_deleted = 0
+                ORDER BY r.created_at DESC
+                """,
+                (client_id,)
+            )
+
+            requests = cursor.fetchall()
+            return attach_vehicles_to_requests(cursor, requests)
+
     finally:
         connection.close()

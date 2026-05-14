@@ -242,8 +242,8 @@
 
 .vehicle-card-meta {
   margin-top: 8px;
-  color: #888;
-  font-size: 12px;
+  color: #242424;
+  font-size: 14px;
 }
 
 .vehicle-equipment-badges {
@@ -413,6 +413,25 @@
 .vehicle-submit-btn:hover {
   background: #5e9424;
   color: #ffffff;
+}
+
+.client-request-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.client-request-line {
+  color: #222;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.client-request-line + .client-request-line {
+  padding-top: 4px;
+  border-top: 1px dashed #e5e5e5;
 }
 
 @media (max-width: 640px) {
