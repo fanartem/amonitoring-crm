@@ -27,6 +27,7 @@ export default function Requests() {
 	const [requests, setRequests] = useState([])
 	const [filteredRequests, setFilteredRequests] = useState([])
 	const [technicians, setTechnicians] = useState([])
+	const [cities, setCities] = useState([])
 
 	const [isCreateModalOpen, setCreateModalOpen] = useState(false)
 	const [selectedRequestId, setSelectedRequestId] = useState(null)
@@ -45,6 +46,7 @@ export default function Requests() {
 	useEffect(() => {
 		fetchRequests()
 		fetchTechnicians()
+		fetchCities()
 	}, [])
 
 	useEffect(() => {
@@ -78,6 +80,25 @@ export default function Requests() {
 			if (res.ok) setTechnicians(await res.json())
 		} catch (err) {
 			console.error(err)
+		}
+	}
+
+	const fetchCities = async () => {
+		try {
+			const token = localStorage.getItem('access_token')
+
+			const res = await fetch('http://127.0.0.1:8000/cities', {
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			})
+
+			if (res.ok) {
+				const data = await res.json()
+				setCities(Array.isArray(data) ? data : [])
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки городов:', err)
 		}
 	}
 
@@ -453,9 +474,12 @@ export default function Requests() {
 						onChange={handleFilterChange}
 					>
 						<option value=''>Все города</option>
-						<option value='Алматы'>Алматы</option>
-						<option value='Астана'>Астана</option>
-						<option value='Шымкент'>Шымкент</option>
+
+						{cities.map(city => (
+							<option key={city.id} value={city.name}>
+								{city.name}
+							</option>
+						))}
 					</select>
 				</div>
 				<div className='filter-group'>
@@ -506,15 +530,25 @@ export default function Requests() {
 									</span>
 								)}
 
-								{/* --- ДОБАВЛЯЕМ ВИД РАБОТЫ ТУТ --- */}
-								<span style={{
-									fontSize: '15px',
-									fontWeight: '600',
-									color: req.work_type === 'INSTALLATION' ? '#1565c0' : req.work_type === 'REMOVAL' ? '#c62828' : '#e65100',
-									marginTop: '5px',
-									display: 'inline-block'
-								}}>
-									{req.work_type === 'INSTALLATION' ? 'Установка' : req.work_type === 'REMOVAL' ? 'Снятие' : 'Диагностика'}
+								<span
+									style={{
+										fontSize: '15px',
+										fontWeight: '600',
+										color:
+											req.work_type === 'INSTALLATION'
+												? '#1565c0'
+												: req.work_type === 'REMOVAL'
+													? '#c62828'
+													: '#e65100',
+										marginTop: '5px',
+										display: 'inline-block',
+									}}
+								>
+									{req.work_type === 'INSTALLATION'
+										? 'Установка'
+										: req.work_type === 'REMOVAL'
+											? 'Снятие'
+											: 'Диагностика'}
 								</span>
 							</div>
 							<div className='card-item'>
@@ -573,8 +607,8 @@ export default function Requests() {
 
 								<div className='client-request-lines'>
 									{req.work_type === 'INSTALLATION' &&
-										req.vehicles &&
-										req.vehicles.length > 0 ? (
+									req.vehicles &&
+									req.vehicles.length > 0 ? (
 										req.vehicles.map((vehicle, index) => {
 											const title =
 												`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() ||
@@ -602,7 +636,15 @@ export default function Requests() {
 											Выезд к клиенту
 											{/* --- НОВОЕ: Вывод адреса при выезде --- */}
 											{req.address && (
-												<div style={{ fontSize: '12px', color: '#666', marginTop: '3px', fontWeight: 'normal', lineHeight: '1.2' }}>
+												<div
+													style={{
+														fontSize: '12px',
+														color: '#666',
+														marginTop: '3px',
+														fontWeight: 'normal',
+														lineHeight: '1.2',
+													}}
+												>
 													📍 {req.address}
 												</div>
 											)}

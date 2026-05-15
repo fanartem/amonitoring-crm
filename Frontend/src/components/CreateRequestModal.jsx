@@ -47,7 +47,8 @@ export default function CreateRequestModal({
 	const [clientKind, setClientKind] = useState('new')
 	const [clientsList, setClientsList] = useState([])
 	const [clientVehicles, setClientVehicles] = useState([])
-
+	const [cities, setCities] = useState([])
+	
 	const [requestVehicles, setRequestVehicles] = useState([
 		createEmptyRequestVehicle(),
 	])
@@ -92,6 +93,7 @@ export default function CreateRequestModal({
 		if (!isOpen) return
 
 		fetchClients()
+		fetchCities()
 		setError('')
 		setMissingFields([])
 
@@ -148,6 +150,25 @@ export default function CreateRequestModal({
 			}
 		} catch (err) {
 			console.error(err)
+		}
+	}
+
+	const fetchCities = async () => {
+		try {
+			const token = localStorage.getItem('access_token')
+
+			const res = await fetch('http://127.0.0.1:8000/cities', {
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			})
+
+			if (res.ok) {
+				const data = await res.json()
+				setCities(Array.isArray(data) ? data : [])
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки городов:', err)
 		}
 	}
 
@@ -330,21 +351,11 @@ export default function CreateRequestModal({
 
 		if (!isEditMode) {
 			if (!formData.work_date) required.push('work_date')
-			if (!isEditMode) {
-				if (!formData.work_date) required.push('work_date')
 
-				requestVehicles.forEach(vehicle => {
-					if (!vehicle.car_brand) required.push(`car_brand_${vehicle.local_id}`)
-					if (!vehicle.car_model) required.push(`car_model_${vehicle.local_id}`)
-				})
-
-				if (
-					formData.work_format === 'Выезд к клиенту' &&
-					!formData.work_address
-				) {
-					required.push('work_address')
-				}
-			}
+			requestVehicles.forEach(vehicle => {
+				if (!vehicle.car_brand) required.push(`car_brand_${vehicle.local_id}`)
+				if (!vehicle.car_model) required.push(`car_model_${vehicle.local_id}`)
+			})
 
 			if (
 				formData.work_format === 'Выезд к клиенту' &&
@@ -529,8 +540,7 @@ export default function CreateRequestModal({
 	}
 
 	const isExisting = clientKind === 'existing'
-  const isClientLocked = isEditMode || (isExisting && !isEditMode)
-	const isVehicleLocked = isEditMode || (!isEditMode && formData.car_id !== '')
+  	const isClientLocked = isEditMode || (isExisting && !isEditMode)
 
 	const fieldClass = fieldName => {
 		return missingFields.includes(fieldName)
@@ -678,10 +688,12 @@ export default function CreateRequestModal({
 										onChange={handleChange}
 									>
 										<option value=''>— выберите город —</option>
-										<option>Алматы</option>
-										<option>Астана</option>
-										<option>Шымкент</option>
-										<option>Караганда</option>
+
+										{cities.map(city => (
+											<option key={city.id} value={city.name}>
+												{city.name}
+											</option>
+										))}
 									</select>
 								</label>
 
@@ -984,7 +996,6 @@ export default function CreateRequestModal({
 															</div>
 
 															<div className='request-option-group'>
-
 																<div className='request-radio-list vertical'>
 																	{['С блокировкой', 'Без блокировки'].map(
 																		value => (
@@ -1012,7 +1023,6 @@ export default function CreateRequestModal({
 															</div>
 
 															<div className='request-option-group'>
-
 																<div className='request-radio-list vertical'>
 																	{['С маяком', 'Без маяка'].map(value => (
 																		<label

@@ -8,13 +8,11 @@ import Home from './components/Home';
 import Entrance from './components/Entrance';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
-import Requests from './components/Requests'; // <-- Подключили нашу новую таблицу заявок!
+import Requests from './components/Requests';
 import Employees from './components/Employees';
 import Trash from './components/Trash';
 import Warehouse from './components/Warehouse';
-
-
-
+import Settings from './components/Settings';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -59,12 +57,9 @@ export default function App() {
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/" element={<Home />} />
               <Route path="/clients" element={<Clients />} />
-              
-              {/* ВОТ ОН! Наш новый роут для заявок */}
               <Route path="/requests" element={<Requests />} /> 
-              
               <Route path="/employees" element={<Employees />} />
-              <Route path="/settings" element={<div style={{ padding: '20px' }}><h2>Настройки</h2></div>} />
+              <Route path="/settings" element={<Settings />} />
               
               {/* Если ввели неизвестный адрес — кидаем на главную */}
               <Route path="*" element={<Navigate to="/" />} />

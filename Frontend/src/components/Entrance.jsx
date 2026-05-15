@@ -1,216 +1,345 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react'
 
 export default function Entrance() {
-  const API_BASE_URL = 'http://localhost:8000';
+	const API_BASE_URL = 'http://127.0.0.1:8000'
 
-  const [isLoginMode, setIsLoginMode] = useState(true);
+	const [isLoginMode, setIsLoginMode] = useState(true)
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [role, setRole] = useState('');
-  // НОВОЕ: Состояние для города
-  const [city, setCity] = useState('');
+	const [email, setEmail] = useState('')
+	const [password, setPassword] = useState('')
+	const [name, setName] = useState('')
+	const [role, setRole] = useState('')
+	const [city, setCity] = useState('')
+	const [cities, setCities] = useState([])
 
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+	const [error, setError] = useState('')
+	const [success, setSuccess] = useState('')
+	const [showPassword, setShowPassword] = useState(false)
 
-  // === ЛОГИКА ВХОДА ===
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setError('');
+	useEffect(() => {
+		fetchCities()
+	}, [])
 
-    if (!email || !password) {
-      setError('Введите email и пароль');
-      return;
-    }
+	const fetchCities = async () => {
+		try {
+			const response = await fetch(`${API_BASE_URL}/cities`, {
+				headers: {
+					Authorization: localStorage.getItem('access_token')
+						? `Bearer ${localStorage.getItem('access_token')}`
+						: '',
+				},
+			})
 
-    try {
-      const params = new URLSearchParams();
-      params.append('username', email); 
-      params.append('password', password);
+			if (response.ok) {
+				const data = await response.json()
+				setCities(Array.isArray(data) ? data : [])
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки городов:', err)
+		}
+	}
 
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params,
-      });
+	// === ЛОГИКА ВХОДА ===
+	const handleLogin = async e => {
+		e.preventDefault()
+		setError('')
 
-      const data = await response.json();
+		if (!email || !password) {
+			setError('Введите email и пароль')
+			return
+		}
 
-      if (!response.ok) {
-        throw new Error(data.detail || 'Неверный логин или пароль');
-      }
+		try {
+			const params = new URLSearchParams()
+			params.append('username', email)
+			params.append('password', password)
 
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('user_data', JSON.stringify(data.user));
+			const response = await fetch(`${API_BASE_URL}/auth/login`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: params,
+			})
 
-      window.location.href = '/'; 
+			const data = await response.json()
 
-    } catch (err) {
-      setError(err.message);
-    }
-  };
+			if (!response.ok) {
+				throw new Error(data.detail || 'Неверный логин или пароль')
+			}
 
-  // === ЛОГИКА РЕГИСТРАЦИИ ===
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    setError('');
-    setSuccess('');
+			localStorage.setItem('access_token', data.access_token)
+			localStorage.setItem('user_data', JSON.stringify(data.user))
 
-    if (!name || !email || !password || !role) {
-      setError('Заполните все обязательные поля');
-      return;
-    }
+			window.location.href = '/'
+		} catch (err) {
+			setError(err.message)
+		}
+	}
 
-    // НОВОЕ: Заставляем монтажников обязательно выбирать город
-    if (['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(role) && !city) {
-      setError('Для монтажников необходимо обязательно указать город!');
-      return;
-    }
+	// === ЛОГИКА РЕГИСТРАЦИИ ===
+	const handleRegister = async e => {
+		e.preventDefault()
+		setError('')
+		setSuccess('')
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // НОВОЕ: Отправляем город на бэкенд
-        body: JSON.stringify({ name, email, password, role, city: city || null }),
-      });
+		if (!name || !email || !password || !role) {
+			setError('Заполните все обязательные поля')
+			return
+		}
 
-      const data = await response.json();
+		if (['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(role) && !city) {
+			setError('Для монтажников необходимо обязательно указать город!')
+			return
+		}
 
-      if (!response.ok) {
-        throw new Error(data.detail || 'Ошибка регистрации');
-      }
+		try {
+			const response = await fetch(`${API_BASE_URL}/auth/register`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				// НОВОЕ: Отправляем город на бэкенд
+				body: JSON.stringify({
+					name,
+					email,
+					password,
+					role,
+					city: city || null,
+				}),
+			})
 
-      setSuccess('Заявка отправлена! Ожидайте одобрения администратора.');
-      setName(''); setEmail(''); setPassword(''); setRole(''); setCity('');
+			const data = await response.json()
 
-    } catch (err) {
-      setError(err.message);
-    }
-  };
+			if (!response.ok) {
+				throw new Error(data.detail || 'Ошибка регистрации')
+			}
 
-  const toggleMode = () => {
-    setIsLoginMode(!isLoginMode);
-    setError('');
-    setSuccess('');
-  };
+			setSuccess('Заявка отправлена! Ожидайте одобрения администратора.')
+			setName('')
+			setEmail('')
+			setPassword('')
+			setRole('')
+			setCity('')
+		} catch (err) {
+			setError(err.message)
+		}
+	}
 
-  return (
-    <div className="login-screen">
-      
-      {isLoginMode ? (
-        <form className="login-card" onSubmit={handleLogin}>
-          <div className="login-logo">
-            <img src="/logo.png" alt="Amonitoring" onError={(e) => e.target.style.display='none'} />
-            <h1 className="login-brand">Amonitoring <span>CRM</span></h1>
-          </div>
-          <h2 className="login-title">Вход в систему</h2>
-          
-          {error && <div className="login-error visible">{error}</div>}
+	const toggleMode = () => {
+		setIsLoginMode(!isLoginMode)
+		setError('')
+		setSuccess('')
+	}
 
-          <div className="login-field">
-            <label className="login-label">Логин (email)</label>
-            <input 
-              className="login-input" 
-              type="email" 
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Введите email" 
-            />
-          </div>
+	return (
+		<div className='login-screen'>
+			{isLoginMode ? (
+				<form className='login-card' onSubmit={handleLogin}>
+					<div className='login-logo'>
+						<img
+							src='/logo.png'
+							alt='Amonitoring'
+							onError={e => (e.target.style.display = 'none')}
+						/>
+						<h1 className='login-brand'>
+							Amonitoring <span>CRM</span>
+						</h1>
+					</div>
+					<h2 className='login-title'>Вход в систему</h2>
 
-          <div className="login-field">
-            <label className="login-label">Пароль</label>
-            <div className="pw-wrap">
-              <input 
-                className="login-input" 
-                type={showPassword ? "text" : "password"} 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Введите пароль" 
-              />
-              <button type="button" className="pw-toggle" onClick={() => setShowPassword(!showPassword)}>
-                <svg className="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              </button>
-            </div>
-          </div>
+					{error && <div className='login-error visible'>{error}</div>}
 
-          <button type="submit" className="login-btn">Войти</button>
-          
-          <p className="login-hint" style={{ textAlign: 'center', marginTop: '4px' }}>
-            Нет аккаунта?{' '}
-            <button type="button" className="link-btn" onClick={toggleMode}>
-              Зарегистрироваться
-            </button>
-          </p>
-        </form>
-      ) : (
+					<div className='login-field'>
+						<label className='login-label'>Логин (email)</label>
+						<input
+							className='login-input'
+							type='email'
+							value={email}
+							onChange={e => setEmail(e.target.value)}
+							placeholder='Введите email'
+						/>
+					</div>
 
-        <form className="login-card" style={{ maxWidth: '420px' }} onSubmit={handleRegister}>
-          <div className="login-logo">
-            <img src="/logo.png" alt="Amonitoring" onError={(e) => e.target.style.display='none'} />
-            <h1 className="login-brand">Amonitoring <span>CRM</span></h1>
-          </div>
-          <h2 className="login-title">Регистрация</h2>
-          
-          {error && <div className="login-error visible">{error}</div>}
-          {success && <div className="login-success visible">{success}</div>}
+					<div className='login-field'>
+						<label className='login-label'>Пароль</label>
+						<div className='pw-wrap'>
+							<input
+								className='login-input'
+								type={showPassword ? 'text' : 'password'}
+								value={password}
+								onChange={e => setPassword(e.target.value)}
+								placeholder='Введите пароль'
+							/>
+							<button
+								type='button'
+								className='pw-toggle'
+								onClick={() => setShowPassword(!showPassword)}
+							>
+								<svg
+									className='eye-icon'
+									width='16'
+									height='16'
+									viewBox='0 0 24 24'
+									fill='none'
+									stroke='currentColor'
+									strokeWidth='2'
+									strokeLinecap='round'
+									strokeLinejoin='round'
+								>
+									<path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z' />
+									<circle cx='12' cy='12' r='3' />
+								</svg>
+							</button>
+						</div>
+					</div>
 
-          <div className="login-field">
-            <label className="login-label">ФИО <span style={{ color: '#e53e3e' }}>*</span></label>
-            <input className="login-input" type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Полное имя" />
-          </div>
+					<button type='submit' className='login-btn'>
+						Войти
+					</button>
 
-          <div className="login-field">
-            <label className="login-label">Почта (email) <span style={{ color: '#e53e3e' }}>*</span></label>
-            <input className="login-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="example@mail.ru" />
-          </div>
+					<p
+						className='login-hint'
+						style={{ textAlign: 'center', marginTop: '4px' }}
+					>
+						Нет аккаунта?{' '}
+						<button type='button' className='link-btn' onClick={toggleMode}>
+							Зарегистрироваться
+						</button>
+					</p>
+				</form>
+			) : (
+				<form
+					className='login-card'
+					style={{ maxWidth: '420px' }}
+					onSubmit={handleRegister}
+				>
+					<div className='login-logo'>
+						<img
+							src='/logo.png'
+							alt='Amonitoring'
+							onError={e => (e.target.style.display = 'none')}
+						/>
+						<h1 className='login-brand'>
+							Amonitoring <span>CRM</span>
+						</h1>
+					</div>
+					<h2 className='login-title'>Регистрация</h2>
 
-          <div className="login-field">
-            <label className="login-label">Пароль <span style={{ color: '#e53e3e' }}>*</span></label>
-            <div className="pw-wrap">
-              <input className="login-input" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Придумайте пароль" />
-              <button type="button" className="pw-toggle" onClick={() => setShowPassword(!showPassword)}>
-                <svg className="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              </button>
-            </div>
-          </div>
+					{error && <div className='login-error visible'>{error}</div>}
+					{success && <div className='login-success visible'>{success}</div>}
 
-          <div className="login-field">
-            <label className="login-label">Город <span style={{ color: '#e53e3e' }}>*</span></label>
-            <select className="login-input" style={{ cursor: 'pointer' }} value={city} onChange={(e) => setCity(e.target.value)}>
-              <option value="">— выберите город —</option>
-              <option value="Алматы">Алматы</option>
-              <option value="Астана">Астана</option>
-              <option value="Шымкент">Шымкент</option>
-            </select>
-          </div>
+					<div className='login-field'>
+						<label className='login-label'>
+							ФИО <span style={{ color: '#e53e3e' }}>*</span>
+						</label>
+						<input
+							className='login-input'
+							type='text'
+							value={name}
+							onChange={e => setName(e.target.value)}
+							placeholder='Полное имя'
+						/>
+					</div>
 
-          <div className="login-field">
-            <label className="login-label">Роль <span style={{ color: '#e53e3e' }}>*</span></label>
-            <select className="login-input" style={{ cursor: 'pointer' }} value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="">— выберите роль —</option>
-              <option value="MANAGER">Менеджер</option>
-              <option value="ACCOUNTANT">Бухгалтер</option>
-              <option value="SENIOR_TECHNICIAN">Старший монтажник</option>
-              <option value="TECHNICIAN">Монтажник</option>
-              <option value="WAREHOUSE_MANAGER">Заведующий складом</option>
-            </select>
-          </div>
+					<div className='login-field'>
+						<label className='login-label'>
+							Почта (email) <span style={{ color: '#e53e3e' }}>*</span>
+						</label>
+						<input
+							className='login-input'
+							type='email'
+							value={email}
+							onChange={e => setEmail(e.target.value)}
+							placeholder='example@mail.ru'
+						/>
+					</div>
 
-          <button type="submit" className="login-btn">Зарегистрироваться</button>
-          
-          <p className="login-hint" style={{ textAlign: 'center' }}>
-            Уже есть аккаунт?{' '}
-            <button type="button" className="link-btn" onClick={toggleMode}>
-              Войти
-            </button>
-          </p>
-        </form>
-      )}
-    </div>
-  );
+					<div className='login-field'>
+						<label className='login-label'>
+							Пароль <span style={{ color: '#e53e3e' }}>*</span>
+						</label>
+						<div className='pw-wrap'>
+							<input
+								className='login-input'
+								type={showPassword ? 'text' : 'password'}
+								value={password}
+								onChange={e => setPassword(e.target.value)}
+								placeholder='Придумайте пароль'
+							/>
+							<button
+								type='button'
+								className='pw-toggle'
+								onClick={() => setShowPassword(!showPassword)}
+							>
+								<svg
+									className='eye-icon'
+									width='16'
+									height='16'
+									viewBox='0 0 24 24'
+									fill='none'
+									stroke='currentColor'
+									strokeWidth='2'
+									strokeLinecap='round'
+									strokeLinejoin='round'
+								>
+									<path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z' />
+									<circle cx='12' cy='12' r='3' />
+								</svg>
+							</button>
+						</div>
+					</div>
+
+					<div className='login-field'>
+						<label className='login-label'>
+							Город{' '}
+							{['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(role) && (
+								<span style={{ color: '#e53e3e' }}>*</span>
+							)}
+						</label>
+						<select
+							className='login-input'
+							style={{ cursor: 'pointer' }}
+							value={city}
+							onChange={e => setCity(e.target.value)}
+						>
+							<option value=''>— выберите город —</option>
+
+							{cities.map(cityItem => (
+								<option key={cityItem.id} value={cityItem.name}>
+									{cityItem.name}
+								</option>
+							))}
+						</select>
+					</div>
+
+					<div className='login-field'>
+						<label className='login-label'>
+							Роль <span style={{ color: '#e53e3e' }}>*</span>
+						</label>
+						<select
+							className='login-input'
+							style={{ cursor: 'pointer' }}
+							value={role}
+							onChange={e => setRole(e.target.value)}
+						>
+							<option value=''>— выберите роль —</option>
+							<option value='MANAGER'>Менеджер</option>
+							<option value='ACCOUNTANT'>Бухгалтер</option>
+							<option value='SENIOR_TECHNICIAN'>Старший монтажник</option>
+							<option value='TECHNICIAN'>Монтажник</option>
+							<option value='WAREHOUSE_MANAGER'>Заведующий складом</option>
+						</select>
+					</div>
+
+					<button type='submit' className='login-btn'>
+						Зарегистрироваться
+					</button>
+
+					<p className='login-hint' style={{ textAlign: 'center' }}>
+						Уже есть аккаунт?{' '}
+						<button type='button' className='link-btn' onClick={toggleMode}>
+							Войти
+						</button>
+					</p>
+				</form>
+			)}
+		</div>
+	)
 }

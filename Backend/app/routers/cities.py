@@ -15,10 +15,7 @@ def require_admin(current_user: dict):
 
 
 @router.get("")
-def get_cities(
-    active_only: bool = True,
-    current_user: dict = Depends(get_current_user)
-):
+def get_cities(active_only: bool = True):
     """
     Получить список городов.
     Доступ: все авторизованные пользователи.

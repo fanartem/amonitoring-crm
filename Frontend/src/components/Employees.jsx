@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import '../styles/Employees.css';
-
+import React, { useState, useEffect } from 'react'
+import '../styles/Employees.css'
 
 export default function Employees() {
-  const [employees, setEmployees] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false)
+	const [employees, setEmployees] = useState([])
+	const [cities, setCities] = useState([])
+	const [loading, setLoading] = useState(true)
+	const [error, setError] = useState('')
+	const [isModalOpen, setIsModalOpen] = useState(false)
 	const [selectedUser, setSelectedUser] = useState(null)
 	const [formData, setFormData] = useState({
 		email: '',
@@ -16,9 +16,10 @@ export default function Employees() {
 		city: '', // Добавили поле города в состояние формы
 	})
 
-  const currentUser = JSON.parse(localStorage.getItem('user_data') || 'null') || {}
+	const currentUser =
+		JSON.parse(localStorage.getItem('user_data') || 'null') || {}
 
-  const getTokenPayload = () => {
+	const getTokenPayload = () => {
 		const token = localStorage.getItem('access_token')
 		if (!token) return {}
 
@@ -39,36 +40,56 @@ export default function Employees() {
 		return Number(emp.id) === currentUserId
 	}
 
-  useEffect(() => {
-    fetchEmployees();
-  }, []);
+	useEffect(() => {
+		fetchEmployees()
+		fetchCities()
+	}, [])
 
-  const fetchEmployees = async () => {
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('access_token');
-      // Замени адрес, если в бэкенде он другой (например /users)
-      const res = await fetch('http://127.0.0.1:8000/admin/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Не удалось загрузить сотрудников');
-      
-      const data = await res.json();
-      setEmployees(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+	const fetchEmployees = async () => {
+		setLoading(true)
+		try {
+			const token = localStorage.getItem('access_token')
+			// Замени адрес, если в бэкенде он другой (например /users)
+			const res = await fetch('http://127.0.0.1:8000/admin/users', {
+				headers: { Authorization: `Bearer ${token}` },
+			})
+			if (!res.ok) throw new Error('Не удалось загрузить сотрудников')
 
-  const handleDelete = async (id, name) => {
+			const data = await res.json()
+			setEmployees(data)
+		} catch (err) {
+			setError(err.message)
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	const fetchCities = async () => {
+		try {
+			const token = localStorage.getItem('access_token')
+
+			const res = await fetch('http://127.0.0.1:8000/cities', {
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			})
+
+			if (res.ok) {
+				const data = await res.json()
+				setCities(Array.isArray(data) ? data : [])
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки городов:', err)
+		}
+	}
+	
+	const handleDelete = async (id, name) => {
 		if (!window.confirm(`Удалить сотрудника ${name}?`)) return
 
 		try {
 			const token = localStorage.getItem('access_token')
 
-			const response = await fetch(`http://localhost:8000/admin/users/${id}`, {
+			const response = await fetch(`http://127.0.0.1:8000/admin/users/${id}`, {
 				method: 'DELETE',
 				headers: {
 					Authorization: `Bearer ${token}`,
@@ -87,7 +108,7 @@ export default function Employees() {
 		}
 	}
 
-  const handleEdit = emp => {
+	const handleEdit = emp => {
 		setSelectedUser(emp)
 		setFormData({
 			email: emp.email || '',
@@ -99,7 +120,7 @@ export default function Employees() {
 		setIsModalOpen(true)
 	}
 
-  const handleChange = e => {
+	const handleChange = e => {
 		const { name, value } = e.target
 		setFormData(prev => ({
 			...prev,
@@ -107,7 +128,7 @@ export default function Employees() {
 		}))
 	}
 
-  const handleSave = async () => {
+	const handleSave = async () => {
 		try {
 			const token = localStorage.getItem('access_token')
 
@@ -123,11 +144,11 @@ export default function Employees() {
 			// только админ может менять роль и город
 			if (isAdmin) {
 				body.role = formData.role
-				body.city = formData.city || null // Отправляем город на бэкенд
+				body.city = formData.city || null
 			}
 
 			const response = await fetch(
-				`http://localhost:8000/admin/users/${selectedUser.id}`,
+				`http://127.0.0.1:8000/admin/users/${selectedUser.id}`,
 				{
 					method: 'PUT',
 					headers: {
@@ -156,7 +177,7 @@ export default function Employees() {
 		}
 	}
 
-  const sortedEmployees = [...employees]
+	const sortedEmployees = [...employees]
 		.filter(emp => emp.email !== 'admin@amonitoring.kz')
 		.sort((a, b) => {
 			if (isCurrentUser(a)) return -1
@@ -164,26 +185,26 @@ export default function Employees() {
 			return 0
 		})
 
-  // Словари для бейджиков
-  const roleLabels = {
-    'ADMIN': 'Администратор',
-    'MANAGER': 'Менеджер',
-    'SENIOR_TECHNICIAN': 'Старший монтажник',
-    'TECHNICIAN': 'Монтажник',
-    'ACCOUNTANT': 'Бухгалтер',
-	'WAREHOUSE_MANAGER': 'Заведующий складом'
-  };
+	// Словари для бейджиков
+	const roleLabels = {
+		ADMIN: 'Администратор',
+		MANAGER: 'Менеджер',
+		SENIOR_TECHNICIAN: 'Старший монтажник',
+		TECHNICIAN: 'Монтажник',
+		ACCOUNTANT: 'Бухгалтер',
+		WAREHOUSE_MANAGER: 'Заведующий складом',
+	}
 
-  const roleClasses = {
-    'ADMIN': 'role-admin',
-    'MANAGER': 'role-manager',
-    'SENIOR_TECHNICIAN': 'role-senior',
-    'TECHNICIAN': 'role-tech',
-    'ACCOUNTANT': 'role-accountant',
-	'WAREHOUSE_MANAGER': 'role-warehouse',
-  };
+	const roleClasses = {
+		ADMIN: 'role-admin',
+		MANAGER: 'role-manager',
+		SENIOR_TECHNICIAN: 'role-senior',
+		TECHNICIAN: 'role-tech',
+		ACCOUNTANT: 'role-accountant',
+		WAREHOUSE_MANAGER: 'role-warehouse',
+	}
 
-  return (
+	return (
 		<div className='employees-page'>
 			<div className='employees-header'>
 				<h2>Сотрудники</h2>
@@ -207,10 +228,18 @@ export default function Employees() {
 						>
 							<div className='emp-name'>{emp.name}</div>
 							<div className='emp-email'>@{emp.email.split('@')[0]}</div>
-							
+
 							{/* НОВОЕ: Отображение города, если он есть */}
 							{emp.city && (
-								<div style={{ fontSize: '12px', color: '#666', marginTop: '4px', marginBottom: '8px', fontWeight: '500' }}>
+								<div
+									style={{
+										fontSize: '12px',
+										color: '#666',
+										marginTop: '4px',
+										marginBottom: '8px',
+										fontWeight: '500',
+									}}
+								>
 									📍 {emp.city}
 								</div>
 							)}
@@ -221,7 +250,7 @@ export default function Employees() {
 							>
 								{roleLabels[emp.role] || emp.role}
 							</div>
-							
+
 							{/* РЕНДЕРИМ КНОПКИ ТОЛЬКО ДЛЯ АДМИНА */}
 							{(isAdmin || isCurrentUser(emp)) && (
 								<div className='emp-actions'>
@@ -310,7 +339,7 @@ export default function Employees() {
 										</select>
 									</label>
 
-									{/* НОВОЕ: Выбор города в модалке редактирования */}
+									{/* Выбор города в модалке редактирования */}
 									<label>
 										Город
 										<select
@@ -319,9 +348,12 @@ export default function Employees() {
 											onChange={handleChange}
 										>
 											<option value=''>Все города (без привязки)</option>
-											<option value='Алматы'>Алматы</option>
-											<option value='Астана'>Астана</option>
-											<option value='Шымкент'>Шымкент</option>
+
+											{cities.map(city => (
+												<option key={city.id} value={city.name}>
+													{city.name}
+												</option>
+											))}
 										</select>
 									</label>
 								</>
