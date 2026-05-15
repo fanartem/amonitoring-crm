@@ -62,6 +62,13 @@ class VehicleUpdate(BaseModel):
     year: Optional[int] = None
     type: Optional[str] = None
 
+class CityCreate(BaseModel):
+    name: str
+
+class CityUpdate(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
 class UserCreate(BaseModel):
     email: str
     password: str
