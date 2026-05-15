@@ -508,13 +508,13 @@ export default function Requests() {
 
 								{/* --- ДОБАВЛЯЕМ ВИД РАБОТЫ ТУТ --- */}
 								<span style={{
-									fontSize: '12px',
+									fontSize: '15px',
 									fontWeight: '600',
 									color: req.work_type === 'INSTALLATION' ? '#1565c0' : req.work_type === 'REMOVAL' ? '#c62828' : '#e65100',
-									marginTop: '12px',
+									marginTop: '5px',
 									display: 'inline-block'
 								}}>
-									{req.work_type === 'INSTALLATION' ? '🛠 Установка' : req.work_type === 'REMOVAL' ? '🔧 Снятие' : '🔍 Диагностика'}
+									{req.work_type === 'INSTALLATION' ? 'Установка' : req.work_type === 'REMOVAL' ? 'Снятие' : 'Диагностика'}
 								</span>
 							</div>
 							<div className='card-item'>

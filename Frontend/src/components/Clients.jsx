@@ -738,13 +738,13 @@ export default function Clients() {
                                     <div className='card-item' style={{ marginTop: '8px' }}>
                                         <span className='card-label'>Вид работы</span>
                                         <span style={{
-                                            fontSize: '13px', 
+                                            fontSize: '15px', 
                                             fontWeight: '600', 
                                             color: req.work_type === 'INSTALLATION' ? '#1565c0' : req.work_type === 'REMOVAL' ? '#c62828' : '#e65100'
                                         }}>
 
 											
-                                            {req.work_type === 'INSTALLATION' ? '🛠 Установка' : req.work_type === 'REMOVAL' ? '🔧 Снятие' : '🔍 Диагностика'}
+                                            {req.work_type === 'INSTALLATION' ? 'Установка' : req.work_type === 'REMOVAL' ? 'Снятие' : 'Диагностика'}
                                         </span>
                                     </div>
 
