@@ -1,20 +1,24 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
+import React from 'react'
+import { NavLink } from 'react-router-dom'
 
 export default function Sidebar() {
-  const userDataStr = localStorage.getItem('user_data');
-  const user = userDataStr ? JSON.parse(userDataStr) : null;
-  const isAdmin = user?.role?.toUpperCase() === 'ADMIN';
-  const isManager = user?.role?.toUpperCase() === 'MANAGER';
-  const isWarehouseManager = user?.role?.toUpperCase() === 'WAREHOUSE_MANAGER';
+	const userDataStr = localStorage.getItem('user_data')
+	const user = userDataStr ? JSON.parse(userDataStr) : null
+	const isAdmin = user?.role?.toUpperCase() === 'ADMIN'
+	const isManager = user?.role?.toUpperCase() === 'MANAGER'
+	const isWarehouseManager = user?.role?.toUpperCase() === 'WAREHOUSE_MANAGER'
 
-  const handleLogout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user_data');
-    window.location.href = '/login';
-  };
+	const handleLogout = () => {
+		localStorage.removeItem('access_token')
+		localStorage.removeItem('user_data')
+		window.location.href = '/login'
+	}
 
-  return (
+	const canViewPrices = ['ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(
+		user?.role?.toUpperCase(),
+	)
+
+	return (
 		<nav className='sidebar'>
 			<div className='sidebar-top'>
 				<NavLink
@@ -39,21 +43,21 @@ export default function Sidebar() {
 					Заявки
 				</NavLink>
 
+				{canViewPrices && (
+					<NavLink
+						to='/prices'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					>
+						Цены
+					</NavLink>
+				)}
+
 				<NavLink
 					to='/employees'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 				>
 					Сотрудники
 				</NavLink>
-
-				{(isWarehouseManager || isAdmin) && (
-					<NavLink
-						to='/warehouse'
-						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-					>
-						Склад
-					</NavLink>
-				)}
 
 				{/* Только для администратора */}
 				{isAdmin && (
@@ -65,7 +69,16 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{/* НОВОЕ: Корзина для Админов и Менеджеров */}
+				{(isWarehouseManager || isAdmin) && (
+					<NavLink
+						to='/warehouse'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					>
+						Склад
+					</NavLink>
+				)}
+
+				{/* Корзина для Админов и Менеджеров */}
 				{isAdmin && (
 					<NavLink
 						to='/trash'

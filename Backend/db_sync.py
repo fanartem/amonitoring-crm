@@ -43,6 +43,33 @@ def sync_db():
                         deleted_by INT NULL
                     );
                 """,
+                "price_items": """
+                    CREATE TABLE price_items (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        code VARCHAR(100) UNIQUE NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        category VARCHAR(100) NOT NULL,
+                        default_price DECIMAL(12,2) NOT NULL DEFAULT 0,
+                        unit VARCHAR(50) DEFAULT 'шт',
+                        is_active TINYINT DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NULL
+                    );
+                """,
+                "client_price_overrides": """
+                    CREATE TABLE client_price_overrides (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        client_id INT NOT NULL,
+                        price_item_id INT NOT NULL,
+                        price DECIMAL(12,2) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NULL,
+
+                        UNIQUE(client_id, price_item_id),
+                        FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+                        FOREIGN KEY (price_item_id) REFERENCES price_items(id) ON DELETE CASCADE
+                    );
+                """,
                 "vehicles": """
                     CREATE TABLE vehicles (
                         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -194,6 +221,151 @@ def sync_db():
             """)
             print("✅ Индекс uq_warehouse_identifier создан")
             
+            default_price_items = [
+                {
+                    "code": "GPS_FMB920",
+                    "name": "Teltonika FMB920 (2G) GPS",
+                    "category": "GPS_TRACKER",
+                    "default_price": 24000,
+                    "unit": "шт",
+                },
+                {
+                    "code": "GPS_FMC920",
+                    "name": "Teltonika FMC920 (4G) GPS",
+                    "category": "GPS_TRACKER",
+                    "default_price": 38000,
+                    "unit": "шт",
+                },
+                {
+                    "code": "BEACON_TAT100",
+                    "name": "Teltonika TAT100 (маяк)",
+                    "category": "BEACON",
+                    "default_price": 50000,
+                    "unit": "шт",
+                },
+                {
+                    "code": "SUBSCRIPTION_TRACKER_MONTH",
+                    "name": "Ежемесячная абонентская плата (трекер)",
+                    "category": "SUBSCRIPTION",
+                    "default_price": 2500,
+                    "unit": "мес",
+                },
+                {
+                    "code": "SUBSCRIPTION_BEACON_MONTH",
+                    "name": "Ежемесячная абонентская плата (маяк)",
+                    "category": "SUBSCRIPTION",
+                    "default_price": 2500,
+                    "unit": "мес",
+                },
+                {
+                    "code": "ENGINE_BLOCKING_INSTALL",
+                    "name": "Установка блокировки двигателя",
+                    "category": "INSTALLATION_SERVICE",
+                    "default_price": 10000,
+                    "unit": "шт",
+                },
+                {
+                    "code": "FUEL_SENSOR_ESCORT_TD",
+                    "name": "Датчик уровня топлива Эскорт TD",
+                    "category": "FUEL_SENSOR",
+                    "default_price": 63000,
+                    "unit": "шт",
+                },
+                {
+                    "code": "FUEL_SENSOR_INSTALL_CALIBRATION",
+                    "name": "Установка и тарировка датчика уровня топлива",
+                    "category": "INSTALLATION_SERVICE",
+                    "default_price": 25000,
+                    "unit": "шт",
+                },
+                {
+                    "code": "ON_SITE_CITY",
+                    "name": "Транспортные расходы в черте города",
+                    "category": "VISIT",
+                    "default_price": 5000,
+                    "unit": "выезд",
+                },
+                {
+                    "code": "ON_SITE_OUTSIDE_CITY",
+                    "name": "Транспортные расходы за пределы города",
+                    "category": "VISIT",
+                    "default_price": 10000,
+                    "unit": "выезд",
+                },
+                {
+                    "code": "SUBSCRIPTION_TRACKER_YEAR_PREPAID_MONTH",
+                    "name": "Абонентская плата при оплате за год вперёд за 1 ед. трекера",
+                    "category": "SUBSCRIPTION",
+                    "default_price": 2000,
+                    "unit": "мес",
+                },
+                {
+                    "code": "SUBSCRIPTION_ROAMING_MONTH",
+                    "name": "Абонентская плата + роуминг",
+                    "category": "SUBSCRIPTION",
+                    "default_price": 5000,
+                    "unit": "мес",
+                },
+                {
+                    "code": "BUSINESS_TRIP_KM",
+                    "name": "Дальние поездки / командировка",
+                    "category": "VISIT",
+                    "default_price": 120,
+                    "unit": "км",
+                },
+                {
+                    "code": "GPS_CAN_BUS",
+                    "name": "GPS CAN-шина",
+                    "category": "GPS_CAN",
+                    "default_price": 54000,
+                    "unit": "шт",
+                },
+
+                # Дополнительно для будущей логики снятия/диагностики
+                {
+                    "code": "REMOVAL_BASE",
+                    "name": "Снятие оборудования",
+                    "category": "REMOVAL_SERVICE",
+                    "default_price": 3000,
+                    "unit": "шт",
+                },
+                {
+                    "code": "POWER_RESTORE",
+                    "name": "Восстановление питания",
+                    "category": "DIAGNOSTIC_SERVICE",
+                    "default_price": 0,
+                    "unit": "шт",
+                },
+            ]
+
+            for item in default_price_items:
+                cursor.execute(
+                    """
+                    INSERT INTO price_items (
+                        code,
+                        name,
+                        category,
+                        default_price,
+                        unit,
+                        is_active
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 1)
+                    ON DUPLICATE KEY UPDATE
+                        name = VALUES(name),
+                        category = VALUES(category),
+                        default_price = VALUES(default_price),
+                        unit = VALUES(unit),
+                        updated_at = NOW()
+                    """,
+                    (
+                        item["code"],
+                        item["name"],
+                        item["category"],
+                        item["default_price"],
+                        item["unit"],
+                    )
+                )
+
             cursor.execute("SET FOREIGN_KEY_CHECKS = 1;")
             connection.commit()
     except Exception as e:

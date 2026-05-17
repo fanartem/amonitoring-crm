@@ -123,3 +123,28 @@ class RequestEquipmentAttach(BaseModel):
     warehouse_item_id: int
     quantity: int = 1
     note: str | None = None
+
+class PriceItemCreate(BaseModel):
+    code: str
+    name: str
+    category: str
+    default_price: float = 0
+    unit: str = "шт"
+
+
+class PriceItemUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    category: Optional[str] = None
+    default_price: Optional[float] = None
+    unit: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ClientPriceOverrideItem(BaseModel):
+    price_item_id: int
+    price: float
+
+
+class ClientPriceOverrideUpdate(BaseModel):
+    prices: list[ClientPriceOverrideItem]

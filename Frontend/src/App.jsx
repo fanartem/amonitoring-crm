@@ -1,73 +1,68 @@
-import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
-import Clients from './components/Clients';
-import Approvals from './components/Approvals';
-import Home from './components/Home';
-
-// Импортируем наши компоненты
-import Entrance from './components/Entrance';
-import Header from './components/Header';
-import Sidebar from './components/Sidebar';
-import Requests from './components/Requests';
-import Employees from './components/Employees';
-import Trash from './components/Trash';
-import Warehouse from './components/Warehouse';
-import Settings from './components/Settings';
+import React, { useState, useEffect } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import Clients from './components/Clients'
+import Approvals from './components/Approvals'
+import Home from './components/Home'
+import Entrance from './components/Entrance'
+import Header from './components/Header'
+import Sidebar from './components/Sidebar'
+import Requests from './components/Requests'
+import Employees from './components/Employees'
+import Trash from './components/Trash'
+import Warehouse from './components/Warehouse'
+import Settings from './components/Settings'
+import Prices from './components/Prices'
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+	const [isAuthenticated, setIsAuthenticated] = useState(false)
+	const [isLoading, setIsLoading] = useState(true)
 
-  // Проверяем наличие токена при первой загрузке приложения
-  useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (token) {
-      setIsAuthenticated(true);
-    }
-    setIsLoading(false); // Заканчиваем загрузку
-  }, []);
+	// Проверяем наличие токена при первой загрузке приложения
+	useEffect(() => {
+		const token = localStorage.getItem('access_token')
+		if (token) {
+			setIsAuthenticated(true)
+		}
+		setIsLoading(false)
+	}, [])
 
-  if (isLoading) return null; // Убираем моргание экрана при загрузке
+	if (isLoading) return null
 
-  // Если пользователь НЕ авторизован — показываем только экран входа
-  if (!isAuthenticated) {
-    return <Entrance />;
-  }
+	// Если пользователь НЕ авторизован — показываем только экран входа
+	if (!isAuthenticated) {
+		return <Entrance />
+	}
 
-  // Если авторизован — рендерим полный интерфейс CRM
-  return (
-    <div className="crm-app">
-      {/* Шапка */}
-      <Header />
+	// Если авторизован — рендерим полный интерфейс CRM
+	return (
+		<div className='crm-app'>
+			<Header />
 
-      
+			<div className='body-row'>
+				<Sidebar />
 
-      <div className="body-row">
-        {/* Боковое меню */}
-        <Sidebar />
-
-        {/* Основной контент */}
-        <main className="main">
-          <section className="content-section active" style={{ display: 'block', overflowY: 'auto', width: '100%' }}>
-            
-            {/* РЕГИСТРАТОР ПУТЕЙ */}
-            <Routes>
-              <Route path="/warehouse" element={<Warehouse />} />
-              <Route path="/trash" element={<Trash />} />
-              <Route path="/approvals" element={<Approvals />} />
-              <Route path="/" element={<Home />} />
-              <Route path="/clients" element={<Clients />} />
-              <Route path="/requests" element={<Requests />} /> 
-              <Route path="/employees" element={<Employees />} />
-              <Route path="/settings" element={<Settings />} />
-              
-              {/* Если ввели неизвестный адрес — кидаем на главную */}
-              <Route path="*" element={<Navigate to="/" />} />
-            </Routes>
-
-          </section>
-        </main>
-      </div>
-    </div>
-  );
+				<main className='main'>
+					<section
+						className='content-section active'
+						style={{ display: 'block', overflowY: 'auto', width: '100%' }}
+					>
+						{/* РЕГИСТРАТОР ПУТЕЙ */}
+						<Routes>
+							<Route path='/warehouse' element={<Warehouse />} />
+							<Route path='/trash' element={<Trash />} />
+							<Route path='/approvals' element={<Approvals />} />
+							<Route path='/' element={<Home />} />
+							<Route path='/clients' element={<Clients />} />
+							<Route path='/requests' element={<Requests />} />
+							<Route path='/employees' element={<Employees />} />
+							<Route path='/settings' element={<Settings />} />
+              <Route path='/prices' element={<Prices />} />
+							{/* Если ввели неизвестный адрес — кидаем на главную */}
+							<Route path='*' element={<Navigate to='/' />} />
+						</Routes>
+					</section>
+				</main>
+			</div>
+		</div>
+	)
 }
