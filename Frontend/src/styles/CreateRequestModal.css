@@ -1,5 +1,5 @@
 .request-modal-window {
-  width: 760px;
+  width: 1000px;
   max-width: 96%;
   max-height: 90vh;
   display: flex;
@@ -317,6 +317,85 @@
 
 .request-radio-list.vertical .request-radio-pill {
   justify-content: center;
+}
+
+.request-extra-sensors-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed #dcdcdc;
+}
+
+.request-extra-sensors-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.extra-sensors-title {
+  margin-bottom: 0;
+}
+
+.request-add-sensor-btn {
+  border: 1px solid #5e9424;
+  background: #f1f8e9;
+  color: #558b2f;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.request-add-sensor-btn:hover {
+  background: #dcedc8;
+}
+
+.request-extra-sensors-empty {
+  color: #999;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.request-extra-sensors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.request-extra-sensor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 85px 34px;
+  gap: 8px;
+  align-items: end;
+}
+
+.request-remove-sensor-btn {
+  width: 34px;
+  height: 38px;
+  border: 1px solid #ffcdd2;
+  background: #ffebee;
+  color: #c62828;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.request-remove-sensor-btn:hover {
+  background: #ffcdd2;
+}
+
+@media (max-width: 760px) {
+  .request-extra-sensor-row {
+    grid-template-columns: 1fr;
+  }
+
+  .request-remove-sensor-btn {
+    width: 100%;
+  }
 }
 
 @media (max-width: 860px) {

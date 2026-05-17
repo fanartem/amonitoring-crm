@@ -96,6 +96,17 @@ def sync_db():
                         FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
                     );
                 """,
+                "request_vehicle_extra_sensors": """
+                    CREATE TABLE request_vehicle_extra_sensors (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        request_vehicle_id INT NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        price DECIMAL(12,2) DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (request_vehicle_id) REFERENCES request_vehicles(id) ON DELETE CASCADE
+                    );
+                """,
                 "request_comments": """
                     CREATE TABLE request_comments (
                         id INT AUTO_INCREMENT PRIMARY KEY,

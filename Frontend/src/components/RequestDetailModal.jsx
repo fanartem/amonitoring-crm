@@ -35,6 +35,16 @@ const formatVehicleType = type => {
 	return vehicleTypeLabels[type] || type
 }
 
+const formatMoney = value => {
+	if (value === null || value === undefined || value === '') return '0 тг'
+
+	const number = Number(value)
+
+	if (Number.isNaN(number)) return `${value} тг`
+
+	return `${number.toLocaleString('ru-RU')} тг`
+}
+
 export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdated, initialTab = 'info', onEditClick }) {
 	const [activeTab, setActiveTab] = useState(initialTab);
 	const [request, setRequest] = useState(null);
@@ -467,6 +477,38 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 																	</span>
 																</div>
 															</div>
+
+															{request.work_type === 'INSTALLATION' && (
+																<div className='request-extra-sensors-detail'>
+																	<div className='request-extra-sensors-detail-title'>
+																		Дополнительные датчики
+																	</div>
+
+																	{vehicle.extra_sensors &&
+																	vehicle.extra_sensors.length > 0 ? (
+																		<div className='request-extra-sensors-detail-list'>
+																			{vehicle.extra_sensors.map(sensor => (
+																				<div
+																					key={sensor.id}
+																					className='request-extra-sensor-detail-row'
+																				>
+																					<span className='request-extra-sensor-name'>
+																						{sensor.name || 'Датчик'}
+																					</span>
+
+																					<span className='request-extra-sensor-price'>
+																						{formatMoney(sensor.price)}
+																					</span>
+																				</div>
+																			))}
+																		</div>
+																	) : (
+																		<div className='request-extra-sensors-detail-empty'>
+																			Дополнительные датчики не добавлены
+																		</div>
+																	)}
+																</div>
+															)}
 														</div>
 													))}
 												</div>

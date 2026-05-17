@@ -23,6 +23,11 @@ class RequestVehicleInput(BaseModel):
     vehicle_id: int
     has_beacon: bool = False
     has_blocking: bool = False
+    extra_sensors: list[ExtraSensorInput] = []
+
+class ExtraSensorInput(BaseModel):
+    name: str
+    price: float = 0
 
 class CommentCreate(BaseModel):
     request_id: int

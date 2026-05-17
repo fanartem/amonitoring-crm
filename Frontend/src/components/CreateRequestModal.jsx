@@ -19,10 +19,17 @@ const mapTypeToDB = uiType => {
 	return 'INDIVIDUAL'
 }
 
+const createLocalId = () =>
+	crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+
+const createEmptyExtraSensor = () => ({
+	local_id: createLocalId(),
+	name: '',
+	price: '',
+})
+
 const createEmptyRequestVehicle = () => ({
-	local_id: crypto.randomUUID
-		? crypto.randomUUID()
-		: `${Date.now()}-${Math.random()}`,
+	local_id: createLocalId(),
 
 	car_id: '',
 	car_type: 'Легковая',
@@ -34,6 +41,7 @@ const createEmptyRequestVehicle = () => ({
 
 	blocking: 'С блокировкой',
 	beacon: 'С маяком',
+	extra_sensors: [],
 })
 
 export default function CreateRequestModal({
@@ -325,11 +333,72 @@ export default function CreateRequestModal({
 		})
 	}
 	
+	const addExtraSensor = vehicleLocalId => {
+		setRequestVehicles(prev =>
+			prev.map(vehicle =>
+				vehicle.local_id === vehicleLocalId
+					? {
+							...vehicle,
+							extra_sensors: [
+								...(vehicle.extra_sensors || []),
+								createEmptyExtraSensor(),
+							],
+						}
+					: vehicle,
+			),
+		)
+	}
+
+	const removeExtraSensor = (vehicleLocalId, sensorLocalId) => {
+		setRequestVehicles(prev =>
+			prev.map(vehicle =>
+				vehicle.local_id === vehicleLocalId
+					? {
+							...vehicle,
+							extra_sensors: (vehicle.extra_sensors || []).filter(
+								sensor => sensor.local_id !== sensorLocalId,
+							),
+						}
+					: vehicle,
+			),
+		)
+	}
+
+	const handleExtraSensorChange = (
+		vehicleLocalId,
+		sensorLocalId,
+		fieldName,
+		value,
+	) => {
+		setRequestVehicles(prev =>
+			prev.map(vehicle =>
+				vehicle.local_id === vehicleLocalId
+					? {
+							...vehicle,
+							extra_sensors: (vehicle.extra_sensors || []).map(sensor =>
+								sensor.local_id === sensorLocalId
+									? {
+											...sensor,
+											[fieldName]: value,
+										}
+									: sensor,
+							),
+						}
+					: vehicle,
+			),
+		)
+
+		clearMissingField(
+			`extra_sensor_${fieldName}_${vehicleLocalId}_${sensorLocalId}`,
+		)
+	}
+
 	const handleClose = () => {
 		setClientKind('new')
 		setError('')
 		setMissingFields([])
 		setClientVehicles([])
+		setRequestVehicles([createEmptyRequestVehicle()])
 		setFormData(emptyForm)
 		onClose()
 	}
@@ -355,6 +424,25 @@ export default function CreateRequestModal({
 			requestVehicles.forEach(vehicle => {
 				if (!vehicle.car_brand) required.push(`car_brand_${vehicle.local_id}`)
 				if (!vehicle.car_model) required.push(`car_model_${vehicle.local_id}`)
+
+				if (formData.work_type === 'Установка') {
+					;(vehicle.extra_sensors || []).forEach(sensor => {
+						if (!sensor.name.trim()) {
+							required.push(
+								`extra_sensor_name_${vehicle.local_id}_${sensor.local_id}`,
+							)
+						}
+
+						if (
+							sensor.price !== '' &&
+							(Number.isNaN(Number(sensor.price)) || Number(sensor.price) < 0)
+						) {
+							required.push(
+								`extra_sensor_price_${vehicle.local_id}_${sensor.local_id}`,
+							)
+						}
+					})
+				}
 			})
 
 			if (
@@ -497,6 +585,15 @@ export default function CreateRequestModal({
 						formData.work_type === 'Установка'
 							? vehicle.blocking === 'С блокировкой'
 							: false,
+					extra_sensors:
+						formData.work_type === 'Установка'
+							? (vehicle.extra_sensors || [])
+									.filter(sensor => sensor.name.trim())
+									.map(sensor => ({
+										name: sensor.name.trim(),
+										price: sensor.price === '' ? 0 : Number(sensor.price),
+									}))
+							: [],
 				})
 			}
 
@@ -1045,6 +1142,106 @@ export default function CreateRequestModal({
 																		</label>
 																	))}
 																</div>
+															</div>
+
+															<div className='request-extra-sensors-block'>
+																<div className='request-extra-sensors-header'>
+																	<div className='request-modal-section-subtitle extra-sensors-title'>
+																		Дополнительные датчики
+																	</div>
+
+																	<button
+																		type='button'
+																		className='request-add-sensor-btn'
+																		onClick={() =>
+																			addExtraSensor(vehicle.local_id)
+																		}
+																	>
+																		+ Датчик
+																	</button>
+																</div>
+
+																{!vehicle.extra_sensors ||
+																vehicle.extra_sensors.length === 0 ? (
+																	<div className='request-extra-sensors-empty'>
+																		Дополнительные датчики не добавлены
+																	</div>
+																) : (
+																	<div className='request-extra-sensors-list'>
+																		{vehicle.extra_sensors.map(sensor => (
+																			<div
+																				key={sensor.local_id}
+																				className='request-extra-sensor-row'
+																			>
+																				<label className='request-modal-field'>
+																					<span className='request-modal-label'>
+																						Название
+																					</span>
+																					<input
+																						className={
+																							missingFields.includes(
+																								`extra_sensor_name_${vehicle.local_id}_${sensor.local_id}`,
+																							)
+																								? 'request-modal-input request-field-error'
+																								: 'request-modal-input'
+																						}
+																						type='text'
+																						value={sensor.name}
+																						onChange={e =>
+																							handleExtraSensorChange(
+																								vehicle.local_id,
+																								sensor.local_id,
+																								'name',
+																								e.target.value,
+																							)
+																						}
+																						placeholder='Например: ДУТ'
+																					/>
+																				</label>
+
+																				<label className='request-modal-field'>
+																					<span className='request-modal-label'>
+																						Цена, тг
+																					</span>
+																					<input
+																						className={
+																							missingFields.includes(
+																								`extra_sensor_price_${vehicle.local_id}_${sensor.local_id}`,
+																							)
+																								? 'request-modal-input request-field-error'
+																								: 'request-modal-input'
+																						}
+																						type='number'
+																						min='0'
+																						value={sensor.price}
+																						onChange={e =>
+																							handleExtraSensorChange(
+																								vehicle.local_id,
+																								sensor.local_id,
+																								'price',
+																								e.target.value,
+																							)
+																						}
+																						placeholder='0'
+																					/>
+																				</label>
+
+																				<button
+																					type='button'
+																					className='request-remove-sensor-btn'
+																					onClick={() =>
+																						removeExtraSensor(
+																							vehicle.local_id,
+																							sensor.local_id,
+																						)
+																					}
+																				>
+																					×
+																				</button>
+																			</div>
+																		))}
+																	</div>
+																)}
 															</div>
 														</div>
 													)}

@@ -81,11 +81,39 @@ def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
 
     rows = cursor.fetchall()
 
+    request_vehicle_ids = [row["request_vehicle_id"] for row in rows]
+
+    sensors_grouped = {}
+
+    if request_vehicle_ids:
+        sensor_placeholders = ", ".join(["%s"] * len(request_vehicle_ids))
+
+        cursor.execute(
+            f"""
+            SELECT
+                id,
+                request_vehicle_id,
+                name,
+                price,
+                created_at
+            FROM request_vehicle_extra_sensors
+            WHERE request_vehicle_id IN ({sensor_placeholders})
+            ORDER BY id ASC
+            """,
+            tuple(request_vehicle_ids)
+        )
+
+        sensor_rows = cursor.fetchall()
+
+        for sensor in sensor_rows:
+            sensors_grouped.setdefault(sensor["request_vehicle_id"], []).append(sensor)
+    
     grouped = {}
 
     for row in rows:
         row["has_beacon"] = bool(row["has_beacon"])
         row["has_blocking"] = bool(row["has_blocking"])
+        row["extra_sensors"] = sensors_grouped.get(row["request_vehicle_id"], [])
 
         grouped.setdefault(row["request_id"], []).append(row)
 
@@ -249,6 +277,40 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         has_blocking,
                     )
                 )
+
+                request_vehicle_id = cursor.lastrowid
+
+                # Дополнительные датчики сохраняем только для установки
+                if data.work_type == "INSTALLATION" and vehicle_input.extra_sensors:
+                    for sensor in vehicle_input.extra_sensors:
+                        sensor_name = sensor.name.strip()
+
+                        if not sensor_name:
+                            continue
+
+                        sensor_price = float(sensor.price or 0)
+
+                        if sensor_price < 0:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Цена дополнительного датчика не может быть отрицательной"
+                            )
+
+                        cursor.execute(
+                            """
+                            INSERT INTO request_vehicle_extra_sensors (
+                                request_vehicle_id,
+                                name,
+                                price
+                            )
+                            VALUES (%s, %s, %s)
+                            """,
+                            (
+                                request_vehicle_id,
+                                sensor_name,
+                                sensor_price
+                            )
+                        )
 
             cursor.execute(
                 """
