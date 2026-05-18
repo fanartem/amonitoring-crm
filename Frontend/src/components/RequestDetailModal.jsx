@@ -1,28 +1,35 @@
-import React, { useState, useEffect } from 'react';
-import '../styles/Requests.css';
+import React, { useState, useEffect } from 'react'
+import '../styles/Requests.css'
 
 import RequestEquipmentPanel from './RequestEquipmentPanel'
 
 const getUserRole = () => {
 	try {
-		const token = localStorage.getItem('access_token');
-		if (!token) return null;
-		const base64Url = token.split('.')[1];
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-		const jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
-			return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-		}).join(''));
-		return JSON.parse(jsonPayload).role;
-	} catch (error) { return null; }
-};
+		const token = localStorage.getItem('access_token')
+		if (!token) return null
+		const base64Url = token.split('.')[1]
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+		const jsonPayload = decodeURIComponent(
+			atob(base64)
+				.split('')
+				.map(function (c) {
+					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+				})
+				.join(''),
+		)
+		return JSON.parse(jsonPayload).role
+	} catch (error) {
+		return null
+	}
+}
 
-const mapTypeToUI = (dbType) => {
-	if (!dbType) return 'Физ. лицо';
-	const t = String(dbType).toUpperCase();
-	if (t === 'TOO' || t === 'ТОО') return 'ТОО';
-	if (t === 'IP' || t === 'ИП') return 'ИП';
-	return 'Физ. лицо';
-};
+const mapTypeToUI = dbType => {
+	if (!dbType) return 'Физ. лицо'
+	const t = String(dbType).toUpperCase()
+	if (t === 'TOO' || t === 'ТОО') return 'ТОО'
+	if (t === 'IP' || t === 'ИП') return 'ИП'
+	return 'Физ. лицо'
+}
 
 const vehicleTypeLabels = {
 	car: 'Легковая',
@@ -45,252 +52,325 @@ const formatMoney = value => {
 	return `${number.toLocaleString('ru-RU')} тг`
 }
 
-export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdated, initialTab = 'info', onEditClick }) {
-	const [activeTab, setActiveTab] = useState(initialTab);
-	const [request, setRequest] = useState(null);
-	const [comments, setComments] = useState([]);
-	const [history, setHistory] = useState([]);
-	const [newComment, setNewComment] = useState('');
-	const [technicians, setTechnicians] = useState([]);
-	const [selectedTech, setSelectedTech] = useState('');
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState('');
+const getPriceSourceLabel = source => {
+	if (source === 'client_override') return 'инд. цена'
+	if (source === 'manual') return 'ручная'
+	if (source === 'extra_sensor') return 'датчик'
+	return ''
+}
 
-	const userRole = getUserRole();
+export default function RequestDetailModal({
+	isOpen,
+	onClose,
+	requestId,
+	onUpdated,
+	initialTab = 'info',
+	onEditClick,
+}) {
+	const [activeTab, setActiveTab] = useState(initialTab)
+	const [request, setRequest] = useState(null)
+	const [comments, setComments] = useState([])
+	const [history, setHistory] = useState([])
+	const [newComment, setNewComment] = useState('')
+	const [technicians, setTechnicians] = useState([])
+	const [selectedTech, setSelectedTech] = useState('')
+	const [loading, setLoading] = useState(false)
+	const [error, setError] = useState('')
+
+	const userRole = getUserRole()
 
 	useEffect(() => {
-		const handleKeyDown = (e) => {
-			if (e.key === 'Escape') onClose();
-		};
-		if (isOpen) window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [isOpen, onClose]);
+		const handleKeyDown = e => {
+			if (e.key === 'Escape') onClose()
+		}
+		if (isOpen) window.addEventListener('keydown', handleKeyDown)
+		return () => window.removeEventListener('keydown', handleKeyDown)
+	}, [isOpen, onClose])
 
 	useEffect(() => {
 		if (isOpen && requestId) {
-			setActiveTab(initialTab);
-			fetchRequestDetails();
-			fetchComments();
-			// Убрали проверку ролей! Теперь список монтажников грузится для всех, 
+			setActiveTab(initialTab)
+			fetchRequestDetails()
+			fetchComments()
+			// Убрали проверку ролей! Теперь список монтажников грузится для всех,
 			// чтобы у всех красиво отображались имена вместо ID.
-			fetchTechnicians();
+			fetchTechnicians()
 		}
-	}, [isOpen, requestId, initialTab]);
+	}, [isOpen, requestId, initialTab])
 
 	useEffect(() => {
 		if (request) {
-			setSelectedTech(request.assigned_to ? request.assigned_to.toString() : '');
+			setSelectedTech(request.assigned_to ? request.assigned_to.toString() : '')
 		}
-	}, [request]);
+	}, [request])
 
 	const fetchRequestDetails = async () => {
-		setLoading(true);
+		setLoading(true)
 		try {
-			const token = localStorage.getItem('access_token');
+			const token = localStorage.getItem('access_token')
 			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
-				headers: { 'Authorization': `Bearer ${token}` }
-			});
-			if (!res.ok) throw new Error('Не удалось загрузить данные заявки');
+				headers: { Authorization: `Bearer ${token}` },
+			})
+			if (!res.ok) throw new Error('Не удалось загрузить данные заявки')
 
-			const data = await res.json();
-			setRequest(data.request);
-			setHistory(data.history || []);
+			const data = await res.json()
+			setRequest(data.request)
+			setHistory(data.history || [])
 		} catch (err) {
-			setError(err.message);
+			setError(err.message)
 		} finally {
-			setLoading(false);
+			setLoading(false)
 		}
-	};
+	}
 
 	const fetchComments = async () => {
 		try {
-			const token = localStorage.getItem('access_token');
-			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}/comments`, {
-				headers: { 'Authorization': `Bearer ${token}` }
-			});
+			const token = localStorage.getItem('access_token')
+			const res = await fetch(
+				`http://127.0.0.1:8000/requests/${requestId}/comments`,
+				{
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			)
 			if (res.ok) {
-				const data = await res.json();
-				setComments(data);
+				const data = await res.json()
+				setComments(data)
 			}
-		} catch (err) { console.error(err); }
-	};
+		} catch (err) {
+			console.error(err)
+		}
+	}
 
 	const fetchTechnicians = async () => {
 		try {
-			const token = localStorage.getItem('access_token');
+			const token = localStorage.getItem('access_token')
 			const res = await fetch(`http://127.0.0.1:8000/users/technicians`, {
-				headers: { 'Authorization': `Bearer ${token}` }
-			});
+				headers: { Authorization: `Bearer ${token}` },
+			})
 			if (res.ok) {
-				const data = await res.json();
-				setTechnicians(data);
+				const data = await res.json()
+				setTechnicians(data)
 			}
-		} catch (err) { console.error(err); }
-	};
+		} catch (err) {
+			console.error(err)
+		}
+	}
 
-	const handleStatusChange = async (e) => {
-		const newStatus = e.target.value;
+	const handleStatusChange = async e => {
+		const newStatus = e.target.value
 		try {
-			const token = localStorage.getItem('access_token');
+			const token = localStorage.getItem('access_token')
 			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
 				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-				body: JSON.stringify({ status: newStatus })
-			});
-			if (!res.ok) throw new Error('Не удалось обновить статус');
-			setRequest({ ...request, status: newStatus });
-			fetchRequestDetails();
-			onUpdated();
-		} catch (err) { alert(err.message); }
-	};
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ status: newStatus }),
+			})
+			if (!res.ok) throw new Error('Не удалось обновить статус')
+			setRequest({ ...request, status: newStatus })
+			fetchRequestDetails()
+			onUpdated()
+		} catch (err) {
+			alert(err.message)
+		}
+	}
 
-	const handlePaymentChange = async (e) => {
-		const newIsPaid = e.target.value === 'true';
+	const handlePaymentChange = async e => {
+		const newIsPaid = e.target.value === 'true'
 		try {
-			const token = localStorage.getItem('access_token');
+			const token = localStorage.getItem('access_token')
 			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
 				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-				body: JSON.stringify({ is_paid: newIsPaid })
-			});
-			if (!res.ok) throw new Error('Не удалось обновить статус оплаты');
-			setRequest({ ...request, is_paid: newIsPaid });
-			fetchRequestDetails();
-			onUpdated();
-		} catch (err) { alert(err.message); }
-	};
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ is_paid: newIsPaid }),
+			})
+			if (!res.ok) throw new Error('Не удалось обновить статус оплаты')
+			setRequest({ ...request, is_paid: newIsPaid })
+			fetchRequestDetails()
+			onUpdated()
+		} catch (err) {
+			alert(err.message)
+		}
+	}
 
 	const handleAddComment = async () => {
-		if (!newComment.trim()) return;
+		if (!newComment.trim()) return
 		try {
-			const token = localStorage.getItem('access_token');
+			const token = localStorage.getItem('access_token')
 			const res = await fetch(`http://127.0.0.1:8000/requests/comments`, {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-				body: JSON.stringify({ request_id: requestId, message: newComment })
-			});
-			if (!res.ok) throw new Error('Не удалось отправить комментарий');
-			setNewComment('');
-			fetchComments();
-		} catch (err) { alert(err.message); }
-	};
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ request_id: requestId, message: newComment }),
+			})
+			if (!res.ok) throw new Error('Не удалось отправить комментарий')
+			setNewComment('')
+			fetchComments()
+		} catch (err) {
+			alert(err.message)
+		}
+	}
 
 	const handleAssign = async () => {
 		try {
-			const token = localStorage.getItem('access_token');
-			const techId = selectedTech ? parseInt(selectedTech, 10) : null;
+			const token = localStorage.getItem('access_token')
+			const techId = selectedTech ? parseInt(selectedTech, 10) : null
 
-			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}/assign`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-				body: JSON.stringify({ technician_id: techId })
-			});
+			const res = await fetch(
+				`http://127.0.0.1:8000/requests/${requestId}/assign`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${token}`,
+					},
+					body: JSON.stringify({ technician_id: techId }),
+				},
+			)
 
-			if (!res.ok) throw new Error('Ошибка при назначении/снятии сотрудника');
+			if (!res.ok) throw new Error('Ошибка при назначении/снятии сотрудника')
 
-			if (!techId) alert('Монтажник успешно снят с заявки!');
-			else alert(request.assigned_to ? 'Монтажник успешно заменен!' : 'Монтажник назначен!');
+			if (!techId) alert('Монтажник успешно снят с заявки!')
+			else
+				alert(
+					request.assigned_to
+						? 'Монтажник успешно заменен!'
+						: 'Монтажник назначен!',
+				)
 
-			fetchRequestDetails();
-			onUpdated();
-		} catch (err) { alert(err.message); }
-	};
+			fetchRequestDetails()
+			onUpdated()
+		} catch (err) {
+			alert(err.message)
+		}
+	}
 
 	const handleDeleteRequest = async () => {
-		if (!window.confirm('Вы уверены, что хотите удалить эту заявку? Она будет перемещена в Корзину.')) return;
+		if (
+			!window.confirm(
+				'Вы уверены, что хотите удалить эту заявку? Она будет перемещена в Корзину.',
+			)
+		)
+			return
 
 		try {
-			const token = localStorage.getItem('access_token');
+			const token = localStorage.getItem('access_token')
 			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
 				method: 'DELETE',
-				headers: { 'Authorization': `Bearer ${token}` }
-			});
+				headers: { Authorization: `Bearer ${token}` },
+			})
 			if (!res.ok) {
-				const errData = await res.text();
-				throw new Error(errData || 'Ошибка при удалении заявки');
+				const errData = await res.text()
+				throw new Error(errData || 'Ошибка при удалении заявки')
 			}
-			alert('Заявка удалена!');
-			onUpdated(); 
-			onClose();   
+			alert('Заявка удалена!')
+			onUpdated()
+			onClose()
 		} catch (err) {
-			alert(err.message);
+			alert(err.message)
 		}
-	};
+	}
 
-	const getTechName = (val) => {
-		const strVal = String(val);
-		if (!val || strVal === 'null' || strVal === 'None' || strVal.includes('NaN')) return 'Не назначен';
+	const getTechName = val => {
+		const strVal = String(val)
+		if (
+			!val ||
+			strVal === 'null' ||
+			strVal === 'None' ||
+			strVal.includes('NaN')
+		)
+			return 'Не назначен'
 
-		const id = parseInt(strVal, 10);
-		if (isNaN(id)) return strVal;
+		const id = parseInt(strVal, 10)
+		if (isNaN(id)) return strVal
 
-		const tech = technicians.find(t => t.id === id);
-		return tech ? tech.name : `Сотрудник ID: ${id}`;
-	};
+		const tech = technicians.find(t => t.id === id)
+		return tech ? tech.name : `Сотрудник ID: ${id}`
+	}
 
 	// === НОВЫЙ УМНЫЙ ПЕРЕВОДЧИК ИСТОРИИ ===
-	const renderHistoryMessage = (h) => {
-		const extractId = (str) => {
-			if (!str) return null;
-			const match = String(str).match(/assigned_to=(\d+)/);
-			if (match) return parseInt(match[1], 10);
-			const num = parseInt(str, 10);
-			return isNaN(num) ? null : num;
-		};
+	const renderHistoryMessage = h => {
+		const extractId = str => {
+			if (!str) return null
+			const match = String(str).match(/assigned_to=(\d+)/)
+			if (match) return parseInt(match[1], 10)
+			const num = parseInt(str, 10)
+			return isNaN(num) ? null : num
+		}
 
-		if (h.action === 'CREATED') return 'Заявка создана';
+		if (h.action === 'CREATED') return 'Заявка создана'
 
-		if (h.action === 'SELF_ACCEPTED') return 'Заявка принята в работу';
-		
+		if (h.action === 'SELF_ACCEPTED') return 'Заявка принята в работу'
+
 		if (h.action === 'STATUS_CHANGED') {
-			const statusMap = { 'NEW': 'В ожидании', 'IN_PROGRESS': 'В процессе', 'COMPLETED': 'Завершено', 'CANCELLED': 'Отменено' };
-			return `Статус изменен: ${statusMap[h.old_value] || h.old_value} → ${statusMap[h.new_value] || h.new_value}`;
-		}
-		
-		if (h.action === 'PAYMENT_CHANGED' || h.action === 'PAYMENT_UPDATED') {
-			const isPaid = String(h.new_value).toLowerCase().includes('true');
-			return `Статус оплаты: ${isPaid ? 'Оплачено' : 'Ожидает оплаты'}`;
+			const statusMap = {
+				NEW: 'В ожидании',
+				IN_PROGRESS: 'В процессе',
+				COMPLETED: 'Завершено',
+				CANCELLED: 'Отменено',
+			}
+			return `Статус изменен: ${statusMap[h.old_value] || h.old_value} → ${statusMap[h.new_value] || h.new_value}`
 		}
 
-		if (h.action === 'ASSIGNED' || h.action === 'TECHNICIAN_ASSIGNED' || h.action === 'TECHNICIAN_CHANGED') {
-			const oldId = extractId(h.old_value);
-			const newId = extractId(h.new_value);
+		if (h.action === 'PAYMENT_CHANGED' || h.action === 'PAYMENT_UPDATED') {
+			const isPaid = String(h.new_value).toLowerCase().includes('true')
+			return `Статус оплаты: ${isPaid ? 'Оплачено' : 'Ожидает оплаты'}`
+		}
+
+		if (
+			h.action === 'ASSIGNED' ||
+			h.action === 'TECHNICIAN_ASSIGNED' ||
+			h.action === 'TECHNICIAN_CHANGED'
+		) {
+			const oldId = extractId(h.old_value)
+			const newId = extractId(h.new_value)
 			if (oldId && oldId !== newId) {
-				return `Монтажник изменен: ${getTechName(oldId)} → ${getTechName(newId)}`;
+				return `Монтажник изменен: ${getTechName(oldId)} → ${getTechName(newId)}`
 			}
-			return `Назначен монтажник: ${getTechName(newId)}`;
+			return `Назначен монтажник: ${getTechName(newId)}`
 		}
 
 		if (h.action === 'UNASSIGNED') {
-			const oldId = extractId(h.old_value);
-			return `Монтажник снят: ${getTechName(oldId)}`;
+			const oldId = extractId(h.old_value)
+			return `Монтажник снят: ${getTechName(oldId)}`
 		}
 
 		if (h.action === 'EQUIPMENT_ATTACHED') {
-			const eq = h.new_value ? h.new_value.replace(/, quantity=\d+/, '') : '';
-			return `Привязано оборудование: ${eq}`;
+			const eq = h.new_value ? h.new_value.replace(/, quantity=\d+/, '') : ''
+			return `Привязано оборудование: ${eq}`
 		}
 
 		if (h.action === 'EQUIPMENT_DETACHED') {
-			const eq = h.old_value ? h.old_value.replace(/, quantity=\d+/, '') : '';
-			return `Отвязано оборудование: ${eq}`;
+			const eq = h.old_value ? h.old_value.replace(/, quantity=\d+/, '') : ''
+			return `Отвязано оборудование: ${eq}`
 		}
 
-		if (h.action === 'CLIENT_CHANGED') return 'Изменен клиент заявки';
-		if (h.action === 'VEHICLE_CHANGED') return 'Изменен автомобиль заявки';
-		if (h.action === 'CITY_CHANGED') return `Город изменен: ${h.new_value}`;
-		if (h.action === 'ADDRESS_CHANGED') return `Адрес изменен: ${h.new_value}`;
+		if (h.action === 'CLIENT_CHANGED') return 'Изменен клиент заявки'
+		if (h.action === 'VEHICLE_CHANGED') return 'Изменен автомобиль заявки'
+		if (h.action === 'CITY_CHANGED') return `Город изменен: ${h.new_value}`
+		if (h.action === 'ADDRESS_CHANGED') return `Адрес изменен: ${h.new_value}`
 
-		return h.action; 
-	};
+		return h.action
+	}
 
-	if (!isOpen) return null;
+	if (!isOpen) return null
 
-	const formatDate = (dateString) => {
-		if (!dateString) return '—';
-		const d = new Date(dateString);
-		return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-	};
+	const formatDate = dateString => {
+		if (!dateString) return '—'
+		const d = new Date(dateString)
+		return (
+			d.toLocaleDateString('ru-RU') +
+			' ' +
+			d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+		)
+	}
 
 	return (
 		<div className='modal-overlay open' onClick={onClose}>
@@ -496,9 +576,13 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 																						{sensor.name || 'Датчик'}
 																					</span>
 
-																					<span className='request-extra-sensor-price'>
-																						{formatMoney(sensor.price)}
-																					</span>
+																					{userRole !== 'TECHNICIAN' &&
+																						userRole !==
+																							'SENIOR_TECHNICIAN' && (
+																							<span className='request-extra-sensor-price'>
+																								{formatMoney(sensor.price)}
+																							</span>
+																						)}
 																				</div>
 																			))}
 																		</div>
@@ -592,6 +676,68 @@ export default function RequestDetailModal({ isOpen, onClose, requestId, onUpdat
 												</span>
 											</div>
 										</div>
+
+										{userRole !== 'TECHNICIAN' &&
+											userRole !== 'SENIOR_TECHNICIAN' && (
+												<div className='info-card'>
+													<div className='request-price-detail-header'>
+														<div className='info-card-title'>
+															Стоимость заявки
+														</div>
+
+														<div className='request-price-detail-total'>
+															{formatMoney(request.total_price)}
+														</div>
+													</div>
+
+													{request.price_lines &&
+													request.price_lines.length > 0 ? (
+														<div className='request-price-detail-list'>
+															{request.price_lines.map((line, index) => {
+																const sourceLabel = getPriceSourceLabel(
+																	line.source,
+																)
+
+																return (
+																	<div
+																		key={line.id || line.line_key || index}
+																		className='request-price-detail-row'
+																	>
+																		<div className='request-price-detail-main'>
+																			<div className='request-price-detail-label'>
+																				{line.label || 'Строка расчёта'}
+																			</div>
+
+																			<div className='request-price-detail-meta'>
+																				{Number(
+																					line.quantity || 0,
+																				).toLocaleString('ru-RU')}{' '}
+																				{line.unit || 'шт'} ×{' '}
+																				{formatMoney(line.unit_price)}
+																				{sourceLabel && (
+																					<span
+																						className={`request-price-detail-source ${line.source}`}
+																					>
+																						{sourceLabel}
+																					</span>
+																				)}
+																			</div>
+																		</div>
+
+																		<div className='request-price-detail-line-total'>
+																			{formatMoney(line.total_price)}
+																		</div>
+																	</div>
+																)
+															})}
+														</div>
+													) : (
+														<div className='request-price-detail-empty'>
+															Детализация стоимости не сохранена
+														</div>
+													)}
+												</div>
+											)}
 									</div>
 								)}
 

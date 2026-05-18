@@ -227,6 +227,17 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         status_code=400,
                         detail=f"Машина {vehicle_input.vehicle_id} не принадлежит выбранному клиенту"
                     )
+            
+            total_price = 0
+
+            if data.price:
+                total_price = float(data.price.total_price or 0)
+
+                if total_price < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Итоговая цена заявки не может быть отрицательной"
+                    )
 
             # Создаём шапку заявки
             cursor.execute(
@@ -238,9 +249,10 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     address,
                     city,
                     scheduled_at,
-                    status
+                    status,
+                    total_price
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     data.client_id,
@@ -248,15 +260,18 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     data.visit_type,
                     data.address,
                     data.city,
-                    data.scheduled_at.replace(tzinfo=None) if data.scheduled_at else None,
+                    data.scheduled_at,
                     "NEW",
+                    total_price,
                 )
             )
 
             request_id = cursor.lastrowid
 
             # Добавляем автомобили заявки
-            for vehicle_input in data.vehicles:
+            request_vehicle_id_by_index = {}
+
+            for index, vehicle_input in enumerate(data.vehicles, start=1):
                 has_beacon = bool(vehicle_input.has_beacon) if data.work_type == "INSTALLATION" else False
                 has_blocking = bool(vehicle_input.has_blocking) if data.work_type == "INSTALLATION" else False
 
@@ -279,6 +294,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                 )
 
                 request_vehicle_id = cursor.lastrowid
+                request_vehicle_id_by_index[index] = request_vehicle_id
 
                 # Дополнительные датчики сохраняем только для установки
                 if data.work_type == "INSTALLATION" and vehicle_input.extra_sensors:
@@ -311,6 +327,92 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                                 sensor_price
                             )
                         )
+            
+            saved_total_price = total_price
+
+            if data.price and data.price.lines:
+                calculated_total = 0
+
+                for line in data.price.lines:
+                    label = line.label.strip()
+
+                    if not label:
+                        continue
+
+                    quantity = float(line.quantity or 0)
+                    unit_price = float(line.unit_price or 0)
+                    total_line_price = float(line.total_price or 0)
+
+                    if quantity <= 0:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Количество в строке цены должно быть больше 0"
+                        )
+
+                    if unit_price < 0 or total_line_price < 0:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Цена в строке расчёта не может быть отрицательной"
+                        )
+
+                    request_vehicle_id = None
+
+                    if line.vehicle_index:
+                        request_vehicle_id = request_vehicle_id_by_index.get(line.vehicle_index)
+
+                        if not request_vehicle_id:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Не найден автомобиль заявки для строки цены vehicle_index={line.vehicle_index}"
+                            )
+
+                    calculated_total += total_line_price
+
+                    cursor.execute(
+                        """
+                        INSERT INTO request_price_lines (
+                            request_id,
+                            request_vehicle_id,
+                            line_key,
+                            code,
+                            label,
+                            quantity,
+                            unit,
+                            unit_price,
+                            total_price,
+                            source,
+                            is_manual
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            request_id,
+                            request_vehicle_id,
+                            line.line_key,
+                            line.code,
+                            label,
+                            quantity,
+                            line.unit or "шт",
+                            unit_price,
+                            total_line_price,
+                            line.source or "base",
+                            bool(line.is_manual),
+                        )
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE requests
+                    SET total_price = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        calculated_total,
+                        request_id,
+                    )
+                )
+
+                saved_total_price = calculated_total
 
             cursor.execute(
                 """
@@ -335,7 +437,8 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
             return {
                 "message": "created",
                 "request_id": request_id,
-                "vehicles_count": len(data.vehicles)
+                "vehicles_count": len(data.vehicles),
+                "total_price": saved_total_price
             }
 
     except HTTPException:
@@ -390,6 +493,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     r.assigned_to,
                     r.is_paid,
                     r.paid_at,
+                    r.total_price,
 
                     c.name AS client_name,
                     c.company_name,
@@ -437,6 +541,7 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                     r.assigned_to,
                     r.is_paid,
                     r.paid_at,
+                    r.total_price,
                     r.deleted_at,
                     r.deleted_by,
 
@@ -968,6 +1073,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     r.assigned_to,
                     r.is_paid,
                     r.paid_at,
+                    r.total_price,
 
                     c.name AS client_name,
                     c.company_name,
@@ -1019,11 +1125,38 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
             )
             history = cursor.fetchall()
 
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    request_id,
+                    request_vehicle_id,
+                    line_key,
+                    code,
+                    label,
+                    quantity,
+                    unit,
+                    unit_price,
+                    total_price,
+                    source,
+                    is_manual,
+                    created_at
+                FROM request_price_lines
+                WHERE request_id = %s
+                ORDER BY id ASC
+                """,
+                (request_id,)
+            )
+
+            price_lines = cursor.fetchall()
+            request_data["price_lines"] = price_lines
+
             return {
                 "request": request_data,
                 "vehicles": request_data["vehicles"],
                 "comments": comments,
-                "history": history
+                "history": history,
+                "price_lines": price_lines
             }
 
     finally:

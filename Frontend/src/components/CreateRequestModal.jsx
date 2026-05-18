@@ -81,6 +81,9 @@ export default function CreateRequestModal({
 		currency: 'KZT',
 	})
 	const [priceLoading, setPriceLoading] = useState(false)
+	const [priceLineOverrides, setPriceLineOverrides] = useState({})
+	const [editingPriceLineKey, setEditingPriceLineKey] = useState(null)
+	const [editingPriceLineValue, setEditingPriceLineValue] = useState('')
 
 	const [formData, setFormData] = useState({
 		client_id: '',
@@ -393,14 +396,34 @@ export default function CreateRequestModal({
 
 	const handleVehicleChange = (localId, fieldName, value) => {
 		setRequestVehicles(prev =>
-			prev.map(vehicle =>
-				vehicle.local_id === localId
-					? {
-							...vehicle,
-							[fieldName]: value,
-						}
-					: vehicle,
-			),
+			prev.map(vehicle => {
+				if (vehicle.local_id !== localId) return vehicle
+
+				if (fieldName === 'gps_price_code' && value === '') {
+					return {
+						...vehicle,
+						gps_price_code: '',
+						tracker_subscription_months: 0,
+						blocking: 'Без блокировки',
+					}
+				}
+
+				if (fieldName === 'gps_price_code' && value !== '') {
+					return {
+						...vehicle,
+						gps_price_code: value,
+						tracker_subscription_months:
+							Number(vehicle.tracker_subscription_months) > 0
+								? vehicle.tracker_subscription_months
+								: 1,
+					}
+				}
+
+				return {
+					...vehicle,
+					[fieldName]: value,
+				}
+			}),
 		)
 
 		clearMissingField(`${fieldName}_${localId}`)
@@ -510,6 +533,9 @@ export default function CreateRequestModal({
 			lines: [],
 			currency: 'KZT',
 		})
+		setPriceLineOverrides({})
+		setEditingPriceLineKey(null)
+		setEditingPriceLineValue('')
 		setFormData(emptyForm)
 		onClose()
 	}
@@ -693,7 +719,7 @@ export default function CreateRequestModal({
 							? vehicle.beacon === 'С маяком'
 							: false,
 					has_blocking:
-						formData.work_type === 'Установка'
+						formData.work_type === 'Установка' && vehicle.gps_price_code
 							? vehicle.blocking === 'С блокировкой'
 							: false,
 					extra_sensors:
@@ -708,6 +734,8 @@ export default function CreateRequestModal({
 				})
 			}
 
+			const requestPricePayload = buildRequestPricePayload()
+
 			const requestRes = await fetch('http://127.0.0.1:8000/requests', {
 				method: 'POST',
 				headers,
@@ -718,6 +746,7 @@ export default function CreateRequestModal({
 						? `${formData.work_date}T00:00:00`
 						: null,
 					vehicles: finalVehicles,
+					price: requestPricePayload,
 				}),
 			})
 
@@ -802,7 +831,7 @@ export default function CreateRequestModal({
 						? Number(vehicle.beacon_subscription_months || 0)
 						: 0,
 				has_blocking:
-					workType === 'INSTALLATION'
+					workType === 'INSTALLATION' && vehicle.gps_price_code
 						? vehicle.blocking === 'С блокировкой'
 						: false,
 				extra_sensors:
@@ -822,6 +851,112 @@ export default function CreateRequestModal({
 					quantity: line.quantity === '' ? 1 : Number(line.quantity),
 					unit_price: line.unit_price === '' ? 0 : Number(line.unit_price),
 				})),
+		}
+	}
+
+	const getPriceLineUiKey = (line, index) => {
+		return `${line.line_key || line.label || 'line'}-${index}`
+	}
+
+	const buildDisplayedPriceCalculation = () => {
+		const sourceLines = Array.isArray(priceCalculation.lines)
+			? priceCalculation.lines
+			: []
+
+		const lines = sourceLines.map((line, index) => {
+			const uiKey = getPriceLineUiKey(line, index)
+			const overrideValue = priceLineOverrides[uiKey]
+
+			if (overrideValue === undefined) {
+				return line
+			}
+
+			const quantity = Number(line.quantity || 1)
+			const unitPrice = Number(overrideValue || 0)
+
+			return {
+				...line,
+				unit_price: unitPrice,
+				total_price: quantity * unitPrice,
+				source: 'manual',
+				is_manual: true,
+			}
+		})
+
+		return {
+			...priceCalculation,
+			lines,
+			total_price: lines.reduce(
+				(sum, line) => sum + Number(line.total_price || 0),
+				0,
+			),
+		}
+	}
+
+	const startEditPriceLine = (line, index) => {
+		const uiKey = getPriceLineUiKey(line, index)
+
+		setEditingPriceLineKey(uiKey)
+		setEditingPriceLineValue(
+			priceLineOverrides[uiKey] !== undefined
+				? priceLineOverrides[uiKey]
+				: line.unit_price,
+		)
+	}
+
+	const cancelEditPriceLine = () => {
+		setEditingPriceLineKey(null)
+		setEditingPriceLineValue('')
+	}
+
+	const saveEditPriceLine = () => {
+		const value = Number(editingPriceLineValue)
+
+		if (Number.isNaN(value) || value < 0) {
+			setError('Цена строки должна быть числом не меньше 0')
+			return
+		}
+
+		setPriceLineOverrides(prev => ({
+			...prev,
+			[editingPriceLineKey]: value,
+		}))
+
+		cancelEditPriceLine()
+	}
+
+	const resetEditPriceLine = uiKey => {
+		setPriceLineOverrides(prev => {
+			const next = { ...prev }
+			delete next[uiKey]
+			return next
+		})
+
+		if (editingPriceLineKey === uiKey) {
+			cancelEditPriceLine()
+		}
+	}
+
+	const buildRequestPricePayload = () => {
+		const displayedCalculation = buildDisplayedPriceCalculation()
+		const lines = Array.isArray(displayedCalculation.lines)
+			? displayedCalculation.lines
+			: []
+
+		return {
+			total_price: Number(displayedCalculation.total_price || 0),
+			lines: lines.map(line => ({
+				line_key: line.line_key || null,
+				vehicle_index: line.vehicle_index || null,
+				code: line.code || null,
+				label: line.label || 'Строка расчёта',
+				quantity: Number(line.quantity || 1),
+				unit: line.unit || 'шт',
+				unit_price: Number(line.unit_price || 0),
+				total_price: Number(line.total_price || 0),
+				source: line.source || 'base',
+				is_manual: line.is_manual || line.source === 'manual',
+			})),
 		}
 	}
 
@@ -879,6 +1014,8 @@ export default function CreateRequestModal({
 			gps_price_code: firstGpsCode,
 		}
 	}
+
+	const displayedPriceCalculation = buildDisplayedPriceCalculation()
 
 	return (
 		<div className='modal-overlay open'>
@@ -1432,32 +1569,36 @@ export default function CreateRequestModal({
 																	</label>
 																)}
 
-																<div className='request-option-group'>
-																	<div className='request-radio-list vertical'>
-																		{['С блокировкой', 'Без блокировки'].map(
-																			value => (
-																				<label
-																					key={value}
-																					className={`request-radio-pill ${vehicle.blocking === value ? 'active' : ''}`}
-																				>
-																					<input
-																						type='radio'
-																						value={value}
-																						checked={vehicle.blocking === value}
-																						onChange={e =>
-																							handleVehicleChange(
-																								vehicle.local_id,
-																								'blocking',
-																								e.target.value,
-																							)
-																						}
-																					/>
-																					{value}
-																				</label>
-																			),
-																		)}
+																{vehicle.gps_price_code && (
+																	<div className='request-option-group'>
+																		<div className='request-radio-list vertical'>
+																			{['С блокировкой', 'Без блокировки'].map(
+																				value => (
+																					<label
+																						key={value}
+																						className={`request-radio-pill ${vehicle.blocking === value ? 'active' : ''}`}
+																					>
+																						<input
+																							type='radio'
+																							value={value}
+																							checked={
+																								vehicle.blocking === value
+																							}
+																							onChange={e =>
+																								handleVehicleChange(
+																									vehicle.local_id,
+																									'blocking',
+																									e.target.value,
+																								)
+																							}
+																						/>
+																						{value}
+																					</label>
+																				),
+																			)}
+																		</div>
 																	</div>
-																</div>
+																)}
 
 																<div className='request-option-group'>
 																	<div className='request-radio-list vertical'>
@@ -1642,13 +1783,13 @@ export default function CreateRequestModal({
 
 								{priceLoading ? (
 									<div className='request-price-empty'>Расчёт...</div>
-								) : priceCalculation.lines.length === 0 ? (
+								) : displayedPriceCalculation.lines.length === 0 ? (
 									<div className='request-price-empty'>
 										Нет строк для расчёта
 									</div>
 								) : (
 									<div className='request-price-lines'>
-										{priceCalculation.lines.map((line, index) => (
+										{displayedPriceCalculation.lines.map((line, index) => (
 											<div
 												key={line.line_key || index}
 												className='request-price-line'
@@ -1668,8 +1809,69 @@ export default function CreateRequestModal({
 													</div>
 												</div>
 
-												<div className='request-price-line-total'>
-													{formatMoney(line.total_price)}
+												<div className='request-price-line-actions'>
+													{editingPriceLineKey ===
+													getPriceLineUiKey(line, index) ? (
+														<>
+															<input
+																className='request-price-edit-input'
+																type='number'
+																min='0'
+																value={editingPriceLineValue}
+																onChange={e =>
+																	setEditingPriceLineValue(e.target.value)
+																}
+															/>
+
+															<button
+																type='button'
+																className='request-price-save-line-btn'
+																onClick={saveEditPriceLine}
+															>
+																✓
+															</button>
+
+															<button
+																type='button'
+																className='request-price-cancel-line-btn'
+																onClick={cancelEditPriceLine}
+															>
+																×
+															</button>
+														</>
+													) : (
+														<>
+															<div className='request-price-line-total'>
+																{formatMoney(line.total_price)}
+															</div>
+
+															<button
+																type='button'
+																className='request-price-edit-line-btn'
+																onClick={() => startEditPriceLine(line, index)}
+																title='Изменить цену только для этой заявки'
+															>
+																✎
+															</button>
+
+															{priceLineOverrides[
+																getPriceLineUiKey(line, index)
+															] !== undefined && (
+																<button
+																	type='button'
+																	className='request-price-reset-line-btn'
+																	onClick={() =>
+																		resetEditPriceLine(
+																			getPriceLineUiKey(line, index),
+																		)
+																	}
+																	title='Вернуть исходную цену'
+																>
+																	↺
+																</button>
+															)}
+														</>
+													)}
 												</div>
 											</div>
 										))}
@@ -1750,12 +1952,13 @@ export default function CreateRequestModal({
 
 								<div className='request-price-total'>
 									<span>Итого</span>
-									<strong>{formatMoney(priceCalculation.total_price)}</strong>
+									<strong>
+										{formatMoney(displayedPriceCalculation.total_price)}
+									</strong>
 								</div>
 
 								<div className='request-price-note'>
-									Расчёт пока не сохраняется в заявке. Сохранение цены будет
-									следующим этапом.
+									Расчёт будет сохранён вместе с заявкой.
 								</div>
 							</aside>
 						)}

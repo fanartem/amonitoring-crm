@@ -10,6 +10,7 @@ class RequestCreate(BaseModel):
     address: str | None = None
     scheduled_at: datetime | None = None
     vehicles: list[RequestVehicleInput]
+    price: RequestPriceInput | None = None
 
 class RequestUpdate(BaseModel):
     visit_type: str | None = None
@@ -200,3 +201,20 @@ class CalculateRequestPrice(BaseModel):
 
     # Ручные строки калькулятора
     manual_lines: list[CalculateManualLine] = []
+
+class RequestPriceLineInput(BaseModel):
+    line_key: Optional[str] = None
+    vehicle_index: Optional[int] = None
+    code: Optional[str] = None
+    label: str
+    quantity: float = 1
+    unit: str = "шт"
+    unit_price: float = 0
+    total_price: float = 0
+    source: str = "base"
+    is_manual: bool = False
+
+
+class RequestPriceInput(BaseModel):
+    total_price: float = 0
+    lines: list[RequestPriceLineInput] = []

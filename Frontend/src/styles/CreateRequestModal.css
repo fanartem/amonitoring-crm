@@ -560,6 +560,81 @@
   font-weight: 600;
 }
 
+.request-price-line-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.request-price-edit-line-btn,
+.request-price-reset-line-btn,
+.request-price-save-line-btn,
+.request-price-cancel-line-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.request-price-edit-line-btn {
+  background: #f1f8e9;
+  color: #558b2f;
+}
+
+.request-price-edit-line-btn:hover {
+  background: #dcedc8;
+}
+
+.request-price-reset-line-btn {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.request-price-reset-line-btn:hover {
+  background: #bbdefb;
+}
+
+.request-price-save-line-btn {
+  background: #5e9424;
+  color: #fff;
+}
+
+.request-price-save-line-btn:hover {
+  background: #4d7a1d;
+}
+
+.request-price-cancel-line-btn {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.request-price-cancel-line-btn:hover {
+  background: #ffcdd2;
+}
+
+.request-price-edit-input {
+  width: 90px;
+  height: 28px;
+  border: 1px solid #d8d8d8;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.request-price-edit-input:focus {
+  border-color: #5e9424;
+  box-shadow: 0 0 0 2px rgba(94, 148, 36, 0.12);
+}
+
 @media (max-width: 1150px) {
   .request-modal-main-layout {
     grid-template-columns: 1fr;
