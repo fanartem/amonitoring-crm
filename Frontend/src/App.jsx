@@ -13,27 +13,50 @@ import Warehouse from './components/Warehouse'
 import Settings from './components/Settings'
 import Prices from './components/Prices'
 
+const isTokenExpired = token => {
+	try {
+		if (!token) return true
+
+		const payload = JSON.parse(atob(token.split('.')[1]))
+
+		if (!payload.exp) return true
+
+		const nowInSeconds = Date.now() / 1000
+
+		return payload.exp < nowInSeconds
+	} catch {
+		return true
+	}
+}
+
+const clearAuthData = () => {
+	localStorage.removeItem('access_token')
+	localStorage.removeItem('user_data')
+}
+
 export default function App() {
 	const [isAuthenticated, setIsAuthenticated] = useState(false)
 	const [isLoading, setIsLoading] = useState(true)
 
-	// Проверяем наличие токена при первой загрузке приложения
 	useEffect(() => {
 		const token = localStorage.getItem('access_token')
-		if (token) {
+
+		if (!token || isTokenExpired(token)) {
+			clearAuthData()
+			setIsAuthenticated(false)
+		} else {
 			setIsAuthenticated(true)
 		}
+
 		setIsLoading(false)
 	}, [])
 
 	if (isLoading) return null
 
-	// Если пользователь НЕ авторизован — показываем только экран входа
 	if (!isAuthenticated) {
 		return <Entrance />
 	}
 
-	// Если авторизован — рендерим полный интерфейс CRM
 	return (
 		<div className='crm-app'>
 			<Header />
@@ -46,19 +69,26 @@ export default function App() {
 						className='content-section active'
 						style={{ display: 'block', overflowY: 'auto', width: '100%' }}
 					>
-						{/* РЕГИСТРАТОР ПУТЕЙ */}
 						<Routes>
+							<Route path='/' element={<Navigate to='/requests' replace />} />
+							<Route
+								path='/login'
+								element={<Navigate to='/requests' replace />}
+							/>
+
+							{/* Home временно оставляем, но напрямую на него не кидаем */}
+							<Route path='/home' element={<Home />} />
+
 							<Route path='/warehouse' element={<Warehouse />} />
 							<Route path='/trash' element={<Trash />} />
 							<Route path='/approvals' element={<Approvals />} />
-							<Route path='/' element={<Home />} />
 							<Route path='/clients' element={<Clients />} />
 							<Route path='/requests' element={<Requests />} />
 							<Route path='/employees' element={<Employees />} />
 							<Route path='/settings' element={<Settings />} />
-              <Route path='/prices' element={<Prices />} />
-							{/* Если ввели неизвестный адрес — кидаем на главную */}
-							<Route path='*' element={<Navigate to='/' />} />
+							<Route path='/prices' element={<Prices />} />
+
+							<Route path='*' element={<Navigate to='/requests' replace />} />
 						</Routes>
 					</section>
 				</main>

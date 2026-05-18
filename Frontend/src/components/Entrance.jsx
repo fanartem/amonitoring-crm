@@ -69,7 +69,7 @@ export default function Entrance() {
 			localStorage.setItem('access_token', data.access_token)
 			localStorage.setItem('user_data', JSON.stringify(data.user))
 
-			window.location.href = '/'
+			window.location.href = '/requests'
 		} catch (err) {
 			setError(err.message)
 		}

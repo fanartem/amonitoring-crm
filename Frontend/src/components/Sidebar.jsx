@@ -11,7 +11,7 @@ export default function Sidebar() {
 	const handleLogout = () => {
 		localStorage.removeItem('access_token')
 		localStorage.removeItem('user_data')
-		window.location.href = '/login'
+		window.location.href = '/requests'
 	}
 
 	const canViewPrices = ['ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(
