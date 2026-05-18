@@ -148,3 +148,55 @@ class ClientPriceOverrideItem(BaseModel):
 
 class ClientPriceOverrideUpdate(BaseModel):
     prices: list[ClientPriceOverrideItem]
+
+class CalculateExtraSensor(BaseModel):
+    name: str
+    price: float = 0
+
+
+class CalculateManualLine(BaseModel):
+    label: str
+    quantity: float = 1
+    unit_price: float = 0
+
+
+class CalculateRequestVehicle(BaseModel):
+    # GPS может быть не выбран, потому что бывают заявки "только маяк"
+    gps_price_code: Optional[str] = None
+
+    # Подписка на трекер отдельной строкой
+    tracker_subscription_months: int = 1
+
+    # Маяк
+    has_beacon: bool = False
+
+    # Подписка на маяк отдельной строкой
+    beacon_subscription_months: int = 1
+
+    # Блокировка
+    has_blocking: bool = False
+
+    # Дополнительные датчики конкретного авто
+    extra_sensors: list[CalculateExtraSensor] = []
+
+
+class CalculateRequestPrice(BaseModel):
+    client_id: Optional[int] = None
+
+    work_type: str
+    visit_type: str
+
+    # Если ON_SITE, можно выбрать тип выезда
+    # ON_SITE_CITY / ON_SITE_OUTSIDE_CITY / BUSINESS_TRIP_KM
+    visit_price_code: Optional[str] = None
+
+    # Для BUSINESS_TRIP_KM
+    visit_km: Optional[float] = None
+
+    # Для диагностики
+    has_power_restore: bool = False
+
+    vehicles: list[CalculateRequestVehicle] = []
+
+    # Ручные строки калькулятора
+    manual_lines: list[CalculateManualLine] = []

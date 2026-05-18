@@ -5,6 +5,7 @@ from app.schemas import (
     PriceItemCreate,
     PriceItemUpdate,
     ClientPriceOverrideUpdate,
+    CalculateRequestPrice,
 )
 
 router = APIRouter(prefix="/prices", tags=["Prices"])
@@ -29,6 +30,107 @@ def require_price_manage(current_user: dict):
             detail="Недостаточно прав для управления ценами"
         )
 
+def money(value) -> float:
+    if value is None:
+        return 0
+
+    return float(value)
+
+
+def add_price_line(
+    lines: list,
+    *,
+    code: str | None,
+    label: str,
+    quantity: float,
+    unit_price: float,
+    unit: str = "шт",
+    source: str = "manual",
+    vehicle_index: int | None = None,
+):
+    quantity = float(quantity or 0)
+    unit_price = float(unit_price or 0)
+    total_price = quantity * unit_price
+
+    if quantity <= 0:
+        return
+
+    lines.append({
+        "line_key": f"{vehicle_index if vehicle_index is not None else 'request'}:{code or label}",
+        "vehicle_index": vehicle_index,
+        "code": code,
+        "label": label,
+        "quantity": quantity,
+        "unit": unit,
+        "unit_price": unit_price,
+        "total_price": total_price,
+        "source": source,
+    })
+
+
+def get_effective_price(cursor, price_code: str, client_id: int | None):
+    """
+    Возвращает цену по code:
+    - если client_id есть и для клиента задан override — берём client_price
+    - иначе default_price
+    """
+    if client_id:
+        cursor.execute(
+            """
+            SELECT
+                pi.id,
+                pi.code,
+                pi.name,
+                pi.category,
+                pi.default_price,
+                pi.unit,
+                pi.is_active,
+                cpo.price AS client_price
+            FROM price_items pi
+            LEFT JOIN client_price_overrides cpo
+                ON pi.id = cpo.price_item_id
+                AND cpo.client_id = %s
+            WHERE pi.code = %s
+              AND pi.is_active = 1
+            """,
+            (client_id, price_code)
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT
+                pi.id,
+                pi.code,
+                pi.name,
+                pi.category,
+                pi.default_price,
+                pi.unit,
+                pi.is_active,
+                NULL AS client_price
+            FROM price_items pi
+            WHERE pi.code = %s
+              AND pi.is_active = 1
+            """,
+            (price_code,)
+        )
+
+    item = cursor.fetchone()
+
+    if not item:
+        return None
+
+    has_override = item["client_price"] is not None
+    effective_price = money(item["client_price"] if has_override else item["default_price"])
+
+    return {
+        "id": item["id"],
+        "code": item["code"],
+        "name": item["name"],
+        "category": item["category"],
+        "unit": item["unit"] or "шт",
+        "unit_price": effective_price,
+        "source": "client_override" if has_override else "base",
+    }
 
 @router.get("")
 def get_price_items(
@@ -636,5 +738,334 @@ def delete_client_price_override(
     except Exception as e:
         connection.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.post("/calculate-request")
+def calculate_request_price(
+    data: CalculateRequestPrice,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Рассчитать стоимость черновика заявки.
+    Ничего не сохраняет в БД.
+    Доступ: ADMIN, MANAGER, ACCOUNTANT.
+    """
+    require_price_read(current_user)
+
+    work_type = data.work_type.upper()
+    visit_type = data.visit_type.upper()
+
+    allowed_work_types = ["INSTALLATION", "REMOVAL", "DIAGNOSTIC"]
+    allowed_visit_types = ["IN_OFFICE", "ON_SITE"]
+
+    if work_type not in allowed_work_types:
+        raise HTTPException(status_code=400, detail="Некорректный тип работ")
+
+    if visit_type not in allowed_visit_types:
+        raise HTTPException(status_code=400, detail="Некорректный формат работ")
+
+    lines = []
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            # Проверяем клиента, если client_id передан
+            if data.client_id:
+                cursor.execute(
+                    """
+                    SELECT id, is_deleted
+                    FROM clients
+                    WHERE id = %s
+                    """,
+                    (data.client_id,)
+                )
+                client = cursor.fetchone()
+
+                if not client:
+                    raise HTTPException(status_code=404, detail="Клиент не найден")
+
+                if client["is_deleted"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Клиент находится в корзине"
+                    )
+
+            # Транспортные расходы
+            if visit_type == "ON_SITE":
+                visit_code = data.visit_price_code or "ON_SITE_CITY"
+
+                if visit_code == "BUSINESS_TRIP_KM":
+                    km = float(data.visit_km or 0)
+
+                    if km < 0:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Километраж не может быть отрицательным"
+                        )
+
+                    item = get_effective_price(cursor, "BUSINESS_TRIP_KM", data.client_id)
+
+                    if item:
+                        add_price_line(
+                            lines,
+                            code=item["code"],
+                            label=item["name"],
+                            quantity=km,
+                            unit_price=item["unit_price"],
+                            unit=item["unit"],
+                            source=item["source"],
+                            vehicle_index=None,
+                        )
+                else:
+                    item = get_effective_price(cursor, visit_code, data.client_id)
+
+                    if item:
+                        add_price_line(
+                            lines,
+                            code=item["code"],
+                            label=item["name"],
+                            quantity=1,
+                            unit_price=item["unit_price"],
+                            unit=item["unit"],
+                            source=item["source"],
+                            vehicle_index=None,
+                        )
+
+            # Установка
+            if work_type == "INSTALLATION":
+                for index, vehicle in enumerate(data.vehicles, start=1):
+                    # GPS-трекер необязателен: бывают заявки только с маяком
+                    if vehicle.gps_price_code:
+                        gps_item = get_effective_price(
+                            cursor,
+                            vehicle.gps_price_code,
+                            data.client_id
+                        )
+
+                        if not gps_item:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Цена GPS '{vehicle.gps_price_code}' не найдена или отключена"
+                            )
+
+                        add_price_line(
+                            lines,
+                            code=gps_item["code"],
+                            label=f"Авто {index}: {gps_item['name']}",
+                            quantity=1,
+                            unit_price=gps_item["unit_price"],
+                            unit=gps_item["unit"],
+                            source=gps_item["source"],
+                            vehicle_index=index,
+                        )
+
+                        # Подписка трекера отдельной строкой
+                        tracker_months = int(vehicle.tracker_subscription_months or 0)
+
+                        if tracker_months < 0:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Количество месяцев подписки трекера не может быть отрицательным"
+                            )
+
+                        if tracker_months > 0:
+                            subscription_item = get_effective_price(
+                                cursor,
+                                "SUBSCRIPTION_TRACKER_MONTH",
+                                data.client_id
+                            )
+
+                            if subscription_item:
+                                add_price_line(
+                                    lines,
+                                    code=subscription_item["code"],
+                                    label=f"Авто {index}: {subscription_item['name']}",
+                                    quantity=tracker_months,
+                                    unit_price=subscription_item["unit_price"],
+                                    unit=subscription_item["unit"],
+                                    source=subscription_item["source"],
+                                    vehicle_index=index,
+                                )
+
+                    # Маяк + подписка маяка
+                    if vehicle.has_beacon:
+                        beacon_item = get_effective_price(
+                            cursor,
+                            "BEACON_TAT100",
+                            data.client_id
+                        )
+
+                        if beacon_item:
+                            add_price_line(
+                                lines,
+                                code=beacon_item["code"],
+                                label=f"Авто {index}: {beacon_item['name']}",
+                                quantity=1,
+                                unit_price=beacon_item["unit_price"],
+                                unit=beacon_item["unit"],
+                                source=beacon_item["source"],
+                                vehicle_index=index,
+                            )
+
+                        beacon_months = int(vehicle.beacon_subscription_months or 0)
+
+                        if beacon_months < 0:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Количество месяцев подписки маяка не может быть отрицательным"
+                            )
+
+                        if beacon_months > 0:
+                            beacon_subscription_item = get_effective_price(
+                                cursor,
+                                "SUBSCRIPTION_BEACON_MONTH",
+                                data.client_id
+                            )
+
+                            if beacon_subscription_item:
+                                add_price_line(
+                                    lines,
+                                    code=beacon_subscription_item["code"],
+                                    label=f"Авто {index}: {beacon_subscription_item['name']}",
+                                    quantity=beacon_months,
+                                    unit_price=beacon_subscription_item["unit_price"],
+                                    unit=beacon_subscription_item["unit"],
+                                    source=beacon_subscription_item["source"],
+                                    vehicle_index=index,
+                                )
+
+                    # Блокировка
+                    if vehicle.has_blocking:
+                        blocking_item = get_effective_price(
+                            cursor,
+                            "ENGINE_BLOCKING_INSTALL",
+                            data.client_id
+                        )
+
+                        if blocking_item:
+                            add_price_line(
+                                lines,
+                                code=blocking_item["code"],
+                                label=f"Авто {index}: {blocking_item['name']}",
+                                quantity=1,
+                                unit_price=blocking_item["unit_price"],
+                                unit=blocking_item["unit"],
+                                source=blocking_item["source"],
+                                vehicle_index=index,
+                            )
+
+                    # Дополнительные датчики из формы авто
+                    for sensor in vehicle.extra_sensors:
+                        sensor_name = sensor.name.strip()
+
+                        if not sensor_name:
+                            continue
+
+                        sensor_price = float(sensor.price or 0)
+
+                        if sensor_price < 0:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Цена дополнительного датчика не может быть отрицательной"
+                            )
+
+                        add_price_line(
+                            lines,
+                            code=None,
+                            label=f"Авто {index}: {sensor_name}",
+                            quantity=1,
+                            unit_price=sensor_price,
+                            unit="шт",
+                            source="extra_sensor",
+                            vehicle_index=index,
+                        )
+
+            # Снятие
+            elif work_type == "REMOVAL":
+                removal_item = get_effective_price(
+                    cursor,
+                    "REMOVAL_BASE",
+                    data.client_id
+                )
+
+                vehicle_count = max(len(data.vehicles), 1)
+
+                if removal_item:
+                    for index in range(1, vehicle_count + 1):
+                        add_price_line(
+                            lines,
+                            code=removal_item["code"],
+                            label=f"Авто {index}: {removal_item['name']}",
+                            quantity=1,
+                            unit_price=removal_item["unit_price"],
+                            unit=removal_item["unit"],
+                            source=removal_item["source"],
+                            vehicle_index=index,
+                        )
+
+            # Диагностика
+            elif work_type == "DIAGNOSTIC":
+                if data.has_power_restore:
+                    restore_item = get_effective_price(
+                        cursor,
+                        "POWER_RESTORE",
+                        data.client_id
+                    )
+
+                    if restore_item:
+                        add_price_line(
+                            lines,
+                            code=restore_item["code"],
+                            label=restore_item["name"],
+                            quantity=1,
+                            unit_price=restore_item["unit_price"],
+                            unit=restore_item["unit"],
+                            source=restore_item["source"],
+                            vehicle_index=None,
+                        )
+
+            # Ручные строки калькулятора
+            for manual_line in data.manual_lines:
+                label = manual_line.label.strip()
+
+                if not label:
+                    continue
+
+                quantity = float(manual_line.quantity or 0)
+                unit_price = float(manual_line.unit_price or 0)
+
+                if quantity <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Количество в ручной строке должно быть больше 0"
+                    )
+
+                if unit_price < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Цена в ручной строке не может быть отрицательной"
+                    )
+
+                add_price_line(
+                    lines,
+                    code=None,
+                    label=label,
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    unit="шт",
+                    source="manual",
+                    vehicle_index=None,
+                )
+
+            total_price = sum(line["total_price"] for line in lines)
+
+            return {
+                "total_price": total_price,
+                "lines": lines,
+                "currency": "KZT",
+            }
+
     finally:
         connection.close()
