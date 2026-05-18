@@ -723,13 +723,19 @@ export default function Prices() {
 
 							<label className='prices-field'>
 								<span>Категория</span>
-								<input
+								<select
 									className='prices-input'
 									name='category'
 									value={baseForm.category}
 									onChange={handleBaseFormChange}
-									placeholder='GPS_TRACKER'
-								/>
+								>
+									<option value=''>— выберите категорию —</option>
+									{Object.entries(categoryLabels).map(([key, label]) => (
+										<option key={key} value={key}>
+											{label}
+										</option>
+									))}
+								</select>
 							</label>
 
 							<label className='prices-field'>

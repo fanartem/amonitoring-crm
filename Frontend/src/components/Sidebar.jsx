@@ -21,12 +21,19 @@ export default function Sidebar() {
 	return (
 		<nav className='sidebar'>
 			<div className='sidebar-top'>
-				<NavLink
+				{/* <NavLink
 					to='/'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 					end
 				>
 					Главная
+				</NavLink> */}
+
+				<NavLink
+					to='/requests'
+					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+				>
+					Заявки
 				</NavLink>
 
 				<NavLink
@@ -36,12 +43,6 @@ export default function Sidebar() {
 					Клиенты
 				</NavLink>
 
-				<NavLink
-					to='/requests'
-					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-				>
-					Заявки
-				</NavLink>
 
 				{canViewPrices && (
 					<NavLink
