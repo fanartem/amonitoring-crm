@@ -47,6 +47,9 @@ export default function Clients() {
 
 	const userRole = getUserRole()
 
+	const canViewRequestPrice =
+		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
+
 	useEffect(() => {
 		fetchClients()
 		fetchTechnicians()
@@ -372,6 +375,14 @@ export default function Clients() {
 			' ' +
 			d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 		)
+	}
+
+	const formatMoney = value => {
+		const number = Number(value || 0)
+
+		if (Number.isNaN(number)) return `${value} тг`
+
+		return `${number.toLocaleString('ru-RU')} тг`
 	}
 
 	return (
@@ -725,30 +736,39 @@ export default function Clients() {
 								style={{ position: 'relative', cursor: 'default' }}
 							>
 								<div className='card-column'>
-                                    <div className='card-item'>
-                                        <span className='card-label'>Статус</span>
-                                        <div
-                                            className={`status-badge ${statusClasses[req.status] || 'status-new'}`}
-                                        >
-                                            {statusLabels[req.status] || req.status}
-                                        </div>
-                                    </div>
+									<div className='card-item'>
+										<span className='card-label'>Статус</span>
+										<div
+											className={`status-badge ${statusClasses[req.status] || 'status-new'}`}
+										>
+											{statusLabels[req.status] || req.status}
+										</div>
+									</div>
 
-                                    {/* --- НОВОЕ: Вид работы прямо под статусом --- */}
-                                    <div className='card-item' style={{ marginTop: '8px' }}>
-                                        <span className='card-label'>Вид работы</span>
-                                        <span style={{
-                                            fontSize: '15px', 
-                                            fontWeight: '600', 
-                                            color: req.work_type === 'INSTALLATION' ? '#1565c0' : req.work_type === 'REMOVAL' ? '#c62828' : '#e65100'
-                                        }}>
+									{/* --- НОВОЕ: Вид работы прямо под статусом --- */}
+									<div className='card-item' style={{ marginTop: '8px' }}>
+										<span className='card-label'>Вид работы</span>
+										<span
+											style={{
+												fontSize: '15px',
+												fontWeight: '600',
+												color:
+													req.work_type === 'INSTALLATION'
+														? '#1565c0'
+														: req.work_type === 'REMOVAL'
+															? '#c62828'
+															: '#e65100',
+											}}
+										>
+											{req.work_type === 'INSTALLATION'
+												? 'Установка'
+												: req.work_type === 'REMOVAL'
+													? 'Снятие'
+													: 'Диагностика'}
+										</span>
+									</div>
 
-											
-                                            {req.work_type === 'INSTALLATION' ? 'Установка' : req.work_type === 'REMOVAL' ? 'Снятие' : 'Диагностика'}
-                                        </span>
-                                    </div>
-
-                                    {req.assigned_to && (
+									{req.assigned_to && (
 										<div className='card-item' style={{ marginTop: '5px' }}>
 											<span className='card-label'>Исполнитель</span>
 											<span
@@ -819,30 +839,32 @@ export default function Clients() {
 											)}
 										</div>
 									</div>
-								<div className='card-item'>
-                                        <span className='card-label'>Формат</span>
-                                        <span className='card-value'>
-                                            {req.visit_type === 'ON_SITE' ? (
-                                                <>
-                                                    Выезд к клиенту
-                                                    {/* --- НОВОЕ: Вывод адреса при выезде --- */}
-                                                    {req.address && (
-                                                        <div style={{ 
-                                                            fontSize: '12px', 
-                                                            color: '#666', 
-                                                            marginTop: '3px', 
-                                                            fontWeight: 'normal', 
-                                                            lineHeight: '1.2' 
-                                                        }}>
-                                                            📍 {req.address}
-                                                        </div>
-                                                    )}
-                                                </>
-                                            ) : (
-                                                'В офисе'
-                                            )}
-                                        </span>
-                                    </div>
+									<div className='card-item'>
+										<span className='card-label'>Формат</span>
+										<span className='card-value'>
+											{req.visit_type === 'ON_SITE' ? (
+												<>
+													Выезд к клиенту
+													{/* --- НОВОЕ: Вывод адреса при выезде --- */}
+													{req.address && (
+														<div
+															style={{
+																fontSize: '12px',
+																color: '#666',
+																marginTop: '3px',
+																fontWeight: 'normal',
+																lineHeight: '1.2',
+															}}
+														>
+															📍 {req.address}
+														</div>
+													)}
+												</>
+											) : (
+												'В офисе'
+											)}
+										</span>
+									</div>
 								</div>
 
 								<div className='card-column'>
@@ -852,6 +874,16 @@ export default function Clients() {
 											{formatDate(req.created_at)}
 										</span>
 									</div>
+
+									{canViewRequestPrice && (
+										<div className='card-item request-card-price-box'>
+											<span className='card-label'>Стоимость</span>
+											<span className='request-card-price-value'>
+												{formatMoney(req.total_price)}
+											</span>
+										</div>
+									)}
+									
 									<div className='card-item'>
 										<span className='card-label'>Оплата</span>
 										<div

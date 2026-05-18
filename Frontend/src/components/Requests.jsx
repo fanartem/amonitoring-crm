@@ -43,6 +43,9 @@ export default function Requests() {
 	})
 	const userRole = getUserRole()
 
+	const canViewRequestPrice =
+		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
+
 	useEffect(() => {
 		fetchRequests()
 		fetchTechnicians()
@@ -212,6 +215,14 @@ export default function Requests() {
 			' ' +
 			d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 		)
+	}
+
+	const formatMoney = value => {
+		const number = Number(value || 0)
+
+		if (Number.isNaN(number)) return `${value} тг`
+
+		return `${number.toLocaleString('ru-RU')} тг`
 	}
 
 	const escapeCsvValue = value => {
@@ -390,6 +401,7 @@ export default function Requests() {
 				['Компания', req.company_name || '—'],
 				['Телефон', req.phone || '—'],
 				['Статус оплаты', Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'],
+				['Стоимость заявки', formatMoney(req.total_price)],
 				[],
 				['Автомобили в заявке', ''],
 			]
@@ -661,6 +673,14 @@ export default function Requests() {
 								<span className='card-label'>Дата</span>
 								<span className='card-value'>{formatDate(req.created_at)}</span>
 							</div>
+							{canViewRequestPrice && (
+								<div className='card-item request-card-price-box'>
+									<span className='card-label'>Стоимость</span>
+									<span className='request-card-price-value'>
+										{formatMoney(req.total_price)}
+									</span>
+								</div>
+							)}
 							<div className='card-item'>
 								<span className='card-label'>Оплата</span>
 								<div
@@ -693,7 +713,6 @@ export default function Requests() {
 							</div>
 						</div>
 
-						{/* --- ИСПРАВЛЕННАЯ ВЕРСТКА ДЛЯ КНОПОК --- */}
 						{/* --- ВЕРХНИЙ ПРАВЫЙ УГОЛ: Детали и меню --- */}
 						<div
 							className='card-actions-wrapper'

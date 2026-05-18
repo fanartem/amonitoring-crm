@@ -760,6 +760,32 @@
   padding: 8px 0;
 }
 
+.request-card-price-box {
+  margin-top: 8px;
+}
+
+.request-card-price-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: fit-content;
+  min-width: 115px;
+  max-width: max-content;
+
+  margin-top: 3px;
+  color: #2e5902;
+  background: #f1f8e9;
+  border: 1px solid #c8e6c9;
+  border-radius: 10px;
+  padding: 6px 11px;
+  font-size: 18px;
+  font-weight: 900;
+  white-space: nowrap;
+  box-sizing: border-box;
+  align-self: flex-start;
+}
+
 @media (max-width: 640px) {
   .request-vehicle-header {
     flex-direction: column;

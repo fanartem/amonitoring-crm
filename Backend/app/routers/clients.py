@@ -389,7 +389,8 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
                     r.created_at,
                     r.assigned_to,
                     r.is_paid,
-                    r.paid_at
+                    r.paid_at,
+                    r.total_price
                 FROM requests r
                 WHERE r.client_id = %s
                   AND r.is_deleted = 0
