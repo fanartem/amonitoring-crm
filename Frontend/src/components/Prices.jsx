@@ -24,7 +24,7 @@ const getUserRole = () => {
 }
 
 const categoryLabels = {
-	GPS_TRACKER: 'GPS-трекеры',
+	GPS_TRACKER: 'Трекеры',
 	BEACON: 'Маяки',
 	SUBSCRIPTION: 'Абонентская плата',
 	INSTALLATION_SERVICE: 'Установка',
