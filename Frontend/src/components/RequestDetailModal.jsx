@@ -343,12 +343,30 @@ export default function RequestDetailModal({
 		}
 
 		if (h.action === 'EQUIPMENT_ATTACHED') {
-			const eq = h.new_value ? h.new_value.replace(/, quantity=\d+/, '') : ''
+			const raw = h.new_value || ''
+			const vehicleMatch = raw.match(/,\s*vehicle=(.+)$/)
+			const vehicle = vehicleMatch ? vehicleMatch[1].trim() : null
+			const eq = raw
+				.replace(/,\s*vehicle=.+$/, '')
+				.replace(/, quantity=\d+/, '')
+				.trim()
+			if (vehicle) {
+				return `Устройство привязано на машину (${vehicle}): ${eq}`
+			}
 			return `Привязано оборудование: ${eq}`
 		}
 
 		if (h.action === 'EQUIPMENT_DETACHED') {
-			const eq = h.old_value ? h.old_value.replace(/, quantity=\d+/, '') : ''
+			const raw = h.old_value || ''
+			const vehicleMatch = raw.match(/,\s*vehicle=(.+)$/)
+			const vehicle = vehicleMatch ? vehicleMatch[1].trim() : null
+			const eq = raw
+				.replace(/,\s*vehicle=.+$/, '')
+				.replace(/, quantity=\d+/, '')
+				.trim()
+			if (vehicle) {
+				return `Устройство отвязано от машины (${vehicle}): ${eq}`
+			}
 			return `Отвязано оборудование: ${eq}`
 		}
 

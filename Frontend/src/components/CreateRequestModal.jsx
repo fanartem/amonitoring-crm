@@ -90,6 +90,7 @@ export default function CreateRequestModal({
 		client_type: 'Физ. лицо',
 		client_name: '',
 		phone: '',
+		email: '',
 		city: '',
 		company_name: '',
 
@@ -113,6 +114,7 @@ export default function CreateRequestModal({
 		client_type: 'Физ. лицо',
 		client_name: '',
 		phone: '',
+		email: '',
 		city: '',
 		company_name: '',
 
@@ -319,6 +321,7 @@ export default function CreateRequestModal({
 				client_type: mapTypeToUI(client.type || client.client_type),
 				client_name: client.name || '',
 				phone: client.phone || '',
+				email: client.email || '',
 				company_name: client.company_name || '',
 			}))
 
@@ -668,6 +671,7 @@ export default function CreateRequestModal({
 								? null
 								: formData.company_name,
 						phone: formData.phone,
+						email: formData.email || null,
 					}),
 				})
 
@@ -1142,6 +1146,21 @@ export default function CreateRequestModal({
 											value={formData.phone}
 											onChange={handleChange}
 											readOnly={isClientLocked}
+										/>
+									</label>
+
+									<label className='request-modal-field'>
+										<span className='request-modal-label'>
+											Email 
+										</span>
+										<input
+											className='request-modal-input'
+											type='email'
+											name='email'
+											value={formData.email}
+											onChange={handleChange}
+											readOnly={isClientLocked}
+											placeholder='example@mail.com'
 										/>
 									</label>
 								</div>

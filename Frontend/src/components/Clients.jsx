@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import '../styles/Clients.css'
 import '../styles/Requests.css'
 import CreateClientModal from './CreateClientModal'
@@ -44,11 +45,19 @@ export default function Clients() {
 
 	// Состояние для редактируемого автомобиля
 	const [editingVehicle, setEditingVehicle] = useState(null)
+	const [showVehicles, setShowVehicles] = useState(false)
 
 	const userRole = getUserRole()
+	const location = useLocation()
 
 	const canViewRequestPrice =
 		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
+
+	// Состояние для навигации из строки поиска
+	const [pendingOpenClientId, setPendingOpenClientId] = useState(null)
+	const [pendingHighlightVehicleId, setPendingHighlightVehicleId] = useState(null)
+	const [highlightedVehicleId, setHighlightedVehicleId] = useState(null)
+	const vehicleRefs = useRef({})
 
 	useEffect(() => {
 		fetchClients()
@@ -60,6 +69,51 @@ export default function Clients() {
 		document.addEventListener('click', handleClickOutside)
 		return () => document.removeEventListener('click', handleClickOutside)
 	}, [])
+
+	// 1. Читаем state из навигации (переход из строки поиска в хедере)
+	useEffect(() => {
+		if (!location.state?.openClientId) return
+		setPendingOpenClientId(location.state.openClientId)
+		if (location.state.highlightVehicleId) {
+			setPendingHighlightVehicleId(location.state.highlightVehicleId)
+		}
+		// Очищаем state чтобы повторный рендер не сбрасывал всё
+		window.history.replaceState({}, document.title)
+	}, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+	// 2. Когда клиенты загружены + есть pending → открываем нужного клиента
+	useEffect(() => {
+		if (!pendingOpenClientId || clients.length === 0) return
+		const client = clients.find(c => c.id === pendingOpenClientId)
+		if (client) {
+			setPendingOpenClientId(null)
+			handleClientClick(client)
+		}
+	}, [clients, pendingOpenClientId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+	// 3. Когда клиент открыт + нужна подсветка → автоматически подгружаем его машины
+	useEffect(() => {
+		if (!selectedClient || !pendingHighlightVehicleId) return
+		fetchClientVehicles(selectedClient.id, true)
+	}, [selectedClient?.id, pendingHighlightVehicleId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+	// 4. Когда машины загрузились + есть pending highlight → скролл и подсветка
+	useEffect(() => {
+		if (!pendingHighlightVehicleId || clientVehicles.length === 0) return
+		const vehicleId = pendingHighlightVehicleId
+		setPendingHighlightVehicleId(null)
+		setShowVehicles(true)
+		setHighlightedVehicleId(vehicleId)
+
+		// Скроллим к нужной машине
+		setTimeout(() => {
+			const el = vehicleRefs.current[vehicleId]
+			if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+		}, 150)
+
+		// Снимаем подсветку через 2.5 сек
+		setTimeout(() => setHighlightedVehicleId(null), 2500)
+	}, [clientVehicles.length, pendingHighlightVehicleId])
 
 	const fetchClients = async () => {
 		setLoading(true)
@@ -181,6 +235,7 @@ export default function Clients() {
 		setSelectedClient(client)
 		setClientVehicles([])
 		setVehicleEquipmentMap({})
+		setShowVehicles(false)
 
 		try {
 			const token = localStorage.getItem('access_token')
@@ -201,7 +256,7 @@ export default function Clients() {
 		}
 	}
 
-	const fetchClientVehicles = async clientId => {
+	const fetchClientVehicles = async (clientId, silent = false) => {
 		setIsVehiclesLoading(true)
 		try {
 			const token = localStorage.getItem('access_token')
@@ -214,7 +269,7 @@ export default function Clients() {
 			if (res.ok) {
 				const data = await res.json()
 				setClientVehicles(data)
-				if (data.length === 0)
+				if (data.length === 0 && !silent)
 					alert('У этого клиента пока нет добавленных автомобилей.')
 			}
 		} catch (err) {
@@ -387,6 +442,16 @@ export default function Clients() {
 
 	return (
 		<div className='clients-page-container'>
+			<style>{`
+				@keyframes vehiclePulse {
+					0%   { background: #fffde7; border-color: #f9a825; box-shadow: 0 0 0 4px rgba(249,168,37,0.25); }
+					40%  { background: #fffde7; border-color: #f9a825; box-shadow: 0 0 0 4px rgba(249,168,37,0.25); }
+					100% { background: transparent; border-color: #e0e0e0; box-shadow: none; }
+				}
+				.vehicle-highlighted {
+					animation: vehiclePulse 2.5s ease-out forwards;
+				}
+			`}</style>
 			{!selectedClient ? (
 				<>
 					<div className='clients-header-bar'>
@@ -634,17 +699,30 @@ export default function Clients() {
 						>
 							<button
 								className='btn-green'
-								onClick={() => fetchClientVehicles(selectedClient.id)}
+								onClick={() => {
+									if (showVehicles) {
+										setShowVehicles(false)
+									} else {
+										if (clientVehicles.length > 0) {
+											setShowVehicles(true)
+										} else {
+											fetchClientVehicles(selectedClient.id)
+											setShowVehicles(true)
+										}
+									}
+								}}
 								disabled={isVehiclesLoading}
 								style={{ padding: '6px 12px', fontSize: '13px' }}
 							>
 								{isVehiclesLoading
 									? 'Загрузка...'
-									: '🚗 Просмотреть все машины клиента'}
+									: showVehicles
+										? '🚗 Скрыть машины клиента'
+										: '🚗 Просмотреть все машины клиента'}
 							</button>
 
 							{/* БЛОК ВЫВОДА МАШИН С КНОПКОЙ ИЗМЕНИТЬ */}
-							{clientVehicles.length > 0 && (
+							{showVehicles && clientVehicles.length > 0 && (
 								<div
 									style={{
 										marginTop: '15px',
@@ -665,7 +743,11 @@ export default function Clients() {
 									</h4>
 									<div style={{ display: 'grid', gap: '10px' }}>
 										{clientVehicles.map(v => (
-											<div key={v.id} className='vehicle-card'>
+											<div
+												key={v.id}
+												ref={el => { vehicleRefs.current[v.id] = el }}
+												className={`vehicle-card${highlightedVehicleId === v.id ? ' vehicle-highlighted' : ''}`}
+											>
 												<div className='vehicle-card-main'>
 													<div className='vehicle-card-header'>
 														<strong className='vehicle-card-title'>
