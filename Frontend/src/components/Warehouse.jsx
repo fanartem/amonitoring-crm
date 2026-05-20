@@ -1,15 +1,32 @@
-import React, { useState, useEffect, useRef } from 'react';
-import '../styles/Requests.css'; 
-import '../styles/Warehouse.css';
-import WarehouseItemModal from './WarehouseItemModal';
+import React, { useState, useEffect, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
+import '../styles/Requests.css'
+import '../styles/Warehouse.css'
+import WarehouseItemModal from './WarehouseItemModal'
 
 const CATEGORIES = {
-  GPS_TRACKER: 'Трекер', BEACON: 'Маяк', FUEL_SENSOR: 'ДУТ', BLE_SENSOR: 'BLE-датчик',
-  WIRED_SENSOR: 'Пров. датчик', RELAY: 'Реле', CABLE: 'Кабель', OTHER: 'Другое'
-};
+	GPS_TRACKER: 'Трекер',
+	BEACON: 'Маяк',
+	FUEL_SENSOR: 'ДУТ',
+	BLE_SENSOR: 'BLE-датчик',
+	WIRED_SENSOR: 'Пров. датчик',
+	RELAY: 'Реле',
+	CABLE: 'Кабель',
+	OTHER: 'Другое',
+}
 
-const STATUSES = { IN_STOCK: 'На складе', RESERVED: 'Резерв', INSTALLED: 'Установлено', WRITTEN_OFF: 'Списано' };
-const STATUS_COLORS = { IN_STOCK: '#5e9424', RESERVED: '#f57c00', INSTALLED: '#1976d2', WRITTEN_OFF: '#c62828' };
+const STATUSES = {
+	IN_STOCK: 'На складе',
+	RESERVED: 'Резерв',
+	INSTALLED: 'Установлено',
+	WRITTEN_OFF: 'Списано',
+}
+const STATUS_COLORS = {
+	IN_STOCK: '#5e9424',
+	RESERVED: '#f57c00',
+	INSTALLED: '#1976d2',
+	WRITTEN_OFF: '#c62828',
+}
 
 export default function Warehouse() {
 	const [items, setItems] = useState([])
@@ -19,13 +36,18 @@ export default function Warehouse() {
 		category: '',
 		status: '',
 	})
-	const [viewMode, setViewMode] = useState('active'); // active | trash
+	const [viewMode, setViewMode] = useState('active') // active | trash
 
 	const [isModalOpen, setIsModalOpen] = useState(false)
 	const [editItem, setEditItem] = useState(null)
 	const [importResult, setImportResult] = useState(null)
 
 	const fileInputRef = useRef(null)
+
+	const location = useLocation()
+	const itemRefs = useRef({})
+	const [highlightedItemId, setHighlightedItemId] = useState(null)
+	const [pendingHighlightItemId, setPendingHighlightItemId] = useState(null)
 
 	useEffect(() => {
 		if (viewMode === 'active') {
@@ -34,6 +56,50 @@ export default function Warehouse() {
 			fetchDeletedItems()
 		}
 	}, [filters, viewMode])
+
+	useEffect(() => {
+		const highlightWarehouseItemId = location.state?.highlightWarehouseItemId
+
+		if (!highlightWarehouseItemId) return
+
+		const itemId = Number(highlightWarehouseItemId)
+
+		setViewMode('active')
+		setPendingHighlightItemId(itemId)
+		setHighlightedItemId(itemId)
+
+		// Сбрасываем фильтры, чтобы найденное устройство точно было видно
+		setFilters({
+			search: '',
+			category: '',
+			status: '',
+		})
+	}, [location.state?.searchActionId])
+
+	useEffect(() => {
+		if (!pendingHighlightItemId || items.length === 0) return
+
+		const itemExists = items.some(
+			item => Number(item.id) === Number(pendingHighlightItemId),
+		)
+
+		if (!itemExists) return
+
+		setTimeout(() => {
+			const el = itemRefs.current[Number(pendingHighlightItemId)]
+
+			if (el) {
+				el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+			}
+		}, 150)
+
+		const timeout = setTimeout(() => {
+			setHighlightedItemId(null)
+			setPendingHighlightItemId(null)
+		}, 2500)
+
+		return () => clearTimeout(timeout)
+	}, [items, pendingHighlightItemId])
 
 	const fetchItems = async () => {
 		setLoading(true)
@@ -177,7 +243,7 @@ export default function Warehouse() {
 			const res = await fetch('http://127.0.0.1:8000/warehouse/import', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: formData, 
+				body: formData,
 			})
 
 			const data = await res.json()
@@ -188,7 +254,7 @@ export default function Warehouse() {
 		} catch (err) {
 			alert(`Ошибка: ${err.message}`)
 		} finally {
-			e.target.value = '' 
+			e.target.value = ''
 		}
 	}
 
@@ -238,26 +304,46 @@ export default function Warehouse() {
 	}
 
 	// --- НОВЫЕ ФУНКЦИИ-ПОМОЩНИКИ ДЛЯ ОТРИСОВКИ КЛИЕНТА И АВТО ---
-	const renderClientInfo = (item) => {
+	const renderClientInfo = item => {
 		if (item.status !== 'INSTALLED' && item.status !== 'Установлено') {
-			return <span style={{ color: '#aaa' }}>—</span>;
+			return <span style={{ color: '#aaa' }}>—</span>
 		}
-		const type = String(item.client_type || '').toUpperCase();
+		const type = String(item.client_type || '').toUpperCase()
 		if (type === 'TOO' || type === 'IP' || type === 'ТОО' || type === 'ИП') {
-			return item.company_name || item.client_name || '—';
+			return item.company_name || item.client_name || '—'
 		}
-		return item.client_name || '—';
-	};
+		return item.client_name || '—'
+	}
 
 	const renderCarInfo = (item, field) => {
 		if (item.status !== 'INSTALLED' && item.status !== 'Установлено') {
-			return <span style={{ color: '#aaa' }}>—</span>;
+			return <span style={{ color: '#aaa' }}>—</span>
 		}
-		return item[field] || '—';
-	};
+		return item[field] || '—'
+	}
 
 	return (
 		<div className='requests-page-container'>
+			<style>{`
+				@keyframes warehouseItemPulse {
+					0% {
+						background: #fffde7;
+						box-shadow: inset 4px 0 0 #f9a825;
+					}
+					45% {
+						background: #fffde7;
+						box-shadow: inset 4px 0 0 #f9a825;
+					}
+					100% {
+						background: transparent;
+						box-shadow: none;
+					}
+				}
+
+				.warehouse-item-highlighted {
+					animation: warehouseItemPulse 2.5s ease-out forwards;
+				}
+			`}</style>
 			<div className='clients-header-bar' style={{ marginBottom: '15px' }}>
 				<h2>Склад оборудования</h2>
 				<div style={{ display: 'flex', gap: '10px' }}>
@@ -407,13 +493,15 @@ export default function Warehouse() {
 							<th style={{ padding: '12px 15px' }}>Идентификатор</th>
 							<th style={{ padding: '12px 15px' }}>Кол-во</th>
 							<th style={{ padding: '12px 15px' }}>Статус</th>
-							
+
 							{/* --- НОВЫЕ ЗАГОЛОВКИ --- */}
 							<th style={{ padding: '12px 15px' }}>Клиент</th>
 							<th style={{ padding: '12px 15px' }}>Гос. номер</th>
 							<th style={{ padding: '12px 15px' }}>VIN-код</th>
 
-							<th style={{ padding: '12px 15px', textAlign: 'right' }}>Действия</th>
+							<th style={{ padding: '12px 15px', textAlign: 'right' }}>
+								Действия
+							</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -443,7 +531,18 @@ export default function Warehouse() {
 							</tr>
 						) : (
 							items.map(item => (
-								<tr key={item.id} style={{ borderBottom: '1px solid #eee' }}>
+								<tr
+									key={item.id}
+									ref={el => {
+										itemRefs.current[Number(item.id)] = el
+									}}
+									className={
+										Number(highlightedItemId) === Number(item.id)
+											? 'warehouse-item-highlighted'
+											: ''
+									}
+									style={{ borderBottom: '1px solid #eee' }}
+								>
 									<td style={{ padding: '12px 15px' }}>
 										<strong>{item.name}</strong>
 
@@ -507,13 +606,25 @@ export default function Warehouse() {
 									</td>
 
 									{/* --- НОВЫЕ ЯЧЕЙКИ --- */}
-									<td style={{ padding: '12px 15px', fontSize: '13px', fontWeight: '500' }}>
+									<td
+										style={{
+											padding: '12px 15px',
+											fontSize: '13px',
+											fontWeight: '500',
+										}}
+									>
 										{renderClientInfo(item)}
 									</td>
 									<td style={{ padding: '12px 15px', fontSize: '13px' }}>
 										{renderCarInfo(item, 'plate_number')}
 									</td>
-									<td style={{ padding: '12px 15px', fontSize: '12px', color: '#666' }}>
+									<td
+										style={{
+											padding: '12px 15px',
+											fontSize: '12px',
+											color: '#666',
+										}}
+									>
 										{renderCarInfo(item, 'vin')}
 									</td>
 

@@ -55,7 +55,8 @@ export default function Clients() {
 
 	// Состояние для навигации из строки поиска
 	const [pendingOpenClientId, setPendingOpenClientId] = useState(null)
-	const [pendingHighlightVehicleId, setPendingHighlightVehicleId] = useState(null)
+	const [pendingHighlightVehicleId, setPendingHighlightVehicleId] =
+		useState(null)
 	const [highlightedVehicleId, setHighlightedVehicleId] = useState(null)
 	const vehicleRefs = useRef({})
 
@@ -70,50 +71,74 @@ export default function Clients() {
 		return () => document.removeEventListener('click', handleClickOutside)
 	}, [])
 
-	// 1. Читаем state из навигации (переход из строки поиска в хедере)
+	// 1. Читаем state из навигации из Header.jsx.
+	// Важно: зависим от searchActionId, чтобы переход работал даже если мы уже на /clients.
 	useEffect(() => {
-		if (!location.state?.openClientId) return
-		setPendingOpenClientId(location.state.openClientId)
-		if (location.state.highlightVehicleId) {
-			setPendingHighlightVehicleId(location.state.highlightVehicleId)
+		const openClientId = location.state?.openClientId
+		const highlightVehicleId = location.state?.highlightVehicleId
+
+		if (!openClientId) return
+
+		setPendingOpenClientId(Number(openClientId))
+
+		if (highlightVehicleId) {
+			setPendingHighlightVehicleId(Number(highlightVehicleId))
+		} else {
+			setPendingHighlightVehicleId(null)
 		}
-		// Очищаем state чтобы повторный рендер не сбрасывал всё
-		window.history.replaceState({}, document.title)
-	}, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+		// Закрываем возможные открытые модалки/дропдауны при переходе из поиска
+		setSelectedRequestId(null)
+		setActiveDropdown(null)
+		setEditingVehicle(null)
+	}, [location.state?.searchActionId])
 
 	// 2. Когда клиенты загружены + есть pending → открываем нужного клиента
 	useEffect(() => {
 		if (!pendingOpenClientId || clients.length === 0) return
-		const client = clients.find(c => c.id === pendingOpenClientId)
-		if (client) {
-			setPendingOpenClientId(null)
-			handleClientClick(client)
-		}
-	}, [clients, pendingOpenClientId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-	// 3. Когда клиент открыт + нужна подсветка → автоматически подгружаем его машины
+		const client = clients.find(
+			c => Number(c.id) === Number(pendingOpenClientId),
+		)
+
+		if (!client) return
+
+		setPendingOpenClientId(null)
+		handleClientClick(client)
+	}, [clients, pendingOpenClientId])
+
+	// 3. Когда клиент открыт + нужна подсветка → автоматически показываем и грузим машины
 	useEffect(() => {
 		if (!selectedClient || !pendingHighlightVehicleId) return
+
+		setShowVehicles(true)
 		fetchClientVehicles(selectedClient.id, true)
-	}, [selectedClient?.id, pendingHighlightVehicleId]) // eslint-disable-line react-hooks/exhaustive-deps
+	}, [selectedClient?.id, pendingHighlightVehicleId])
 
 	// 4. Когда машины загрузились + есть pending highlight → скролл и подсветка
 	useEffect(() => {
 		if (!pendingHighlightVehicleId || clientVehicles.length === 0) return
-		const vehicleId = pendingHighlightVehicleId
+
+		const vehicleId = Number(pendingHighlightVehicleId)
+		const vehicleExists = clientVehicles.some(v => Number(v.id) === vehicleId)
+
+		if (!vehicleExists) return
+
 		setPendingHighlightVehicleId(null)
 		setShowVehicles(true)
 		setHighlightedVehicleId(vehicleId)
 
-		// Скроллим к нужной машине
 		setTimeout(() => {
 			const el = vehicleRefs.current[vehicleId]
-			if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+			if (el) {
+				el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+			}
 		}, 150)
 
-		// Снимаем подсветку через 2.5 сек
-		setTimeout(() => setHighlightedVehicleId(null), 2500)
-	}, [clientVehicles.length, pendingHighlightVehicleId])
+		setTimeout(() => {
+			setHighlightedVehicleId(null)
+		}, 2500)
+	}, [clientVehicles, pendingHighlightVehicleId])
 
 	const fetchClients = async () => {
 		setLoading(true)
@@ -745,8 +770,10 @@ export default function Clients() {
 										{clientVehicles.map(v => (
 											<div
 												key={v.id}
-												ref={el => { vehicleRefs.current[v.id] = el }}
-												className={`vehicle-card${highlightedVehicleId === v.id ? ' vehicle-highlighted' : ''}`}
+												ref={el => {
+													vehicleRefs.current[Number(v.id)] = el
+												}}
+												className={`vehicle-card${Number(highlightedVehicleId) === Number(v.id) ? ' vehicle-highlighted' : ''}`}
 											>
 												<div className='vehicle-card-main'>
 													<div className='vehicle-card-header'>
@@ -965,7 +992,7 @@ export default function Clients() {
 											</span>
 										</div>
 									)}
-									
+
 									<div className='card-item'>
 										<span className='card-label'>Оплата</span>
 										<div

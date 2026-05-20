@@ -351,7 +351,7 @@ export default function RequestDetailModal({
 				.replace(/, quantity=\d+/, '')
 				.trim()
 			if (vehicle) {
-				return `Устройство привязано на машину (${vehicle}): ${eq}`
+				return `Устройство привязано на ${vehicle}: ${eq}`
 			}
 			return `Привязано оборудование: ${eq}`
 		}
@@ -365,7 +365,7 @@ export default function RequestDetailModal({
 				.replace(/, quantity=\d+/, '')
 				.trim()
 			if (vehicle) {
-				return `Устройство отвязано от машины (${vehicle}): ${eq}`
+				return `Устройство отвязано от ${vehicle}: ${eq}`
 			}
 			return `Отвязано оборудование: ${eq}`
 		}

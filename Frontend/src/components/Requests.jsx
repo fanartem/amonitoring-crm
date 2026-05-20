@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import '../styles/Requests.css'
 import CreateRequestModal from './CreateRequestModal'
 import RequestDetailModal from './RequestDetailModal'
@@ -41,7 +42,9 @@ export default function Requests() {
 		city: '',
 		format: '',
 	})
+
 	const userRole = getUserRole()
+	const location = useLocation()
 
 	const canViewRequestPrice =
 		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
@@ -51,6 +54,18 @@ export default function Requests() {
 		fetchTechnicians()
 		fetchCities()
 	}, [])
+
+	useEffect(() => {
+		const openRequestId = location.state?.openRequestId
+
+		if (!openRequestId) return
+
+		setActiveDropdown(null)
+		setCreateModalOpen(false)
+		setEditRequestData(null)
+		setDetailModalTab('info')
+		setSelectedRequestId(Number(openRequestId))
+	}, [location.state?.searchActionId])
 
 	useEffect(() => {
 		const handleClickOutside = () => setActiveDropdown(null)
@@ -152,8 +167,9 @@ export default function Requests() {
 	}
 
 	const getVehicleInstallText = vehicle => {
-		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${vehicle.has_beacon ? 'Маяк' : 'Без маяка'
-			}`
+		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${
+			vehicle.has_beacon ? 'Маяк' : 'Без маяка'
+		}`
 	}
 
 	useEffect(() => {
@@ -294,9 +310,6 @@ export default function Requests() {
 
 		try {
 			const token = localStorage.getItem('access_token')
-
-			// Бэкендер сделал роут /accept, который сам берет ID из токена,
-			// назначает заявку и меняет статус на IN_PROGRESS за один запрос!
 			const res = await fetch(
 				`http://127.0.0.1:8000/requests/${req.id}/accept`,
 				{
@@ -305,7 +318,6 @@ export default function Requests() {
 						'Content-Type': 'application/json',
 						Authorization: `Bearer ${token}`,
 					},
-					// body больше не нужен, бэкенд сам все поймет по токену!
 				},
 			)
 
