@@ -239,6 +239,14 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         detail="Итоговая цена заявки не может быть отрицательной"
                     )
 
+            platform = data.platform.strip()
+
+            if not platform:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Необходимо выбрать платформу мониторинга"
+                )
+
             # Создаём шапку заявки
             cursor.execute(
                 """
@@ -248,11 +256,12 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     visit_type,
                     address,
                     city,
+                    platform,
                     scheduled_at,
                     status,
                     total_price
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     data.client_id,
@@ -260,6 +269,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     data.visit_type,
                     data.address,
                     data.city,
+                    platform,
                     data.scheduled_at,
                     "NEW",
                     total_price,
@@ -487,6 +497,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     r.visit_type,
                     r.address,
                     r.city,
+                    r.platform,
                     r.scheduled_at,
                     r.status,
                     r.created_at,
@@ -535,6 +546,7 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                     r.visit_type,
                     r.address,
                     r.city,
+                    r.platform,
                     r.scheduled_at,
                     r.status,
                     r.created_at,
@@ -624,6 +636,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     visit_type,
                     address,
                     city,
+                    platform,
                     scheduled_at,
                     status,
                     is_paid
@@ -668,6 +681,24 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     update_fields.append(f"{field_name} = %s")
                     update_values.append(new_value)
                     add_history(history_action, old_value, new_value)
+            
+            # platform
+            if data.platform is not None:
+                if current_user["role"] not in ["ADMIN", "MANAGER"]:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Только Менеджер или Админ могут менять платформу мониторинга"
+                    )
+
+                new_platform = data.platform.strip()
+
+                if not new_platform:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Платформа мониторинга не может быть пустой"
+                    )
+
+                add_request_update("platform", new_platform, "PLATFORM_CHANGED")
 
             # visit_type
             if data.visit_type is not None and data.visit_type != req["visit_type"]:
@@ -1067,6 +1098,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     r.visit_type,
                     r.address,
                     r.city,
+                    r.platform,
                     r.scheduled_at,
                     r.status,
                     r.created_at,

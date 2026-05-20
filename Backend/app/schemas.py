@@ -7,6 +7,7 @@ class RequestCreate(BaseModel):
     work_type: str
     visit_type: str
     city: str | None = None
+    platform: str
     address: str | None = None
     scheduled_at: datetime | None = None
     vehicles: list[RequestVehicleInput]
@@ -16,6 +17,7 @@ class RequestUpdate(BaseModel):
     visit_type: str | None = None
     address: str | None = None
     city: str | None = None
+    platform: str | None = None
     scheduled_at: datetime | None = None
     status: str | None = None
     is_paid: Optional[bool] = None

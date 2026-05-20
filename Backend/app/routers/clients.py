@@ -384,6 +384,7 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
                     r.visit_type,
                     r.address,
                     r.city,
+                    r.platform,
                     r.scheduled_at,
                     r.status,
                     r.created_at,

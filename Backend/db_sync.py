@@ -94,6 +94,7 @@ def sync_db():
                         visit_type ENUM('IN_OFFICE', 'ON_SITE'),
                         address TEXT,
                         city TEXT,
+                        platform VARCHAR(255) NOT NULL,
                         scheduled_at DATETIME,
                         status ENUM('NEW', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED') DEFAULT 'NEW',
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
