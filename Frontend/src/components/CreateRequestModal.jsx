@@ -102,6 +102,7 @@ export default function CreateRequestModal({
 		work_address: '',
 		work_date: '',
 
+		platform: '',
 		manager_comment: '',
 	})
 
@@ -126,6 +127,7 @@ export default function CreateRequestModal({
 		work_address: '',
 		work_date: '',
 
+		platform: '',
 		manager_comment: '',
 	}
 
@@ -171,6 +173,7 @@ export default function CreateRequestModal({
 				work_address: editRequestData.address || '',
 				work_date: '',
 
+				platform: editRequestData.platform || '',
 				manager_comment: '',
 			})
 		} else {
@@ -632,6 +635,7 @@ export default function CreateRequestModal({
 							: 'DIAGNOSTIC',
 				visit_type:
 					formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
+				platform: formData.platform || null,
 			}
 
 			if (isEditMode) {
@@ -1770,6 +1774,41 @@ export default function CreateRequestModal({
 												</div>
 											)
 										})}
+									</div>
+								</div>
+							)}
+
+							{!isEditMode && (
+								<div className='request-modal-card'>
+									<div className='request-modal-section-title'>
+										Платформа мониторинга
+									</div>
+
+									<div className='request-option-group'>
+										<div className='request-modal-label'>Выберите платформу</div>
+										<div className='request-radio-list'>
+											{['Wialon', 'Glonasssoft', 'Amonitoring'].map(p => (
+												<label
+													key={p}
+													className={`request-radio-pill ${formData.platform === p ? 'active' : ''}`}
+												>
+													<input
+														type='radio'
+														name='platform'
+														value={p}
+														checked={formData.platform === p}
+														onChange={e => {
+															const next = formData.platform === p ? '' : p
+															setFormData(prev => ({
+																...prev,
+																platform: next,
+															}))
+														}}
+													/>
+													{p}
+												</label>
+											))}
+										</div>
 									</div>
 								</div>
 							)}

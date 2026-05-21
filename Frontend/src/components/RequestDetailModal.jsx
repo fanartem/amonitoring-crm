@@ -663,6 +663,18 @@ export default function RequestDetailModal({
 												</span>
 											</div>
 
+											{request.platform && (
+												<div className='info-row'>
+													<span className='info-key'>Платформа мониторинга</span>
+													<span
+														className='info-val'
+														style={{ fontWeight: '600', color: '#4f46e5' }}
+													>
+														{request.platform}
+													</span>
+												</div>
+											)}
+
 											<div className='info-row'>
 												<span className='info-key'>Статус оплаты</span>
 												<span

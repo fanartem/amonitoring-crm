@@ -17,6 +17,7 @@ export default function Sidebar() {
 	const canViewPrices = ['ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(
 		user?.role?.toUpperCase(),
 	)
+	
 
 	return (
 		<nav className='sidebar'>
