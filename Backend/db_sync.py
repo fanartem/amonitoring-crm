@@ -29,6 +29,87 @@ def sync_db():
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """,
+                "user_city_access": """
+                    CREATE TABLE user_city_access (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+
+                        user_id INT NOT NULL,
+                        city_id INT NOT NULL,
+
+                        can_view_requests TINYINT DEFAULT 1,
+                        can_receive_notifications TINYINT DEFAULT 1,
+
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NULL,
+
+                        UNIQUE(user_id, city_id),
+
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                        FOREIGN KEY (city_id) REFERENCES cities(id) ON DELETE CASCADE
+                    );
+                """,
+                "notification_types": """
+                    CREATE TABLE notification_types (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+
+                        code VARCHAR(100) UNIQUE NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        description TEXT NULL,
+                        category VARCHAR(100) DEFAULT 'GENERAL',
+
+                        default_enabled TINYINT DEFAULT 1,
+                        is_active TINYINT DEFAULT 1,
+
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NULL
+                    );
+                """,
+                "user_notification_settings": """
+                    CREATE TABLE user_notification_settings (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+
+                        user_id INT NOT NULL,
+                        notification_type_code VARCHAR(100) NOT NULL,
+                        is_enabled TINYINT DEFAULT 1,
+
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NULL,
+
+                        UNIQUE(user_id, notification_type_code),
+
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                        FOREIGN KEY (notification_type_code) REFERENCES notification_types(code) ON DELETE CASCADE
+                    );
+                """,
+                "notifications": """
+                    CREATE TABLE notifications (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+
+                        user_id INT NOT NULL,
+                        type_code VARCHAR(100) NOT NULL,
+
+                        title VARCHAR(255) NOT NULL,
+                        message TEXT NOT NULL,
+
+                        entity_type VARCHAR(100) NULL,
+                        entity_id INT NULL,
+
+                        actor_user_id INT NULL,
+
+                        is_read TINYINT DEFAULT 0,
+                        read_at DATETIME NULL,
+
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                        FOREIGN KEY (type_code) REFERENCES notification_types(code) ON DELETE CASCADE,
+                        FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+
+                        INDEX idx_notifications_user_read (user_id, is_read),
+                        INDEX idx_notifications_created_at (created_at),
+                        INDEX idx_notifications_entity (entity_type, entity_id)
+                    );
+                """,
                 "clients": """
                     CREATE TABLE clients (
                         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -364,6 +445,79 @@ def sync_db():
                     "unit": "шт",
                 },
             ]
+            
+            default_notification_types = [
+                {
+                    "code": "NEW_REQUEST",
+                    "name": "Новые заявки",
+                    "description": "Уведомления о создании новых заявок",
+                    "category": "REQUESTS",
+                    "default_enabled": 1,
+                },
+                {
+                    "code": "REQUEST_STATUS_CHANGED",
+                    "name": "Изменение статуса заявки",
+                    "description": "Уведомления при изменении статуса заявки",
+                    "category": "REQUESTS",
+                    "default_enabled": 1,
+                },
+                {
+                    "code": "REQUEST_ASSIGNED",
+                    "name": "Назначение заявки",
+                    "description": "Уведомления при назначении монтажника на заявку",
+                    "category": "REQUESTS",
+                    "default_enabled": 1,
+                },
+                {
+                    "code": "REQUEST_SELF_ACCEPTED",
+                    "name": "Самостоятельное принятие заявки",
+                    "description": "Уведомления когда монтажник сам принимает заявку",
+                    "category": "REQUESTS",
+                    "default_enabled": 1,
+                },
+                {
+                    "code": "REQUEST_PAYMENT_CHANGED",
+                    "name": "Изменение оплаты",
+                    "description": "Уведомления при изменении статуса оплаты заявки",
+                    "category": "FINANCE",
+                    "default_enabled": 1,
+                },
+                {
+                    "code": "WAREHOUSE_LOW_STOCK",
+                    "name": "Низкий остаток на складе",
+                    "description": "Уведомления о низком остатке оборудования на складе",
+                    "category": "WAREHOUSE",
+                    "default_enabled": 1,
+                },
+            ]
+            
+            for item in default_notification_types:
+                cursor.execute(
+                    """
+                    INSERT INTO notification_types (
+                        code,
+                        name,
+                        description,
+                        category,
+                        default_enabled,
+                        is_active
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 1)
+                    ON DUPLICATE KEY UPDATE
+                        name = VALUES(name),
+                        description = VALUES(description),
+                        category = VALUES(category),
+                        default_enabled = VALUES(default_enabled),
+                        updated_at = NOW()
+                    """,
+                    (
+                        item["code"],
+                        item["name"],
+                        item["description"],
+                        item["category"],
+                        item["default_enabled"],
+                    )
+                )
 
             for item in default_price_items:
                 cursor.execute(

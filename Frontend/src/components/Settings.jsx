@@ -28,15 +28,99 @@ export default function Settings() {
 	const [editingCityName, setEditingCityName] = useState('')
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState('')
+	const [notificationSettings, setNotificationSettings] = useState([])
+	const [notificationLoading, setNotificationLoading] = useState(false)
+	const [notificationError, setNotificationError] = useState('')
 
 	const userRole = getUserRole()
 	const isAdmin = userRole === 'ADMIN'
+	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
+
+	const canViewWarehouseNotifications = isAdmin || isWarehouseManager
 
 	useEffect(() => {
+		fetchNotificationSettings()
+
 		if (isAdmin) {
 			fetchCities()
 		}
 	}, [isAdmin])
+
+	const fetchNotificationSettings = async () => {
+		setNotificationLoading(true)
+		setNotificationError('')
+
+		try {
+			const token = localStorage.getItem('access_token')
+
+			const res = await fetch('http://127.0.0.1:8000/notifications/settings', {
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			})
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(
+					data?.detail || 'Не удалось загрузить настройки уведомлений',
+				)
+			}
+
+			const data = await res.json()
+			setNotificationSettings(Array.isArray(data) ? data : [])
+		} catch (err) {
+			setNotificationError(err.message)
+		} finally {
+			setNotificationLoading(false)
+		}
+	}
+
+	const handleToggleNotification = async typeCode => {
+		const nextSettings = notificationSettings.map(setting =>
+			setting.type_code === typeCode
+				? {
+						...setting,
+						is_enabled: !setting.is_enabled,
+					}
+				: setting,
+		)
+
+		setNotificationSettings(nextSettings)
+
+		try {
+			const token = localStorage.getItem('access_token')
+
+			const changedSetting = nextSettings.find(
+				setting => setting.type_code === typeCode,
+			)
+
+			const res = await fetch('http://127.0.0.1:8000/notifications/settings', {
+				method: 'PATCH',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({
+					settings: [
+						{
+							type_code: changedSetting.type_code,
+							is_enabled: changedSetting.is_enabled,
+						},
+					],
+				}),
+			})
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(
+					data?.detail || 'Не удалось обновить настройки уведомлений',
+				)
+			}
+		} catch (err) {
+			setNotificationError(err.message)
+			fetchNotificationSettings()
+		}
+	}
 
 	const fetchCities = async () => {
 		setLoading(true)
@@ -177,6 +261,36 @@ export default function Settings() {
 		}
 	}
 
+	const visibleNotificationSettings = notificationSettings.filter(item => {
+		if (item.category === 'WAREHOUSE') {
+			return canViewWarehouseNotifications
+		}
+
+		return true
+	})
+
+	const groupedNotificationSettings = visibleNotificationSettings.reduce(
+		(acc, item) => {
+			const category = item.category || 'GENERAL'
+
+			if (!acc[category]) {
+				acc[category] = []
+			}
+
+			acc[category].push(item)
+
+			return acc
+		},
+		{},
+	)
+
+	const notificationCategoryLabels = {
+		REQUESTS: 'Заявки',
+		FINANCE: 'Финансы',
+		WAREHOUSE: 'Склад',
+		GENERAL: 'Общие',
+	}
+
 	return (
 		<div className='settings-page'>
 			<div className='settings-header'>
@@ -184,13 +298,64 @@ export default function Settings() {
 				<p>Управление системными параметрами CRM.</p>
 			</div>
 
-			{!isAdmin ? (
-				<div className='settings-card'>
-					<div className='settings-empty'>
-						Настройки доступны только администратору.
+			<div className='settings-card'>
+				<div className='settings-card-header'>
+					<div>
+						<h3>Уведомления</h3>
+						<p>Выберите, какие уведомления вы хотите получать в CRM.</p>
 					</div>
 				</div>
-			) : (
+
+				{notificationError && (
+					<div className='settings-error'>{notificationError}</div>
+				)}
+
+				{notificationLoading ? (
+					<div className='settings-empty'>Загрузка уведомлений...</div>
+				) : visibleNotificationSettings.length === 0 ? (
+					<div className='settings-empty'>Настройки уведомлений не найдены</div>
+				) : (
+					<div className='settings-notifications-list'>
+						{Object.entries(groupedNotificationSettings).map(
+							([category, items]) => (
+								<div key={category} className='settings-notification-group'>
+									<div className='settings-notification-group-title'>
+										{notificationCategoryLabels[category] || category}
+									</div>
+
+									{items.map(item => (
+										<label
+											key={item.type_code}
+											className='settings-notification-row'
+										>
+											<div>
+												<div className='settings-notification-name'>
+													{item.name}
+												</div>
+												{item.description && (
+													<div className='settings-notification-description'>
+														{item.description}
+													</div>
+												)}
+											</div>
+
+											<input
+												type='checkbox'
+												checked={Boolean(item.is_enabled)}
+												onChange={() =>
+													handleToggleNotification(item.type_code)
+												}
+											/>
+										</label>
+									))}
+								</div>
+							),
+						)}
+					</div>
+				)}
+			</div>
+
+			{isAdmin && (
 				<div className='settings-card'>
 					<div className='settings-card-header'>
 						<div>

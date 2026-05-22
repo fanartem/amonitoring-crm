@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import logoImg from '../assets/logo.png'
-import '../styles/Header.css' // <-- 1. ИМПОРТИРУЕМ НАШИ НОВЫЕ СТИЛИ (проверь путь к файлу)
+import '../styles/Header.css'
 
 export default function Header() {
 	const userDataStr = localStorage.getItem('user_data')
@@ -15,6 +15,109 @@ export default function Header() {
 	const [requests, setRequests] = useState([])
 	const [vehicles, setVehicles] = useState([])
 	const [warehouseItems, setWarehouseItems] = useState([])
+	const [notifications, setNotifications] = useState([])
+	const [unreadCount, setUnreadCount] = useState(0)
+	const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
+	const notificationsRef = useRef(null)
+
+	const BASE_URL = 'http://127.0.0.1:8000'
+
+	const getAuthHeaders = () => {
+		const token = localStorage.getItem('access_token')
+
+		return {
+			'Content-Type': 'application/json',
+			...(token && { Authorization: `Bearer ${token}` }),
+		}
+	}
+
+	const fetchNotifications = async () => {
+		try {
+			const headers = getAuthHeaders()
+
+			const [notificationsRes, countRes] = await Promise.all([
+				fetch(`${BASE_URL}/notifications?limit=10`, { headers }),
+				fetch(`${BASE_URL}/notifications/unread-count`, { headers }),
+			])
+
+			if (notificationsRes.ok) {
+				const data = await notificationsRes.json()
+				setNotifications(Array.isArray(data) ? data : [])
+			}
+
+			if (countRes.ok) {
+				const data = await countRes.json()
+				setUnreadCount(Number(data.unread_count || 0))
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки уведомлений:', err)
+		}
+	}
+
+	const markNotificationAsRead = async notificationId => {
+		try {
+			const res = await fetch(
+				`${BASE_URL}/notifications/${notificationId}/read`,
+				{
+					method: 'PATCH',
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (res.ok) {
+				setNotifications(prev =>
+					prev.map(item =>
+						item.id === notificationId ? { ...item, is_read: true } : item,
+					),
+				)
+
+				setUnreadCount(prev => Math.max(0, prev - 1))
+			}
+		} catch (err) {
+			console.error('Ошибка отметки уведомления:', err)
+		}
+	}
+
+	const markAllNotificationsAsRead = async () => {
+		try {
+			const res = await fetch(`${BASE_URL}/notifications/read-all`, {
+				method: 'PATCH',
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) {
+				setNotifications(prev =>
+					prev.map(item => ({
+						...item,
+						is_read: true,
+					})),
+				)
+
+				setUnreadCount(0)
+			}
+		} catch (err) {
+			console.error('Ошибка отметки всех уведомлений:', err)
+		}
+	}
+
+	const handleNotificationClick = async notification => {
+		if (!notification.is_read) {
+			await markNotificationAsRead(notification.id)
+		}
+
+		setIsNotificationsOpen(false)
+
+		const actionId = `${Date.now()}-${Math.random()}`
+
+		if (notification.entity_type === 'request' && notification.entity_id) {
+			navigate('/requests', {
+				state: {
+					openRequestId: notification.entity_id,
+					searchActionId: actionId,
+				},
+			})
+		}
+	}
 
 	const handleLogout = () => {
 		localStorage.removeItem('access_token')
@@ -27,12 +130,8 @@ export default function Header() {
 		const loadData = async () => {
 			try {
 				const token = localStorage.getItem('access_token')
-				const BASE_URL = 'http://127.0.0.1:8000'
 
-				const headers = {
-					'Content-Type': 'application/json',
-					...(token && { Authorization: `Bearer ${token}` }),
-				}
+				const headers = getAuthHeaders()
 
 				const [resClients, resRequests, resWarehouse] = await Promise.all([
 					fetch(`${BASE_URL}/clients`, { headers })
@@ -84,6 +183,16 @@ export default function Header() {
 		}
 
 		loadData()
+	}, [])
+
+	useEffect(() => {
+		fetchNotifications()
+
+		const intervalId = setInterval(() => {
+			fetchNotifications()
+		}, 30000)
+
+		return () => clearInterval(intervalId)
 	}, [])
 
 	const getEquipmentTitle = item => {
@@ -302,7 +411,15 @@ export default function Header() {
 			if (searchRef.current && !searchRef.current.contains(event.target)) {
 				setIsOpen(false)
 			}
+
+			if (
+				notificationsRef.current &&
+				!notificationsRef.current.contains(event.target)
+			) {
+				setIsNotificationsOpen(false)
+			}
 		}
+
 		document.addEventListener('mousedown', handleClickOutside)
 		return () => document.removeEventListener('mousedown', handleClickOutside)
 	}, [])
@@ -416,27 +533,104 @@ export default function Header() {
 					)}
 				</div>
 
-				{/* Заглушка для колокольчика уведомлений */}
 				<div
 					className='notification-bell-wrapper'
-					onClick={() => alert('Здесь нужны уведомления')}
+					ref={notificationsRef}
 					title='Уведомления'
 				>
-					<svg
-						width='22'
-						height='22'
-						viewBox='0 0 24 24'
-						fill='none'
-						stroke='currentColor'
-						strokeWidth='2'
-						strokeLinecap='round'
-						strokeLinejoin='round'
-						className='bell-icon'
+					<button
+						type='button'
+						className='notification-bell-btn'
+						onClick={() => {
+							setIsNotificationsOpen(prev => !prev)
+							fetchNotifications()
+						}}
 					>
-						<path d='M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9'></path>
-						<path d='M13.73 21a2 2 0 0 1-3.46 0'></path>
-					</svg>
-					<span className='bell-badge'>3</span>
+						<svg
+							width='22'
+							height='22'
+							viewBox='0 0 24 24'
+							fill='none'
+							stroke='currentColor'
+							strokeWidth='2'
+							strokeLinecap='round'
+							strokeLinejoin='round'
+							className='bell-icon'
+						>
+							<path d='M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9'></path>
+							<path d='M13.73 21a2 2 0 0 1-3.46 0'></path>
+						</svg>
+
+						{unreadCount > 0 && (
+							<span className='bell-badge'>
+								{unreadCount > 99 ? '99+' : unreadCount}
+							</span>
+						)}
+					</button>
+
+					{isNotificationsOpen && (
+						<div className='notifications-dropdown'>
+							<div className='notifications-dropdown-header'>
+								<div>
+									<div className='notifications-title'>Уведомления</div>
+									<div className='notifications-subtitle'>
+										{unreadCount > 0
+											? `Непрочитанных: ${unreadCount}`
+											: 'Нет непрочитанных'}
+									</div>
+								</div>
+
+								{unreadCount > 0 && (
+									<button
+										type='button'
+										className='notifications-read-all-btn'
+										onClick={markAllNotificationsAsRead}
+									>
+										Прочитать все
+									</button>
+								)}
+							</div>
+
+							<div className='notifications-list'>
+								{notifications.length === 0 ? (
+									<div className='notifications-empty'>
+										Уведомлений пока нет
+									</div>
+								) : (
+									notifications.map(notification => (
+										<button
+											key={notification.id}
+											type='button'
+											className={`notification-item ${
+												notification.is_read ? 'read' : 'unread'
+											}`}
+											onClick={() => handleNotificationClick(notification)}
+										>
+											<div className='notification-item-main'>
+												<div className='notification-item-title'>
+													{notification.title}
+												</div>
+												<div className='notification-item-message'>
+													{notification.message}
+												</div>
+												<div className='notification-item-date'>
+													{notification.created_at
+														? new Date(notification.created_at).toLocaleString(
+																'ru-RU',
+															)
+														: ''}
+												</div>
+											</div>
+
+											{!notification.is_read && (
+												<span className='notification-unread-dot' />
+											)}
+										</button>
+									))
+								)}
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 		</header>

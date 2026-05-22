@@ -3,6 +3,13 @@ from app.database import get_connection
 from app.schemas import RequestCreate, RequestUpdate, AssignRequest, CommentCreate
 from app.security import get_current_user
 from datetime import datetime
+from app.notification_service import (
+    notify_new_request,
+    notify_request_status_changed,
+    notify_request_assigned,
+    notify_request_self_accepted,
+    notify_request_payment_changed,
+)
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
@@ -441,6 +448,25 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     f"Request created with {len(data.vehicles)} vehicle(s)"
                 )
             )
+            
+            cursor.execute(
+                """
+                SELECT name, company_name
+                FROM clients
+                WHERE id = %s
+                """,
+                (data.client_id,)
+            )
+            client_for_notification = cursor.fetchone() or {}
+
+            notify_new_request(
+                cursor=cursor,
+                request_id=request_id,
+                city=data.city,
+                client_name=client_for_notification.get("name"),
+                company_name=client_for_notification.get("company_name"),
+                actor_user_id=current_user["id"],
+            )
 
             connection.commit()
 
@@ -639,6 +665,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     platform,
                     scheduled_at,
                     status,
+                    assigned_to,
                     is_paid
                 FROM requests
                 WHERE id = %s AND is_deleted = 0
@@ -767,6 +794,13 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     update_values.append(paid_at_val)
 
                     add_history("PAYMENT_UPDATED", f"is_paid={old_paid}", f"is_paid={new_paid}")
+                    
+                    notify_request_payment_changed(
+                        cursor=cursor,
+                        request_id=request_id,
+                        is_paid=new_paid,
+                        actor_user_id=current_user["id"],
+                    )
 
             # status
             if data.status is not None and data.status != req["status"]:
@@ -789,6 +823,15 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         )
 
                 add_request_update("status", data.status, "STATUS_CHANGED")
+                
+                notify_request_status_changed(
+                    cursor=cursor,
+                    request_id=request_id,
+                    old_status=req["status"],
+                    new_status=data.status,
+                    assigned_to=req.get("assigned_to"),
+                    actor_user_id=current_user["id"],
+                )
 
             if update_fields:
                 update_values.append(request_id)
@@ -1066,6 +1109,13 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
                 )
             )
             
+            notify_request_assigned(
+                cursor=cursor,
+                request_id=request_id,
+                technician_id=data.technician_id,
+                actor_user_id=current_user["id"],
+            )
+            
             connection.commit()
 
             return {
@@ -1326,6 +1376,13 @@ def accept_request(
                     "assigned_to=NULL, status=NEW",
                     f"assigned_to={current_user['id']}, status=IN_PROGRESS"
                 )
+            )
+            
+            notify_request_self_accepted(
+                cursor=cursor,
+                request_id=request_id,
+                technician_id=current_user["id"],
+                actor_user_id=current_user["id"],
             )
 
             connection.commit()

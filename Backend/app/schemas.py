@@ -220,3 +220,65 @@ class RequestPriceLineInput(BaseModel):
 class RequestPriceInput(BaseModel):
     total_price: float = 0
     lines: list[RequestPriceLineInput] = []
+    
+class NotificationTypeOut(BaseModel):
+    id: int
+    code: str
+    name: str
+    description: Optional[str] = None
+    category: str
+    default_enabled: bool
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class NotificationOut(BaseModel):
+    id: int
+    user_id: int
+    type_code: str
+    title: str
+    message: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[int] = None
+    actor_user_id: Optional[int] = None
+    is_read: bool
+    read_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class NotificationSettingOut(BaseModel):
+    type_code: str
+    name: str
+    description: Optional[str] = None
+    category: str
+    is_enabled: bool
+
+
+class NotificationSettingUpdate(BaseModel):
+    type_code: str
+    is_enabled: bool
+
+
+class NotificationSettingsBulkUpdate(BaseModel):
+    settings: list[NotificationSettingUpdate]
+
+
+class UserCityAccessOut(BaseModel):
+    id: int
+    user_id: int
+    city_id: int
+    city_name: str
+    can_view_requests: bool
+    can_receive_notifications: bool
+
+
+class UserCityAccessUpdateItem(BaseModel):
+    city_id: int
+    can_view_requests: bool = True
+    can_receive_notifications: bool = True
+
+
+class UserCityAccessBulkUpdate(BaseModel):
+    user_id: int
+    cities: list[UserCityAccessUpdateItem]

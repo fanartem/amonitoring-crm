@@ -484,7 +484,7 @@ export default function Requests() {
 						onChange={handleFilterChange}
 					>
 						<option value=''>Все статусы</option>
-						<option value='NEW'>В ожидании</option>: 
+						<option value='NEW'>В ожидании</option>
 						<option value='IN_PROGRESS'>В процессе установки</option>
 						<option value='COMPLETED'>Работы завершены</option>
 						<option value='CANCELLED'>Отмененные заявки</option>
