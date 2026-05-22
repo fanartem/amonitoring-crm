@@ -375,6 +375,21 @@ export default function RequestDetailModal({
 		if (h.action === 'CITY_CHANGED') return `Город изменен: ${h.new_value}`
 		if (h.action === 'ADDRESS_CHANGED') return `Адрес изменен: ${h.new_value}`
 
+		if (h.action === 'PLATFORM_CHANGED') {
+			return (
+				<span>
+					Платформа мониторинга изменена:{' '}
+					<span style={{ color: '#9ca3af', textDecoration: 'line-through' }}>
+						{h.old_value || '—'}
+					</span>
+					{' → '}
+					<span style={{ fontWeight: '600', color: '#1b1b1d' }}>
+						{h.new_value || '—'}
+					</span>
+				</span>
+			)
+		}
+
 		return h.action
 	}
 
@@ -710,7 +725,7 @@ export default function RequestDetailModal({
 												<span className='info-key'>Платформа</span>
 												<span
 													className='info-val'
-													style={{ fontWeight: '700', color: '#4f46e5' }}
+													style={{ fontWeight: '700', color: '#181717' }}
 												>
 													{request.platform || 'Не указана'}
 												</span>

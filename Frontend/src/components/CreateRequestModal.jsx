@@ -1907,6 +1907,42 @@ export default function CreateRequestModal({
 								</div>
 							)}
 
+							{isEditMode && (
+								<div className='request-modal-card'>
+									<div className='request-modal-section-title'>
+										Платформа мониторинга
+									</div>
+
+									<div className='request-option-group'>
+										<div className='request-modal-label'>
+											Выберите платформу
+										</div>
+										<div className='request-radio-list'>
+											{['Wialon', 'GLONASS Soft', 'Amonitoring'].map(p => (
+												<label
+													key={p}
+													className={`request-radio-pill ${formData.platform === p ? 'active' : ''}`}
+												>
+													<input
+														type='radio'
+														name='platform'
+														value={p}
+														checked={formData.platform === p}
+														onChange={() =>
+															setFormData(prev => ({
+																...prev,
+																platform: p,
+															}))
+														}
+													/>
+													{p}
+												</label>
+											))}
+										</div>
+									</div>
+								</div>
+							)}
+
 							{!isEditMode && (
 								<div className='request-modal-card'>
 									<div className='request-modal-section-title'>
