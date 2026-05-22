@@ -552,6 +552,7 @@ export default function CreateRequestModal({
 		if (!formData.client_name) required.push('client_name')
 		if (!formData.phone) required.push('phone')
 		if (!formData.city) required.push('city')
+		if (!formData.platform) required.push('platform')
 
 		if (
 			clientKind === 'new' &&
@@ -635,7 +636,7 @@ export default function CreateRequestModal({
 							: 'DIAGNOSTIC',
 				visit_type:
 					formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
-				platform: formData.platform || null,
+				platform: formData.platform.trim(),
 			}
 
 			if (isEditMode) {
@@ -1154,9 +1155,7 @@ export default function CreateRequestModal({
 									</label>
 
 									<label className='request-modal-field'>
-										<span className='request-modal-label'>
-											Email 
-										</span>
+										<span className='request-modal-label'>Email</span>
 										<input
 											className='request-modal-input'
 											type='email'
@@ -1784,10 +1783,18 @@ export default function CreateRequestModal({
 										Платформа мониторинга
 									</div>
 
-									<div className='request-option-group'>
-										<div className='request-modal-label'>Выберите платформу</div>
+									<div
+										className={
+											missingFields.includes('platform')
+												? 'request-option-group request-field-error-box'
+												: 'request-option-group'
+										}
+									>
+										<div className='request-modal-label required'>
+											Выберите платформу
+										</div>
 										<div className='request-radio-list'>
-											{['Wialon', 'Glonasssoft', 'Amonitoring'].map(p => (
+											{['Wialon', 'GLONASS Soft', 'Amonitoring'].map(p => (
 												<label
 													key={p}
 													className={`request-radio-pill ${formData.platform === p ? 'active' : ''}`}
@@ -1797,12 +1804,13 @@ export default function CreateRequestModal({
 														name='platform'
 														value={p}
 														checked={formData.platform === p}
-														onChange={e => {
-															const next = formData.platform === p ? '' : p
+														onChange={() => {
 															setFormData(prev => ({
 																...prev,
-																platform: next,
+																platform: p,
 															}))
+
+															clearMissingField('platform')
 														}}
 													/>
 													{p}

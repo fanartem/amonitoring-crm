@@ -635,6 +635,13 @@
   box-shadow: 0 0 0 2px rgba(94, 148, 36, 0.12);
 }
 
+.request-field-error-box {
+  border: 1px solid #ef4444;
+  background: #fff5f5;
+  border-radius: 10px;
+  padding: 10px;
+}
+
 @media (max-width: 1150px) {
   .request-modal-main-layout {
     grid-template-columns: 1fr;
