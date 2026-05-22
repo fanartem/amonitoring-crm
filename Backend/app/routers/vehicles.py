@@ -5,30 +5,69 @@ from app.security import get_current_user
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
 
-
 @router.post("")
 def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current_user)):
     if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут создавать машины")
+        raise HTTPException(
+            status_code=403,
+            detail="Только Менеджер или Админ могут создавать машины"
+        )
 
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
+            vin = data.vin.strip().upper() if data.vin else None
+
+            if vin:
+                cursor.execute(
+                    """
+                    SELECT id, brand, model, plate_number
+                    FROM vehicles
+                    WHERE vin = %s
+                    AND is_deleted = 0
+                    """,
+                    (vin,)
+                )
+                existing_vehicle = cursor.fetchone()
+
+                if existing_vehicle:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Автомобиль с VIN {vin} уже существует"
+                    )
+
             sql = """
             INSERT INTO vehicles (client_id, brand, model, plate_number, vin, year, type)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
-            cursor.execute(sql, (
-                data.client_id,
-                data.brand,
-                data.model,
-                data.plate_number,
-                data.vin,
-                data.year,
-                data.type
-            ))
+
+            cursor.execute(
+                sql,
+                (
+                    data.client_id,
+                    data.brand,
+                    data.model,
+                    data.plate_number,
+                    vin,
+                    data.year,
+                    data.type,
+                )
+            )
+
             connection.commit()
-            return {"message": "created", "vehicle_id": cursor.lastrowid}
+
+            return {
+                "message": "created",
+                "vehicle_id": cursor.lastrowid
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
 
@@ -48,6 +87,60 @@ def get_vehicles(client_id: int, current_user: dict = Depends(get_current_user))
                 (client_id,)
             )
             return cursor.fetchall()
+    finally:
+        connection.close()
+
+@router.get("/check-vin")
+def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
+    """
+    Проверка VIN перед созданием автомобиля.
+    Нужна, чтобы фронт мог проверить VIN до создания нового клиента.
+    """
+    normalized_vin = vin.strip().upper() if vin else None
+
+    if not normalized_vin:
+        return {
+            "exists": False,
+            "vin": None,
+            "vehicle": None
+        }
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    v.is_deleted AS vehicle_is_deleted,
+
+                    c.name AS client_name,
+                    c.company_name,
+                    c.type AS client_type,
+                    c.is_deleted AS client_is_deleted
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.vin = %s
+                AND v.is_deleted = 0
+                LIMIT 1
+                """,
+                (normalized_vin,)
+            )
+
+            vehicle = cursor.fetchone()
+
+            return {
+                "exists": vehicle is not None,
+                "vin": normalized_vin,
+                "vehicle": vehicle
+            }
+
     finally:
         connection.close()
 
@@ -157,6 +250,30 @@ def update_vehicle(
 
             if not update_data:
                 return {"message": "Нет данных для обновления"}
+            
+            if "vin" in update_data:
+                new_vin = update_data["vin"].strip().upper() if update_data["vin"] else None
+
+                if new_vin:
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM vehicles
+                        WHERE vin = %s
+                        AND id != %s
+                        AND is_deleted = 0
+                        """,
+                        (new_vin, vehicle_id)
+                    )
+                    existing_vehicle = cursor.fetchone()
+
+                    if existing_vehicle:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Автомобиль с VIN {new_vin} уже существует"
+                        )
+
+                update_data["vin"] = new_vin
 
             allowed_fields = ["brand", "model", "plate_number", "vin", "year", "type"]
 
@@ -170,23 +287,6 @@ def update_vehicle(
 
             if not updates:
                 return {"message": "Нет допустимых полей для обновления"}
-
-            if "vin" in update_data and update_data["vin"]:
-                cursor.execute(
-                    """
-                    SELECT id
-                    FROM vehicles
-                    WHERE vin = %s AND id != %s
-                    """,
-                    (update_data["vin"], vehicle_id)
-                )
-                existing_vehicle = cursor.fetchone()
-
-                if existing_vehicle:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Машина с таким VIN уже существует"
-                    )
 
             values.append(vehicle_id)
 

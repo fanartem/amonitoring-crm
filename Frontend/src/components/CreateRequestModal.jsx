@@ -606,6 +606,73 @@ export default function CreateRequestModal({
 		return true
 	}
 
+	const getErrorMessage = async response => {
+		try {
+			const data = await response.json()
+
+			if (typeof data.detail === 'string') {
+				return data.detail
+			}
+
+			if (Array.isArray(data.detail)) {
+				return data.detail
+					.map(item => item.msg || item.detail || JSON.stringify(item))
+					.join('\n')
+			}
+
+			return JSON.stringify(data)
+		} catch {
+			return await response.text()
+		}
+	}
+
+	const checkVehicleVinExists = async vin => {
+		const normalizedVin = vin.trim().toUpperCase()
+
+		if (!normalizedVin) return null
+
+		const token = localStorage.getItem('access_token')
+
+		const res = await fetch(
+			`http://127.0.0.1:8000/vehicles/check-vin?vin=${encodeURIComponent(normalizedVin)}`,
+			{
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			},
+		)
+
+		if (!res.ok) {
+			throw new Error(await getErrorMessage(res))
+		}
+
+		const data = await res.json()
+
+		if (!data.exists) return null
+
+		return data.vehicle || { vin: normalizedVin }
+	}
+
+	const validateDuplicateVinsInForm = () => {
+		const vinMap = new Map()
+
+		for (const vehicle of requestVehicles) {
+			if (vehicle.car_id) continue
+
+			const vin = vehicle.car_vin?.trim().toUpperCase()
+
+			if (!vin) continue
+
+			if (vinMap.has(vin)) {
+				throw new Error(
+					`VIN ${vin} указан у нескольких автомобилей в этой заявке`,
+				)
+			}
+
+			vinMap.set(vin, true)
+		}
+	}
+
 	const handleSubmit = async e => {
 		e.preventDefault()
 		setError('')
@@ -620,6 +687,47 @@ export default function CreateRequestModal({
 			const headers = {
 				'Content-Type': 'application/json',
 				Authorization: `Bearer ${token}`,
+			}
+
+			validateDuplicateVinsInForm()
+
+			for (const vehicle of requestVehicles) {
+				if (vehicle.car_id) continue
+
+				const vin = vehicle.car_vin?.trim()
+
+				if (!vin) continue
+
+				const existingVehicle = await checkVehicleVinExists(vin)
+
+				if (existingVehicle) {
+					const existingVehicleText = [
+						existingVehicle.brand,
+						existingVehicle.model,
+						existingVehicle.plate_number
+							? `(${existingVehicle.plate_number})`
+							: '',
+					]
+						.filter(Boolean)
+						.join(' ')
+
+					const clientText =
+						existingVehicle.company_name ||
+						existingVehicle.client_name ||
+						'клиент не указан'
+
+					const isDeletedClient = Boolean(existingVehicle.client_is_deleted)
+
+					if (isDeletedClient) {
+						throw new Error(
+							`Автомобиль с VIN ${vin.toUpperCase()} уже существует у клиента "${clientText}", который находится в корзине. Восстановите клиента или проверьте правильность VIN.`,
+						)
+					}
+
+					throw new Error(
+						`Автомобиль с VIN ${vin.toUpperCase()} уже существует: ${existingVehicleText || 'автомобиль без названия'}. Клиент: ${clientText}`,
+					)
+				}
 			}
 
 			const basePayload = {
@@ -651,7 +759,7 @@ export default function CreateRequestModal({
 
 				if (!updateRes.ok) {
 					throw new Error(
-						`Ошибка редактирования заявки: ${await updateRes.text()}`,
+						`Ошибка редактирования заявки: ${await getErrorMessage(updateRes)}`,
 					)
 				}
 
@@ -681,11 +789,33 @@ export default function CreateRequestModal({
 				})
 
 				if (!clientRes.ok) {
-					throw new Error(`Ошибка клиента: ${await clientRes.text()}`)
+					throw new Error(await getErrorMessage(clientRes))
 				}
 
 				const clientData = await clientRes.json()
 				finalClientId = parseInt(clientData.id || clientData.client_id, 10)
+
+				setFormData(prev => ({
+					...prev,
+					client_id: finalClientId,
+				}))
+
+				setClientKind('existing')
+
+				setClientsList(prev => [
+					...prev,
+					{
+						id: finalClientId,
+						type: mapTypeToDB(formData.client_type),
+						name: formData.client_name,
+						company_name:
+							formData.client_type === 'Физ. лицо'
+								? null
+								: formData.company_name,
+						phone: formData.phone,
+						email: formData.email || null,
+					},
+				])
 			}
 
 			const finalVehicles = []
@@ -711,7 +841,7 @@ export default function CreateRequestModal({
 					})
 
 					if (!vehicleRes.ok) {
-						throw new Error(`Ошибка автомобиля: ${await vehicleRes.text()}`)
+						throw new Error(await getErrorMessage(vehicleRes))
 					}
 
 					const vehicleData = await vehicleRes.json()
@@ -760,7 +890,7 @@ export default function CreateRequestModal({
 			})
 
 			if (!requestRes.ok) {
-				throw new Error(`Ошибка заявки: ${await requestRes.text()}`)
+				throw new Error(await getErrorMessage(requestRes))
 			}
 
 			const requestData = await requestRes.json()
