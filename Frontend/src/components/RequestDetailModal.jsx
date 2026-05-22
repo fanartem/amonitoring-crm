@@ -501,6 +501,12 @@ export default function RequestDetailModal({
 													{request.phone || request.client?.phone || '—'}
 												</span>
 											</div>
+											<div className='info-row'>
+												<span className='info-key'>Email</span>
+												<span className='info-val'>
+													{request.email || request.client?.email || '—'}
+												</span>
+											</div>
 										</div>
 
 										<div className='info-card'>
@@ -663,18 +669,6 @@ export default function RequestDetailModal({
 												</span>
 											</div>
 
-											{request.platform && (
-												<div className='info-row'>
-													<span className='info-key'>Платформа мониторинга</span>
-													<span
-														className='info-val'
-														style={{ fontWeight: '600', color: '#4f46e5' }}
-													>
-														{request.platform}
-													</span>
-												</div>
-											)}
-
 											<div className='info-row'>
 												<span className='info-key'>Статус оплаты</span>
 												<span
@@ -703,6 +697,22 @@ export default function RequestDetailModal({
 															(Дата: {formatDate(request.paid_at)})
 														</span>
 													)}
+												</span>
+											</div>
+										</div>
+
+										<div className='info-card'>
+											<div className='info-card-title'>
+												Платформа мониторинга
+											</div>
+
+											<div className='info-row'>
+												<span className='info-key'>Платформа</span>
+												<span
+													className='info-val'
+													style={{ fontWeight: '700', color: '#4f46e5' }}
+												>
+													{request.platform || 'Не указана'}
 												</span>
 											</div>
 										</div>

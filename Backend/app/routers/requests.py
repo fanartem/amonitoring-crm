@@ -1110,6 +1110,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     c.name AS client_name,
                     c.company_name,
                     c.phone,
+                    c.email,
                     c.type AS client_type
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
