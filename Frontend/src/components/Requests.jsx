@@ -24,6 +24,30 @@ const getUserRole = () => {
 	}
 }
 
+const getCurrentUserId = () => {
+	try {
+		const token = localStorage.getItem('access_token')
+		if (!token) return null
+
+		const base64Url = token.split('.')[1]
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+		const jsonPayload = decodeURIComponent(
+			atob(base64)
+				.split('')
+				.map(function (c) {
+					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+				})
+				.join(''),
+		)
+
+		const payload = JSON.parse(jsonPayload)
+
+		return Number(payload.id || payload.sub || null)
+	} catch (error) {
+		return null
+	}
+}
+
 export default function Requests() {
 	const [requests, setRequests] = useState([])
 	const [filteredRequests, setFilteredRequests] = useState([])
@@ -44,6 +68,7 @@ export default function Requests() {
 	})
 
 	const userRole = getUserRole()
+	const currentUserId = getCurrentUserId()
 	const location = useLocation()
 
 	const canViewRequestPrice =
@@ -324,6 +349,57 @@ export default function Requests() {
 			if (!res.ok) {
 				const errData = await res.json()
 				throw new Error(errData.detail || 'Ошибка при принятии заявки')
+			}
+
+			fetchRequests()
+		} catch (err) {
+			alert(`Ошибка: ${err.message}`)
+		}
+	}
+
+	const canCompleteRequest = req => {
+		if (req.status !== 'IN_PROGRESS') return false
+		if (!req.assigned_to) return false
+
+		if (userRole === 'SENIOR_TECHNICIAN') {
+			return true
+		}
+
+		if (userRole === 'TECHNICIAN') {
+			return Number(req.assigned_to) === Number(currentUserId)
+		}
+
+		return false
+	}
+
+	const handleCompleteRequest = async (e, req) => {
+		e.stopPropagation()
+
+		if (
+			!window.confirm(
+				`Завершить заявку №${req.id}? После подтверждения статус изменится на "Работы завершены".`,
+			)
+		) {
+			return
+		}
+
+		try {
+			const token = localStorage.getItem('access_token')
+
+			const res = await fetch(
+				`http://127.0.0.1:8000/requests/${req.id}/complete`,
+				{
+					method: 'PATCH',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${token}`,
+					},
+				},
+			)
+
+			if (!res.ok) {
+				const errData = await res.json().catch(() => null)
+				throw new Error(errData?.detail || 'Ошибка при завершении заявки')
 			}
 
 			fetchRequests()
@@ -874,6 +950,19 @@ export default function Requests() {
 										Принять заявку
 									</button>
 								)}
+
+							{canCompleteRequest(req) && (
+								<button
+									className='btn-complete-request'
+									style={{
+										marginBottom: '12px',
+										marginRight: '30px',
+									}}
+									onClick={e => handleCompleteRequest(e, req)}
+								>
+									Завершить
+								</button>
+							)}
 						</div>
 					</div>
 				))}

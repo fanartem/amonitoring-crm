@@ -786,6 +786,26 @@
   align-self: flex-start;
 }
 
+.btn-complete-request {
+	background: #c62828;
+	color: #fff;
+	border: none;
+	border-radius: 8px;
+	padding: 10px 18px;
+	font-size: 14px;
+	font-weight: 700;
+	cursor: pointer;
+	transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.btn-complete-request:hover {
+	background: #a61f1f;
+}
+
+.btn-complete-request:active {
+	transform: translateY(1px);
+}
+
 @media (max-width: 640px) {
   .request-vehicle-header {
     flex-direction: column;

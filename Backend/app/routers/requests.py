@@ -1133,6 +1133,113 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
     finally:
         connection.close()
 
+@router.patch("/{request_id}/complete")
+def complete_request(request_id: int, current_user: dict = Depends(get_current_user)):
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, status, assigned_to, is_deleted
+                FROM requests
+                WHERE id = %s
+                """,
+                (request_id,)
+            )
+            req = cursor.fetchone()
+
+            if not req:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            if req["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя завершить удалённую заявку"
+                )
+
+            if req["status"] != "IN_PROGRESS":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Завершить можно только заявку в процессе"
+                )
+
+            if not req["assigned_to"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя завершить заявку без назначенного исполнителя"
+                )
+
+            role = current_user["role"]
+
+            if role == "TECHNICIAN":
+                if req["assigned_to"] != current_user["id"]:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Обычный монтажник может завершить только свою заявку"
+                    )
+
+            elif role not in ["ADMIN", "MANAGER", "SENIOR_TECHNICIAN"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для завершения заявки"
+                )
+
+            cursor.execute(
+                """
+                UPDATE requests
+                SET status = 'COMPLETED'
+                WHERE id = %s
+                """,
+                (request_id,)
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    old_value,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "STATUS_CHANGED",
+                    "IN_PROGRESS",
+                    "COMPLETED"
+                )
+            )
+
+            notify_request_status_changed(
+                cursor=cursor,
+                request_id=request_id,
+                old_status="IN_PROGRESS",
+                new_status="COMPLETED",
+                assigned_to=req["assigned_to"],
+                actor_user_id=current_user["id"],
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Заявка завершена",
+                "request_id": request_id,
+                "status": "COMPLETED"
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
 @router.get("/{request_id}")
 def get_request_detail(request_id: int, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
