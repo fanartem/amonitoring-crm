@@ -2,9 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.database import get_connection
 from app.security import get_current_user
 
-router = APIRouter(prefix="/users", tags=["Users"]) # Если добавляешь в users.py
+router = APIRouter(prefix="/users", tags=["Users"])
 
-# Добавь этот роут, чтобы фронтенд мог получать список монтажников
 @router.get("/technicians")
 def get_technicians(current_user: dict = Depends(get_current_user)):
     connection = get_connection()
