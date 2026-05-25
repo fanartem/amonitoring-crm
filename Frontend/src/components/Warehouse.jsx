@@ -41,6 +41,10 @@ export default function Warehouse() {
 	const [isModalOpen, setIsModalOpen] = useState(false)
 	const [editItem, setEditItem] = useState(null)
 	const [importResult, setImportResult] = useState(null)
+	const [pendingImportFile, setPendingImportFile] = useState(null)
+	const [importPreview, setImportPreview] = useState(null)
+	const [importPreviewOpen, setImportPreviewOpen] = useState(false)
+	const [importConfirmLoading, setImportConfirmLoading] = useState(false)
 
 	const fileInputRef = useRef(null)
 
@@ -233,28 +237,334 @@ export default function Warehouse() {
 	// ИМПОРТ CSV
 	const handleFileUpload = async e => {
 		const file = e.target.files[0]
+
 		if (!file) return
 
+		try {
+			const preview = await buildImportPreview(file)
+
+			setPendingImportFile(file)
+			setImportPreview(preview)
+			setImportPreviewOpen(true)
+		} catch (err) {
+			alert(`Ошибка проверки CSV: ${err.message}`)
+		} finally {
+			e.target.value = ''
+		}
+	}
+
+	const handleConfirmImport = async () => {
+		if (!pendingImportFile) return
+
+		setImportConfirmLoading(true)
+
 		const formData = new FormData()
-		formData.append('file', file)
+		formData.append('file', pendingImportFile)
 
 		try {
 			const token = localStorage.getItem('access_token')
+
 			const res = await fetch('http://127.0.0.1:8000/warehouse/import', {
 				method: 'POST',
-				headers: { Authorization: `Bearer ${token}` },
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
 				body: formData,
 			})
 
 			const data = await res.json()
-			if (!res.ok) throw new Error(data.detail || 'Ошибка импорта')
+
+			if (!res.ok) {
+				throw new Error(data.detail || 'Ошибка импорта')
+			}
+
+			setImportPreviewOpen(false)
+			setImportPreview(null)
+			setPendingImportFile(null)
 
 			setImportResult(buildImportMessage(data))
 			fetchItems()
 		} catch (err) {
 			alert(`Ошибка: ${err.message}`)
 		} finally {
-			e.target.value = ''
+			setImportConfirmLoading(false)
+		}
+	}
+
+	const handleCancelImport = () => {
+		setImportPreviewOpen(false)
+		setImportPreview(null)
+		setPendingImportFile(null)
+	}
+
+	const parseCsvLine = line => {
+		const result = []
+		let current = ''
+		let insideQuotes = false
+
+		for (let i = 0; i < line.length; i += 1) {
+			const char = line[i]
+			const nextChar = line[i + 1]
+
+			if (char === '"' && insideQuotes && nextChar === '"') {
+				current += '"'
+				i += 1
+				continue
+			}
+
+			if (char === '"') {
+				insideQuotes = !insideQuotes
+				continue
+			}
+
+			if (char === ';' && !insideQuotes) {
+				result.push(current.trim())
+				current = ''
+				continue
+			}
+
+			current += char
+		}
+
+		result.push(current.trim())
+
+		return result
+	}
+
+	const normalizeCsvHeader = value => {
+		return String(value || '')
+			.trim()
+			.toLowerCase()
+			.replace(/\s+/g, '_')
+	}
+
+	const getCsvValue = (row, aliases) => {
+		for (const alias of aliases) {
+			const normalizedAlias = normalizeCsvHeader(alias)
+
+			if (row[normalizedAlias] !== undefined) {
+				return row[normalizedAlias]
+			}
+		}
+
+		return ''
+	}
+
+	const normalizeIdentifierType = value => {
+		const type = String(value || '')
+			.trim()
+			.toUpperCase()
+
+		if (!type) return 'NONE'
+
+		return type
+	}
+
+	const normalizeIdentifierValue = value => {
+		return String(value || '').trim()
+	}
+
+	const buildWarehouseItemKey = (identifierType, identifierValue) => {
+		const type = normalizeIdentifierType(identifierType)
+		const value = normalizeIdentifierValue(identifierValue).toLowerCase()
+
+		if (!value || type === 'NONE') return null
+
+		return `${type}:${value}`
+	}
+
+	const readFileAsText = file => {
+		return new Promise((resolve, reject) => {
+			const reader = new FileReader()
+
+			reader.onload = event => resolve(event.target.result)
+			reader.onerror = () => reject(new Error('Не удалось прочитать CSV-файл'))
+
+			reader.readAsText(file, 'UTF-8')
+		})
+	}
+
+	const fetchAllActiveWarehouseItems = async () => {
+		const token = localStorage.getItem('access_token')
+
+		const res = await fetch('http://127.0.0.1:8000/warehouse/items', {
+			headers: {
+				Authorization: `Bearer ${token}`,
+			},
+		})
+
+		if (!res.ok) {
+			const err = await res.json().catch(() => null)
+			throw new Error(
+				err?.detail || 'Не удалось проверить склад перед импортом',
+			)
+		}
+
+		const data = await res.json()
+
+		return Array.isArray(data) ? data : []
+	}
+
+	const buildImportPreview = async file => {
+		const text = await readFileAsText(file)
+		const cleanedText = text.replace(/^\uFEFF/, '')
+		const lines = cleanedText
+			.split(/\r?\n/)
+			.map(line => line.trim())
+			.filter(Boolean)
+
+		if (lines.length < 2) {
+			throw new Error('CSV-файл пустой или не содержит строк для импорта')
+		}
+
+		const headers = parseCsvLine(lines[0]).map(normalizeCsvHeader)
+
+		const rows = lines.slice(1).map((line, index) => {
+			const values = parseCsvLine(line)
+			const row = {}
+
+			headers.forEach((header, headerIndex) => {
+				row[header] = values[headerIndex] || ''
+			})
+
+			return {
+				rowNumber: index + 2,
+				raw: row,
+			}
+		})
+
+		const activeItems = await fetchAllActiveWarehouseItems()
+
+		const existingKeys = new Map()
+
+		activeItems.forEach(item => {
+			const key = buildWarehouseItemKey(
+				item.identifier_type,
+				item.identifier_value,
+			)
+
+			if (!key) return
+
+			existingKeys.set(key, item)
+		})
+
+		const fileKeys = new Map()
+
+		const validRows = []
+		const duplicateRows = []
+		const invalidRows = []
+
+		rows.forEach(rowInfo => {
+			const row = rowInfo.raw
+
+			const category = getCsvValue(row, ['category', 'категория'])
+			const name = getCsvValue(row, ['name', 'наименование', 'название'])
+			const manufacturer = getCsvValue(row, ['manufacturer', 'производитель'])
+			const model = getCsvValue(row, ['model', 'модель'])
+			const identifierType = getCsvValue(row, [
+				'identifier_type',
+				'тип_id',
+				'type_id',
+				'id_type',
+			])
+			const identifierValue = getCsvValue(row, [
+				'identifier_value',
+				'значение_id',
+				'imei',
+				'mac',
+				'serial',
+				'id',
+			])
+			const serialNumber = getCsvValue(row, [
+				'serial_number',
+				'серийный_номер',
+				's/n',
+				'sn',
+			])
+			const isSerializedRaw = getCsvValue(row, [
+				'is_serialized',
+				'серийное',
+				'serialized',
+			])
+			const quantity = getCsvValue(row, ['quantity', 'количество', 'кол-во'])
+
+			const isSerialized =
+				String(isSerializedRaw || '')
+					.trim()
+					.toLowerCase() === 'false'
+					? false
+					: true
+
+			const itemPreview = {
+				rowNumber: rowInfo.rowNumber,
+				category,
+				name,
+				manufacturer,
+				model,
+				identifier_type: isSerialized
+					? normalizeIdentifierType(identifierType || 'IMEI')
+					: 'NONE',
+				identifier_value: isSerialized
+					? normalizeIdentifierValue(identifierValue)
+					: '',
+				serial_number: serialNumber,
+				is_serialized: isSerialized,
+				quantity: quantity || '1',
+			}
+
+			if (!name.trim()) {
+				invalidRows.push({
+					...itemPreview,
+					reason: 'Не указано наименование',
+				})
+				return
+			}
+
+			if (isSerialized && !itemPreview.identifier_value) {
+				invalidRows.push({
+					...itemPreview,
+					reason: 'Для серийного оборудования не указан идентификатор',
+				})
+				return
+			}
+
+			const key = buildWarehouseItemKey(
+				itemPreview.identifier_type,
+				itemPreview.identifier_value,
+			)
+
+			if (key && existingKeys.has(key)) {
+				const existingItem = existingKeys.get(key)
+
+				duplicateRows.push({
+					...itemPreview,
+					reason: 'Уже есть на складе',
+					existing_item: existingItem,
+				})
+				return
+			}
+
+			if (key && fileKeys.has(key)) {
+				duplicateRows.push({
+					...itemPreview,
+					reason: `Дубликат внутри CSV. Такая же строка уже есть в строке ${fileKeys.get(key)}`,
+				})
+				return
+			}
+
+			if (key) {
+				fileKeys.set(key, rowInfo.rowNumber)
+			}
+
+			validRows.push(itemPreview)
+		})
+
+		return {
+			fileName: file.name,
+			totalRows: rows.length,
+			validRows,
+			duplicateRows,
+			invalidRows,
 		}
 	}
 
@@ -676,6 +986,159 @@ export default function Warehouse() {
 					fetchItems()
 				}}
 			/>
+
+			{importPreviewOpen && importPreview && (
+				<div className='modal-overlay open' onClick={handleCancelImport}>
+					<div
+						className='modal-window import-preview-modal'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>Проверка CSV перед импортом</span>
+
+							<button
+								className='modal-close'
+								type='button'
+								onClick={handleCancelImport}
+							>
+								&times;
+							</button>
+						</div>
+
+						<div className='import-preview-body'>
+							<div className='import-preview-summary'>
+								<div>
+									<strong>Файл:</strong> {importPreview.fileName}
+								</div>
+
+								<div className='import-preview-stats'>
+									<div className='import-preview-stat success'>
+										К импорту: {importPreview.validRows.length}
+									</div>
+									<div className='import-preview-stat warning'>
+										Уже существуют: {importPreview.duplicateRows.length}
+									</div>
+									<div className='import-preview-stat danger'>
+										Ошибки: {importPreview.invalidRows.length}
+									</div>
+								</div>
+							</div>
+
+							<div className='import-preview-columns'>
+								<div className='import-preview-section'>
+									<div className='import-preview-section-title success'>
+										Будут импортированы
+									</div>
+
+									{importPreview.validRows.length === 0 ? (
+										<div className='import-preview-empty'>
+											Нет строк для импорта
+										</div>
+									) : (
+										<div className='import-preview-list'>
+											{importPreview.validRows.slice(0, 50).map(row => (
+												<div key={row.rowNumber} className='import-preview-row'>
+													<div className='import-preview-row-title'>
+														Строка {row.rowNumber}: {row.name}
+													</div>
+													<div className='import-preview-row-subtitle'>
+														{row.identifier_type}: {row.identifier_value || '—'}
+														{row.model ? ` · ${row.model}` : ''}
+													</div>
+												</div>
+											))}
+
+											{importPreview.validRows.length > 50 && (
+												<div className='import-preview-more'>
+													Показаны первые 50 строк из{' '}
+													{importPreview.validRows.length}
+												</div>
+											)}
+										</div>
+									)}
+								</div>
+
+								<div className='import-preview-section'>
+									<div className='import-preview-section-title warning'>
+										Не будут импортированы
+									</div>
+
+									{importPreview.duplicateRows.length === 0 &&
+									importPreview.invalidRows.length === 0 ? (
+										<div className='import-preview-empty'>
+											Проблем не найдено
+										</div>
+									) : (
+										<div className='import-preview-list'>
+											{[
+												...importPreview.duplicateRows,
+												...importPreview.invalidRows,
+											]
+												.slice(0, 50)
+												.map(row => (
+													<div
+														key={`${row.rowNumber}-${row.reason}`}
+														className='import-preview-row problem'
+													>
+														<div className='import-preview-row-title'>
+															Строка {row.rowNumber}:{' '}
+															{row.name || 'Без названия'}
+														</div>
+														<div className='import-preview-row-subtitle'>
+															{row.identifier_type}:{' '}
+															{row.identifier_value || '—'}
+														</div>
+														<div className='import-preview-row-reason'>
+															{row.reason}
+														</div>
+													</div>
+												))}
+
+											{importPreview.duplicateRows.length +
+												importPreview.invalidRows.length >
+												50 && (
+												<div className='import-preview-more'>
+													Показаны первые 50 проблемных строк
+												</div>
+											)}
+										</div>
+									)}
+								</div>
+							</div>
+
+							<div className='import-preview-hint'>
+								После подтверждения файл будет отправлен на сервер. Если за это
+								время кто-то уже добавит такое же оборудование, backend всё
+								равно пропустит дубликаты.
+							</div>
+						</div>
+
+						<div className='modal-footer import-preview-footer'>
+							<button
+								className='modal-cancel-btn'
+								type='button'
+								onClick={handleCancelImport}
+								disabled={importConfirmLoading}
+							>
+								Отменить
+							</button>
+
+							<button
+								className='warehouse-submit-btn'
+								type='button'
+								onClick={handleConfirmImport}
+								disabled={
+									importConfirmLoading || importPreview.validRows.length === 0
+								}
+							>
+								{importConfirmLoading
+									? 'Импорт...'
+									: `Подтвердить импорт (${importPreview.validRows.length})`}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 
 			{importResult && (
 				<div

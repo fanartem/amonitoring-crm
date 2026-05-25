@@ -321,6 +321,152 @@
   background: #dcedc8;
 }
 
+.import-preview-modal {
+	width: 920px;
+	max-width: 95vw;
+	max-height: 90vh;
+	display: flex;
+	flex-direction: column;
+}
+
+.import-preview-body {
+	padding: 18px;
+	overflow-y: auto;
+}
+
+.import-preview-summary {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	align-items: center;
+	margin-bottom: 16px;
+}
+
+.import-preview-stats {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.import-preview-stat {
+	padding: 6px 10px;
+	border-radius: 999px;
+	font-size: 13px;
+	font-weight: 700;
+}
+
+.import-preview-stat.success {
+	background: #e8f5e9;
+	color: #2e7d32;
+}
+
+.import-preview-stat.warning {
+	background: #fff8e1;
+	color: #f57c00;
+}
+
+.import-preview-stat.danger {
+	background: #ffebee;
+	color: #c62828;
+}
+
+.import-preview-columns {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 14px;
+}
+
+.import-preview-section {
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	overflow: hidden;
+	background: #fff;
+}
+
+.import-preview-section-title {
+	padding: 12px 14px;
+	font-weight: 800;
+	font-size: 14px;
+	border-bottom: 1px solid #e5e7eb;
+}
+
+.import-preview-section-title.success {
+	background: #f1f8e9;
+	color: #2e7d32;
+}
+
+.import-preview-section-title.warning {
+	background: #fff8e1;
+	color: #f57c00;
+}
+
+.import-preview-list {
+	max-height: 360px;
+	overflow-y: auto;
+}
+
+.import-preview-empty {
+	padding: 18px;
+	color: #8a8a8a;
+	font-size: 14px;
+	text-align: center;
+}
+
+.import-preview-row {
+	padding: 10px 12px;
+	border-bottom: 1px solid #f1f3f5;
+}
+
+.import-preview-row:last-child {
+	border-bottom: none;
+}
+
+.import-preview-row.problem {
+	background: #fffafa;
+}
+
+.import-preview-row-title {
+	font-size: 13px;
+	font-weight: 700;
+	color: #1f2937;
+}
+
+.import-preview-row-subtitle {
+	margin-top: 3px;
+	font-size: 12px;
+	color: #6b7280;
+}
+
+.import-preview-row-reason {
+	margin-top: 5px;
+	font-size: 12px;
+	font-weight: 700;
+	color: #c62828;
+}
+
+.import-preview-more {
+	padding: 10px 12px;
+	font-size: 12px;
+	color: #6b7280;
+	background: #f9fafb;
+}
+
+.import-preview-hint {
+	margin-top: 14px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: #f8faf7;
+	color: #5b6472;
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.import-preview-footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+}
+
 /* --- Small screens --- */
 
 @media (max-width: 640px) {
