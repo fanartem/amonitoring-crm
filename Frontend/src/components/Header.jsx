@@ -100,6 +100,22 @@ export default function Header() {
 		}
 	}
 
+	const deleteReadNotifications = async () => {
+		try {
+			const res = await fetch(`${BASE_URL}/notifications/read`, {
+				method: 'DELETE',
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) {
+				setNotifications(prev => prev.filter(item => !item.is_read))
+				fetchNotifications()
+			}
+		} catch (err) {
+			console.error('Ошибка очистки прочитанных уведомлений:', err)
+		}
+	}
+
 	const handleNotificationClick = async notification => {
 		if (!notification.is_read) {
 			await markNotificationAsRead(notification.id)
@@ -580,15 +596,27 @@ export default function Header() {
 									</div>
 								</div>
 
-								{unreadCount > 0 && (
-									<button
-										type='button'
-										className='notifications-read-all-btn'
-										onClick={markAllNotificationsAsRead}
-									>
-										Прочитать все
-									</button>
-								)}
+								<div className='notifications-header-actions'>
+									{unreadCount > 0 && (
+										<button
+											type='button'
+											className='notifications-read-all-btn'
+											onClick={markAllNotificationsAsRead}
+										>
+											Прочитать все
+										</button>
+									)}
+
+									{notifications.some(item => item.is_read) && (
+										<button
+											type='button'
+											className='notifications-clear-read-btn'
+											onClick={deleteReadNotifications}
+										>
+											Очистить прочитанные
+										</button>
+									)}
+								</div>
 							</div>
 
 							<div className='notifications-list'>

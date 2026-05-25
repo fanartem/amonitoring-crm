@@ -202,6 +202,38 @@ def mark_notification_as_read(
     finally:
         connection.close()
 
+@router.delete("/read")
+def delete_read_notifications(current_user: dict = Depends(get_current_user)):
+    """
+    Удалить все прочитанные уведомления текущего пользователя.
+    Непрочитанные уведомления не удаляются.
+    """
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM notifications
+                WHERE user_id = %s
+                AND is_read = 1
+                """,
+                (current_user["id"],)
+            )
+
+            deleted_count = cursor.rowcount
+            connection.commit()
+
+            return {
+                "message": "Прочитанные уведомления удалены",
+                "deleted_count": deleted_count
+            }
+
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
 
 @router.get("/settings")
 def get_notification_settings(current_user: dict = Depends(get_current_user)):
