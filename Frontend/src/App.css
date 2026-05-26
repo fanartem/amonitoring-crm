@@ -21,46 +21,6 @@ html, body, #root {
 }
 
 /* ─────────────────────────────────────────
-   HEADER
-───────────────────────────────────────── */
-.header {
-  background-color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px 0 0;
-  flex-shrink: 0;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-
-.logo { display: flex; align-items: center; padding: 0 10px; height: 100%; }
-.logo img { height: 32px; width: auto; display: block; }
-
-.header-right { display: flex; align-items: center; gap: 10px; }
-
-.search-wrap { position: relative; display: flex; align-items: center; }
-
-.search-wrap input {
-  background: #fff; border: none; border-radius: 20px;
-  padding: 5px 34px 5px 14px; font-size: 13px; color: #555;
-  width: 180px; outline: none;
-}
-.search-wrap input::placeholder { color: #aaa; }
-
-.search-icon {
-  position: absolute; right: 10px; top: 50%;
-  transform: translateY(-50%); color: #aaa; display: flex; align-items: center;
-}
-
-.user-btn {
-  width: 34px; height: 34px; border-radius: 50%;
-  background: rgba(255,255,255,0.25); border: none; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.user-btn svg { color: #fff; }
-
-/* ─────────────────────────────────────────
    LAYOUT
 ───────────────────────────────────────── */
 .body-row { display: flex; flex: 1; min-height: 0; }
