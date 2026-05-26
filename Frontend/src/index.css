@@ -79,7 +79,7 @@ html, body, #root {
    HEADER
 ───────────────────────────────────────── */
 .header {
-  background-color: #8DC63F; height: 48px; display: flex;
+  background-color: #8DC63F; height: 70px; display: flex;
   align-items: center; justify-content: space-between; padding: 0 16px 0 0; flex-shrink: 0;
 }
 .logo { display: flex; align-items: center; padding: 0 10px; height: 100%; }

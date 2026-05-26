@@ -24,14 +24,15 @@ html, body, #root {
    HEADER
 ───────────────────────────────────────── */
 .header {
-  background-color: #8DC63F;
-  height: 48px;
+  background-color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 16px 0 0;
   flex-shrink: 0;
+  border-bottom: 1px solid #e2e8f0;
 }
+
 
 .logo { display: flex; align-items: center; padding: 0 10px; height: 100%; }
 .logo img { height: 32px; width: auto; display: block; }
