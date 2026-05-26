@@ -434,6 +434,15 @@
   border-top: 1px dashed #e5e5e5;
 }
 
+.client-files-section {
+	margin-top: 24px;
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	padding: 18px;
+	box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
 @media (max-width: 640px) {
   .vehicle-card {
     flex-direction: column;

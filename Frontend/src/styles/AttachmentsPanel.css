@@ -1,0 +1,179 @@
+.attachments-panel {
+	width: 100%;
+}
+
+.attachments-panel-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 16px;
+	margin-bottom: 16px;
+}
+
+.attachments-panel-header h3 {
+	margin: 0;
+	font-size: 18px;
+	color: #1f2937;
+}
+
+.attachments-panel-header p {
+	margin: 4px 0 0;
+	font-size: 13px;
+	color: #6b7280;
+}
+
+.attachments-add-btn {
+	border: none;
+	border-radius: 8px;
+	background: #5e9424;
+	color: #fff;
+	font-size: 14px;
+	font-weight: 700;
+	padding: 10px 14px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.attachments-add-btn:hover {
+	background: #4f7d14;
+}
+
+.attachments-add-btn:disabled {
+	opacity: 0.65;
+	cursor: not-allowed;
+}
+
+.attachments-error {
+	background: #ffebee;
+	color: #c62828;
+	border: 1px solid #ffcdd2;
+	border-radius: 10px;
+	padding: 10px 12px;
+	font-size: 13px;
+	margin-bottom: 12px;
+}
+
+.attachments-empty {
+	border: 1px dashed #d1d5db;
+	border-radius: 12px;
+	padding: 24px;
+	text-align: center;
+	color: #6b7280;
+	background: #fafafa;
+	font-size: 14px;
+}
+
+.attachments-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.attachments-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 12px;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	background: #fff;
+}
+
+.attachments-file-icon {
+	width: 34px;
+	height: 34px;
+	border-radius: 10px;
+	background: #f1f8e9;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+}
+
+.attachments-file-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.attachments-file-title {
+	font-size: 14px;
+	font-weight: 700;
+	color: #1f2937;
+	word-break: break-word;
+}
+
+.attachments-file-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 5px;
+	font-size: 12px;
+	color: #6b7280;
+}
+
+.attachments-original-name {
+	margin-top: 5px;
+	font-size: 12px;
+	color: #8a94a3;
+}
+
+.attachments-actions {
+	display: flex;
+	gap: 6px;
+	flex: 0 0 auto;
+}
+
+.attachments-action-btn {
+	width: 32px;
+	height: 32px;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #fff;
+	cursor: pointer;
+	font-size: 14px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.attachments-action-btn:hover {
+	background: #f8faf7;
+}
+
+.attachments-action-btn.danger:hover {
+	background: #ffebee;
+	border-color: #ffcdd2;
+}
+
+.attachments-edit-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.attachments-edit-input {
+	flex: 1;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 9px 10px;
+	font-size: 14px;
+}
+
+.attachments-save-btn,
+.attachments-cancel-btn {
+	border: none;
+	border-radius: 8px;
+	padding: 9px 12px;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.attachments-save-btn {
+	background: #5e9424;
+	color: #fff;
+}
+
+.attachments-cancel-btn {
+	background: #f3f4f6;
+	color: #374151;
+}

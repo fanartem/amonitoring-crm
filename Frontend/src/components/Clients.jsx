@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import '../styles/Clients.css'
 import '../styles/Requests.css'
+
 import CreateClientModal from './CreateClientModal'
 import RequestDetailModal from './RequestDetailModal'
+import AttachmentsPanel from './AttachmentsPanel'
 
 const getUserRole = () => {
 	try {
@@ -819,6 +821,13 @@ export default function Clients() {
 								</div>
 							)}
 						</div>
+					</div>
+
+					<div className='client-files-section'>
+						<AttachmentsPanel
+							entityType='CLIENT'
+							entityId={selectedClient.id}
+						/>
 					</div>
 
 					<h3 className='section-title' style={{ marginTop: '30px' }}>

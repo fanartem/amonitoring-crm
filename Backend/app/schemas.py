@@ -282,3 +282,28 @@ class UserCityAccessUpdateItem(BaseModel):
 class UserCityAccessBulkUpdate(BaseModel):
     user_id: int
     cities: list[UserCityAccessUpdateItem]
+
+class AttachmentOut(BaseModel):
+    id: int
+    entity_type: str
+    entity_id: int
+
+    original_filename: str
+    display_name: str
+    stored_filename: str
+    file_path: str
+
+    content_type: Optional[str] = None
+    file_size: int = 0
+
+    uploaded_by: Optional[int] = None
+    uploaded_by_name: Optional[str] = None
+    uploaded_at: Optional[datetime] = None
+
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
+    deleted_by: Optional[int] = None
+
+
+class AttachmentUpdate(BaseModel):
+    display_name: str

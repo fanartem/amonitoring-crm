@@ -315,6 +315,36 @@ def sync_db():
                         FOREIGN KEY (warehouse_item_id) REFERENCES warehouse_items(id),
                         FOREIGN KEY (attached_by) REFERENCES users(id) ON DELETE SET NULL
                     );
+                """,
+                "attachments": """
+                    CREATE TABLE attachments (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+
+                        entity_type ENUM('CLIENT', 'REQUEST') NOT NULL,
+                        entity_id INT NOT NULL,
+
+                        original_filename VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        stored_filename VARCHAR(255) NOT NULL,
+                        file_path TEXT NOT NULL,
+
+                        content_type VARCHAR(255) NULL,
+                        file_size BIGINT DEFAULT 0,
+
+                        uploaded_by INT NULL,
+                        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                        is_deleted TINYINT DEFAULT 0,
+                        deleted_at DATETIME NULL,
+                        deleted_by INT NULL,
+
+                        FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL,
+                        FOREIGN KEY (deleted_by) REFERENCES users(id) ON DELETE SET NULL,
+
+                        INDEX idx_attachments_entity (entity_type, entity_id),
+                        INDEX idx_attachments_uploaded_by (uploaded_by),
+                        INDEX idx_attachments_is_deleted (is_deleted)
+                    );
                 """
             }
 
@@ -429,7 +459,6 @@ def sync_db():
                     "unit": "шт",
                 },
 
-                # Дополнительно для будущей логики снятия/диагностики
                 {
                     "code": "REMOVAL_BASE",
                     "name": "Снятие оборудования",

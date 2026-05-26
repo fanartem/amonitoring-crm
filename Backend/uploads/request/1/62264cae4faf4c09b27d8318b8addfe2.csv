@@ -1,0 +1,3 @@
+CommandName;Data;TryMax
+Заблокировать;setdigout 1;1
+Разблокировать;setdigout 0;1

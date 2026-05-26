@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import '../styles/Requests.css'
 
 import RequestEquipmentPanel from './RequestEquipmentPanel'
+import AttachmentsPanel from './AttachmentsPanel'
 
 const getUserRole = () => {
 	try {
@@ -425,6 +426,12 @@ export default function RequestDetailModal({
 						Информация
 					</button>
 					<button
+						className={`custom-tab ${activeTab === 'files' ? 'active' : ''}`}
+						onClick={() => setActiveTab('files')}
+					>
+						Файлы
+					</button>
+					<button
 						className={`custom-tab ${activeTab === 'comments' ? 'active' : ''}`}
 						onClick={() => setActiveTab('comments')}
 					>
@@ -793,6 +800,15 @@ export default function RequestDetailModal({
 													)}
 												</div>
 											)}
+									</div>
+								)}
+
+								{activeTab === 'files' && (
+									<div className='tab-content'>
+										<AttachmentsPanel
+											entityType='REQUEST'
+											entityId={requestId}
+										/>
 									</div>
 								)}
 
