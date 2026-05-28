@@ -232,8 +232,12 @@ docker exec -it amonitoring-crm-backend python init_admin.py
 10. Важные моменты
 
 Backend не должен быть напрямую открыт наружу.
+
 Папка `uploads` должна сохраняться между пересборками.
+
 Папка `certs` должна содержать SSL CA-сертификат для Yandex Managed MySQL.
+
 Если backend отдаёт 500 на `/cities`, `/clients`, `/requests`, первым делом нужно проверить `DB_SSL_CA` и наличие файла сертификата внутри контейнера:
+
 
 docker exec -it amonitoring-crm-backend ls -la /app/certs
