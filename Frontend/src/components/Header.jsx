@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { API_BASE_URL, getJsonAuthHeaders } from '../api'
 import { useNavigate } from 'react-router-dom'
 import logoImg from '../assets/logo.png'
 import '../styles/Header.css'
@@ -20,24 +21,13 @@ export default function Header() {
 	const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
 	const notificationsRef = useRef(null)
 
-	const BASE_URL = 'http://127.0.0.1:8000'
-
-	const getAuthHeaders = () => {
-		const token = localStorage.getItem('access_token')
-
-		return {
-			'Content-Type': 'application/json',
-			...(token && { Authorization: `Bearer ${token}` }),
-		}
-	}
-
 	const fetchNotifications = async () => {
 		try {
-			const headers = getAuthHeaders()
+			const headers = getJsonAuthHeaders()
 
 			const [notificationsRes, countRes] = await Promise.all([
-				fetch(`${BASE_URL}/notifications?limit=10`, { headers }),
-				fetch(`${BASE_URL}/notifications/unread-count`, { headers }),
+				fetch(`${API_BASE_URL}/notifications?limit=10`, { headers }),
+				fetch(`${API_BASE_URL}/notifications/unread-count`, { headers }),
 			])
 
 			if (notificationsRes.ok) {
@@ -57,10 +47,10 @@ export default function Header() {
 	const markNotificationAsRead = async notificationId => {
 		try {
 			const res = await fetch(
-				`${BASE_URL}/notifications/${notificationId}/read`,
+				`${API_BASE_URL}/notifications/${notificationId}/read`,
 				{
 					method: 'PATCH',
-					headers: getAuthHeaders(),
+					headers: getJsonAuthHeaders(),
 				},
 			)
 
@@ -80,9 +70,9 @@ export default function Header() {
 
 	const markAllNotificationsAsRead = async () => {
 		try {
-			const res = await fetch(`${BASE_URL}/notifications/read-all`, {
+			const res = await fetch(`${API_BASE_URL}/notifications/read-all`, {
 				method: 'PATCH',
-				headers: getAuthHeaders(),
+				headers: getJsonAuthHeaders(),
 			})
 
 			if (res.ok) {
@@ -102,9 +92,9 @@ export default function Header() {
 
 	const deleteReadNotifications = async () => {
 		try {
-			const res = await fetch(`${BASE_URL}/notifications/read`, {
+			const res = await fetch(`${API_BASE_URL}/notifications/read`, {
 				method: 'DELETE',
-				headers: getAuthHeaders(),
+				headers: getJsonAuthHeaders(),
 			})
 
 			if (res.ok) {
@@ -145,20 +135,18 @@ export default function Header() {
 	useEffect(() => {
 		const loadData = async () => {
 			try {
-				const token = localStorage.getItem('access_token')
-
-				const headers = getAuthHeaders()
+				const headers = getJsonAuthHeaders()
 
 				const [resClients, resRequests, resWarehouse] = await Promise.all([
-					fetch(`${BASE_URL}/clients`, { headers })
+					fetch(`${API_BASE_URL}/clients`, { headers })
 						.then(res => (res.ok ? res.json() : []))
 						.catch(() => []),
 
-					fetch(`${BASE_URL}/requests`, { headers })
+					fetch(`${API_BASE_URL}/requests`, { headers })
 						.then(res => (res.ok ? res.json() : []))
 						.catch(() => []),
 
-					fetch(`${BASE_URL}/warehouse/items`, { headers })
+					fetch(`${API_BASE_URL}/warehouse/items`, { headers })
 						.then(res => (res.ok ? res.json() : []))
 						.catch(() => []),
 				])
@@ -182,7 +170,9 @@ export default function Header() {
 				// Загружаем автомобили по каждому клиенту, потому что /vehicles требует client_id
 				const vehiclesByClients = await Promise.all(
 					activeClients.map(client =>
-						fetch(`${BASE_URL}/vehicles?client_id=${client.id}`, { headers })
+						fetch(`${API_BASE_URL}/vehicles?client_id=${client.id}`, {
+							headers,
+						})
 							.then(res => (res.ok ? res.json() : []))
 							.catch(() => []),
 					),

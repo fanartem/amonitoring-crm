@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { API_BASE_URL, getAuthHeaders } from '../api'
 import { useLocation } from 'react-router-dom'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
@@ -108,19 +109,18 @@ export default function Warehouse() {
 	const fetchItems = async () => {
 		setLoading(true)
 		try {
-			const token = localStorage.getItem('access_token')
-			// Собираем query-параметры
 			const params = new URLSearchParams()
 			if (filters.category) params.append('category', filters.category)
 			if (filters.status) params.append('status', filters.status)
 			if (filters.search) params.append('search', filters.search)
 
 			const res = await fetch(
-				`http://127.0.0.1:8000/warehouse/items?${params.toString()}`,
+				`${API_BASE_URL}/warehouse/items?${params.toString()}`,
 				{
-					headers: { Authorization: `Bearer ${token}` },
+					headers: getAuthHeaders(),
 				},
 			)
+
 			if (res.ok) {
 				setItems(await res.json())
 			}
@@ -135,12 +135,8 @@ export default function Warehouse() {
 		setLoading(true)
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/warehouse/deleted', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+			const res = await fetch(`${API_BASE_URL}/warehouse/deleted`, {
+				headers: getAuthHeaders(),
 			})
 
 			if (!res.ok) {
@@ -191,16 +187,18 @@ export default function Warehouse() {
 
 	const handleDelete = async id => {
 		if (!window.confirm('Переместить оборудование в корзину?')) return
+
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/warehouse/items/${id}`, {
+			const res = await fetch(`${API_BASE_URL}/warehouse/items/${id}`, {
 				method: 'DELETE',
-				headers: { Authorization: `Bearer ${token}` },
+				headers: getAuthHeaders(),
 			})
+
 			if (!res.ok) {
 				const err = await res.json()
 				throw new Error(err.detail)
 			}
+
 			fetchItems()
 		} catch (err) {
 			alert(err.message)
@@ -211,17 +209,10 @@ export default function Warehouse() {
 		if (!window.confirm('Восстановить оборудование из корзины?')) return
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch(
-				`http://127.0.0.1:8000/warehouse/items/${id}/restore`,
-				{
-					method: 'PATCH',
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
-				},
-			)
+			const res = await fetch(`${API_BASE_URL}/warehouse/items/${id}/restore`, {
+				method: 'PATCH',
+				headers: getAuthHeaders(),
+			})
 
 			if (!res.ok) {
 				const err = await res.json().catch(() => null)
@@ -262,13 +253,9 @@ export default function Warehouse() {
 		formData.append('file', pendingImportFile)
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/warehouse/import', {
+			const res = await fetch(`${API_BASE_URL}/warehouse/import`, {
 				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getAuthHeaders(),
 				body: formData,
 			})
 
@@ -385,12 +372,8 @@ export default function Warehouse() {
 	}
 
 	const fetchAllActiveWarehouseItems = async () => {
-		const token = localStorage.getItem('access_token')
-
-		const res = await fetch('http://127.0.0.1:8000/warehouse/items', {
-			headers: {
-				Authorization: `Bearer ${token}`,
-			},
+		const res = await fetch(`${API_BASE_URL}/warehouse/items`, {
+			headers: getAuthHeaders(),
 		})
 
 		if (!res.ok) {
@@ -589,15 +572,15 @@ export default function Warehouse() {
 			})
 		}
 
-		return lines.join('\n')
+		return lines.join('\n\n')
 	}
 
 	// СКАЧАТЬ ШАБЛОН CSV
 	const downloadTemplate = async () => {
-		const token = localStorage.getItem('access_token')
-		const res = await fetch('http://127.0.0.1:8000/warehouse/template', {
-			headers: { Authorization: `Bearer ${token}` },
+		const res = await fetch(`${API_BASE_URL}/warehouse/template`, {
+			headers: getAuthHeaders(),
 		})
+
 		if (res.ok) {
 			const blob = await res.blob()
 			const url = window.URL.createObjectURL(blob)
@@ -605,6 +588,7 @@ export default function Warehouse() {
 			a.href = url
 			a.download = 'warehouse_template.csv'
 			a.click()
+			window.URL.revokeObjectURL(url)
 		}
 	}
 
@@ -1180,14 +1164,6 @@ export default function Warehouse() {
 								onClick={() => setImportResult(null)}
 							>
 								Закрыть
-							</button>
-
-							<button
-								className='warehouse-submit-btn'
-								type='button'
-								onClick={() => navigator.clipboard.writeText(importResult)}
-							>
-								Скопировать
 							</button>
 						</div>
 					</div>

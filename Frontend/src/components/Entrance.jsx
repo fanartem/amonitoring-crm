@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react'
+import { API_BASE_URL } from '../api'
 
 export default function Entrance() {
-	const API_BASE_URL = 'http://127.0.0.1:8000'
-
 	const [isLoginMode, setIsLoginMode] = useState(true)
 
 	const [email, setEmail] = useState('')
@@ -22,13 +21,7 @@ export default function Entrance() {
 
 	const fetchCities = async () => {
 		try {
-			const response = await fetch(`${API_BASE_URL}/cities`, {
-				headers: {
-					Authorization: localStorage.getItem('access_token')
-						? `Bearer ${localStorage.getItem('access_token')}`
-						: '',
-				},
-			})
+			const response = await fetch(`${API_BASE_URL}/cities`)
 
 			if (response.ok) {
 				const data = await response.json()

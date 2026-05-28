@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/CreateRequestModal.css'
 
 const mapTypeToUI = dbType => {
@@ -69,7 +70,7 @@ export default function CreateRequestModal({
 	const [clientVehicles, setClientVehicles] = useState([])
 	const [cities, setCities] = useState([])
 	const [priceItems, setPriceItems] = useState([])
-	
+
 	const [requestVehicles, setRequestVehicles] = useState([
 		createEmptyRequestVehicle(),
 	])
@@ -218,12 +219,8 @@ export default function CreateRequestModal({
 
 	const fetchClients = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/clients', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+			const res = await fetch(`${API_BASE_URL}/clients`, {
+				headers: getAuthHeaders(),
 			})
 
 			if (res.ok) {
@@ -236,13 +233,7 @@ export default function CreateRequestModal({
 
 	const fetchCities = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/cities', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
-			})
+			const res = await fetch(`${API_BASE_URL}/cities`)
 
 			if (res.ok) {
 				const data = await res.json()
@@ -255,12 +246,8 @@ export default function CreateRequestModal({
 
 	const fetchPriceItems = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/prices?active_only=true', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+			const res = await fetch(`${API_BASE_URL}/prices?active_only=true`, {
+				headers: getAuthHeaders(),
 			})
 
 			if (res.ok) {
@@ -274,14 +261,10 @@ export default function CreateRequestModal({
 
 	const fetchClientVehicles = async clientId => {
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const res = await fetch(
-				`http://127.0.0.1:8000/vehicles?client_id=${clientId}`,
+				`${API_BASE_URL}/vehicles?client_id=${clientId}`,
 				{
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
+					headers: getAuthHeaders(),
 				},
 			)
 
@@ -434,7 +417,7 @@ export default function CreateRequestModal({
 
 		clearMissingField(`${fieldName}_${localId}`)
 	}
-	
+
 	const addRequestVehicle = () => {
 		setRequestVehicles(prev => [...prev, createVehicleWithDefaultGps()])
 	}
@@ -445,7 +428,7 @@ export default function CreateRequestModal({
 			return prev.filter(vehicle => vehicle.local_id !== localId)
 		})
 	}
-	
+
 	const addExtraSensor = vehicleLocalId => {
 		setRequestVehicles(prev =>
 			prev.map(vehicle =>
@@ -631,14 +614,10 @@ export default function CreateRequestModal({
 
 		if (!normalizedVin) return null
 
-		const token = localStorage.getItem('access_token')
-
 		const res = await fetch(
-			`http://127.0.0.1:8000/vehicles/check-vin?vin=${encodeURIComponent(normalizedVin)}`,
+			`${API_BASE_URL}/vehicles/check-vin?vin=${encodeURIComponent(normalizedVin)}`,
 			{
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getAuthHeaders(),
 			},
 		)
 
@@ -682,12 +661,7 @@ export default function CreateRequestModal({
 		setLoading(true)
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const headers = {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${token}`,
-			}
+			const headers = getJsonAuthHeaders()
 
 			validateDuplicateVinsInForm()
 
@@ -749,7 +723,7 @@ export default function CreateRequestModal({
 
 			if (isEditMode) {
 				const updateRes = await fetch(
-					`http://127.0.0.1:8000/requests/${editRequestData.id}`,
+					`${API_BASE_URL}/requests/${editRequestData.id}`,
 					{
 						method: 'PATCH',
 						headers,
@@ -773,7 +747,7 @@ export default function CreateRequestModal({
 				: null
 
 			if (clientKind === 'new') {
-				const clientRes = await fetch('http://127.0.0.1:8000/clients', {
+				const clientRes = await fetch(`${API_BASE_URL}/clients`, {
 					method: 'POST',
 					headers,
 					body: JSON.stringify({
@@ -826,7 +800,7 @@ export default function CreateRequestModal({
 					: null
 
 				if (!finalVehicleId) {
-					const vehicleRes = await fetch('http://127.0.0.1:8000/vehicles', {
+					const vehicleRes = await fetch(`${API_BASE_URL}/vehicles`, {
 						method: 'POST',
 						headers,
 						body: JSON.stringify({
@@ -875,7 +849,7 @@ export default function CreateRequestModal({
 
 			const requestPricePayload = buildRequestPricePayload()
 
-			const requestRes = await fetch('http://127.0.0.1:8000/requests', {
+			const requestRes = await fetch(`${API_BASE_URL}/requests`, {
 				method: 'POST',
 				headers,
 				body: JSON.stringify({
@@ -896,7 +870,7 @@ export default function CreateRequestModal({
 			const requestData = await requestRes.json()
 
 			if (formData.manager_comment) {
-				await fetch('http://127.0.0.1:8000/requests/comments', {
+				await fetch(`${API_BASE_URL}/requests/comments`, {
 					method: 'POST',
 					headers,
 					body: JSON.stringify({
@@ -916,7 +890,7 @@ export default function CreateRequestModal({
 	}
 
 	const isExisting = clientKind === 'existing'
-  	const isClientLocked = isEditMode || (isExisting && !isEditMode)
+	const isClientLocked = isEditMode || (isExisting && !isEditMode)
 
 	const fieldClass = fieldName => {
 		return missingFields.includes(fieldName)
@@ -1105,19 +1079,11 @@ export default function CreateRequestModal({
 		try {
 			setPriceLoading(true)
 
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch(
-				'http://127.0.0.1:8000/prices/calculate-request',
-				{
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${token}`,
-					},
-					body: JSON.stringify(buildPriceCalculationPayload()),
-				},
-			)
+			const res = await fetch(`${API_BASE_URL}/prices/calculate-request`, {
+				method: 'POST',
+				headers: getJsonAuthHeaders(),
+				body: JSON.stringify(buildPriceCalculationPayload()),
+			})
 
 			if (!res.ok) {
 				const data = await res.json().catch(() => null)

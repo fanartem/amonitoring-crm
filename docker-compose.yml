@@ -1,11 +1,14 @@
-version: "3"
-
 services:
-  db:
-    image: mysql:8
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: amonitoring-crm-backend
     restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: crm_db
+    env_file:
+      - ./Backend/.env
     ports:
-      - "3306:3306"
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./certs:/app/certs:ro

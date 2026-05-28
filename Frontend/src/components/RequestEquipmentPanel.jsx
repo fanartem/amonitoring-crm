@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/RequestEquipmentPanel.css'
 
 const CATEGORIES = {
@@ -119,14 +120,10 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 		setError('')
 
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const res = await fetch(
-				`http://127.0.0.1:8000/warehouse/requests/${requestId}/equipment`,
+				`${API_BASE_URL}/warehouse/requests/${requestId}/equipment`,
 				{
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
+					headers: getAuthHeaders(),
 				},
 			)
 
@@ -148,8 +145,6 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 	const fetchWarehouseItems = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const params = new URLSearchParams()
 			params.append('status', 'IN_STOCK')
 
@@ -158,11 +153,9 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 			}
 
 			const res = await fetch(
-				`http://127.0.0.1:8000/warehouse/items?${params.toString()}`,
+				`${API_BASE_URL}/warehouse/items?${params.toString()}`,
 				{
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
+					headers: getAuthHeaders(),
 				},
 			)
 
@@ -203,17 +196,13 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 		setError('')
 
 		try {
-			const token = localStorage.getItem('access_token')
 			const requestVehicleId = Number(selectedRequestVehicleId)
 
 			const res = await fetch(
-				`http://127.0.0.1:8000/warehouse/request-vehicles/${requestVehicleId}/equipment`,
+				`${API_BASE_URL}/warehouse/request-vehicles/${requestVehicleId}/equipment`,
 				{
 					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${token}`,
-					},
+					headers: getJsonAuthHeaders(),
 					body: JSON.stringify({
 						request_vehicle_id: requestVehicleId,
 						warehouse_item_id: Number(selectedItemId),
@@ -252,15 +241,11 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 		setError('')
 
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const res = await fetch(
-				`http://127.0.0.1:8000/warehouse/requests/${requestId}/equipment/${linkId}`,
+				`${API_BASE_URL}/warehouse/requests/${requestId}/equipment/${linkId}`,
 				{
 					method: 'DELETE',
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
+					headers: getAuthHeaders(),
 				},
 			)
 

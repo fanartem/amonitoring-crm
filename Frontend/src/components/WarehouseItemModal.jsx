@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { API_BASE_URL, getJsonAuthHeaders } from '../api'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 
@@ -139,8 +140,6 @@ export default function WarehouseItemModal({
 		setLoading(true)
 
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const payload = {
 				category: formData.category,
 				name: formData.name.trim(),
@@ -160,17 +159,14 @@ export default function WarehouseItemModal({
 			}
 
 			const url = isEditMode
-				? `http://127.0.0.1:8000/warehouse/items/${editItem.id}`
-				: 'http://127.0.0.1:8000/warehouse/items'
+				? `${API_BASE_URL}/warehouse/items/${editItem.id}`
+				: `${API_BASE_URL}/warehouse/items`
 
 			const method = isEditMode ? 'PATCH' : 'POST'
 
 			const res = await fetch(url, {
 				method,
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify(payload),
 			})
 

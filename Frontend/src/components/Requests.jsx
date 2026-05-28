@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import { useLocation } from 'react-router-dom'
 import '../styles/Requests.css'
 import CreateRequestModal from './CreateRequestModal'
@@ -100,10 +101,10 @@ export default function Requests() {
 
 	const fetchRequests = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch('http://127.0.0.1:8000/requests', {
-				headers: { Authorization: `Bearer ${token}` },
+			const res = await fetch(`${API_BASE_URL}/requests`, {
+				headers: getAuthHeaders(),
 			})
+
 			if (res.ok) {
 				const data = await res.json()
 				setRequests(data)
@@ -116,10 +117,10 @@ export default function Requests() {
 
 	const fetchTechnicians = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch('http://127.0.0.1:8000/users/technicians', {
-				headers: { Authorization: `Bearer ${token}` },
+			const res = await fetch(`${API_BASE_URL}/users/technicians`, {
+				headers: getAuthHeaders(),
 			})
+
 			if (res.ok) setTechnicians(await res.json())
 		} catch (err) {
 			console.error(err)
@@ -128,13 +129,7 @@ export default function Requests() {
 
 	const fetchCities = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/cities', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
-			})
+			const res = await fetch(`${API_BASE_URL}/cities`)
 
 			if (res.ok) {
 				const data = await res.json()
@@ -311,15 +306,12 @@ export default function Requests() {
 		if (!window.confirm('Отметить заявку как оплаченную?')) return
 
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
+			const res = await fetch(`${API_BASE_URL}/requests/${reqId}`, {
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ is_paid: true }),
 			})
+
 			if (!res.ok) throw new Error('Ошибка при обновлении статуса оплаты')
 
 			fetchRequests()
@@ -334,17 +326,10 @@ export default function Requests() {
 		if (!window.confirm('Принять эту заявку в работу?')) return
 
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(
-				`http://127.0.0.1:8000/requests/${req.id}/accept`,
-				{
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${token}`,
-					},
-				},
-			)
+			const res = await fetch(`${API_BASE_URL}/requests/${req.id}/accept`, {
+				method: 'POST',
+				headers: getJsonAuthHeaders(),
+			})
 
 			if (!res.ok) {
 				const errData = await res.json()
@@ -384,18 +369,10 @@ export default function Requests() {
 		}
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch(
-				`http://127.0.0.1:8000/requests/${req.id}/complete`,
-				{
-					method: 'PATCH',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${token}`,
-					},
-				},
-			)
+			const res = await fetch(`${API_BASE_URL}/requests/${req.id}/complete`, {
+				method: 'PATCH',
+				headers: getJsonAuthHeaders(),
+			})
 
 			if (!res.ok) {
 				const errData = await res.json().catch(() => null)
@@ -411,19 +388,21 @@ export default function Requests() {
 	const handleDeleteRequest = async (e, reqId) => {
 		e.stopPropagation()
 		setActiveDropdown(null)
+
 		if (
 			!window.confirm(
 				'Вы уверены, что хотите удалить эту заявку? Она будет перемещена в Корзину.',
 			)
-		)
+		) {
 			return
+		}
 
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
+			const res = await fetch(`${API_BASE_URL}/requests/${reqId}`, {
 				method: 'DELETE',
-				headers: { Authorization: `Bearer ${token}` },
+				headers: getAuthHeaders(),
 			})
+
 			if (res.ok) {
 				alert('Заявка удалена!')
 				fetchRequests()
@@ -455,9 +434,8 @@ export default function Requests() {
 		setActiveDropdown(null)
 
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/requests/${reqId}`, {
-				headers: { Authorization: `Bearer ${token}` },
+			const res = await fetch(`${API_BASE_URL}/requests/${reqId}`, {
+				headers: getAuthHeaders(),
 			})
 
 			if (!res.ok) throw new Error('Не удалось загрузить данные заявки')

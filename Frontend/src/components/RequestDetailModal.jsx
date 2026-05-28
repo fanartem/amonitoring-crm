@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/Requests.css'
 
 import RequestEquipmentPanel from './RequestEquipmentPanel'
@@ -93,8 +94,6 @@ export default function RequestDetailModal({
 			setActiveTab(initialTab)
 			fetchRequestDetails()
 			fetchComments()
-			// Убрали проверку ролей! Теперь список монтажников грузится для всех,
-			// чтобы у всех красиво отображались имена вместо ID.
 			fetchTechnicians()
 		}
 	}, [isOpen, requestId, initialTab])
@@ -108,9 +107,8 @@ export default function RequestDetailModal({
 	const fetchRequestDetails = async () => {
 		setLoading(true)
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
-				headers: { Authorization: `Bearer ${token}` },
+			const res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
+				headers: getAuthHeaders(),
 			})
 			if (!res.ok) throw new Error('Не удалось загрузить данные заявки')
 
@@ -126,11 +124,10 @@ export default function RequestDetailModal({
 
 	const fetchComments = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
 			const res = await fetch(
-				`http://127.0.0.1:8000/requests/${requestId}/comments`,
+				`${API_BASE_URL}/requests/${requestId}/comments`,
 				{
-					headers: { Authorization: `Bearer ${token}` },
+					headers: getAuthHeaders(),
 				},
 			)
 			if (res.ok) {
@@ -144,9 +141,8 @@ export default function RequestDetailModal({
 
 	const fetchTechnicians = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/users/technicians`, {
-				headers: { Authorization: `Bearer ${token}` },
+			const res = await fetch(`${API_BASE_URL}/users/technicians`, {
+				headers: getAuthHeaders(),
 			})
 			if (res.ok) {
 				const data = await res.json()
@@ -160,13 +156,9 @@ export default function RequestDetailModal({
 	const handleStatusChange = async e => {
 		const newStatus = e.target.value
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
+			const res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ status: newStatus }),
 			})
 			if (!res.ok) throw new Error('Не удалось обновить статус')
@@ -181,13 +173,9 @@ export default function RequestDetailModal({
 	const handlePaymentChange = async e => {
 		const newIsPaid = e.target.value === 'true'
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
+			const res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ is_paid: newIsPaid }),
 			})
 			if (!res.ok) throw new Error('Не удалось обновить статус оплаты')
@@ -202,13 +190,9 @@ export default function RequestDetailModal({
 	const handleAddComment = async () => {
 		if (!newComment.trim()) return
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/requests/comments`, {
+			const res = await fetch(`${API_BASE_URL}/requests/comments`, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ request_id: requestId, message: newComment }),
 			})
 			if (!res.ok) throw new Error('Не удалось отправить комментарий')
@@ -221,20 +205,13 @@ export default function RequestDetailModal({
 
 	const handleAssign = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
 			const techId = selectedTech ? parseInt(selectedTech, 10) : null
 
-			const res = await fetch(
-				`http://127.0.0.1:8000/requests/${requestId}/assign`,
-				{
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${token}`,
-					},
-					body: JSON.stringify({ technician_id: techId }),
-				},
-			)
+			const res = await fetch(`${API_BASE_URL}/requests/${requestId}/assign`, {
+				method: 'POST',
+				headers: getJsonAuthHeaders(),
+				body: JSON.stringify({ technician_id: techId }),
+			})
 
 			if (!res.ok) throw new Error('Ошибка при назначении/снятии сотрудника')
 
@@ -262,10 +239,9 @@ export default function RequestDetailModal({
 			return
 
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/requests/${requestId}`, {
+			const res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
 				method: 'DELETE',
-				headers: { Authorization: `Bearer ${token}` },
+				headers: getAuthHeaders(),
 			})
 			if (!res.ok) {
 				const errData = await res.text()

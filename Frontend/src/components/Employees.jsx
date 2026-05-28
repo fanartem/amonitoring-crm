@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/Employees.css'
 
 export default function Employees() {
@@ -47,12 +48,12 @@ export default function Employees() {
 
 	const fetchEmployees = async () => {
 		setLoading(true)
+
 		try {
-			const token = localStorage.getItem('access_token')
-			// Замени адрес, если в бэкенде он другой (например /users)
-			const res = await fetch('http://127.0.0.1:8000/admin/users', {
-				headers: { Authorization: `Bearer ${token}` },
+			const res = await fetch(`${API_BASE_URL}/admin/users`, {
+				headers: getAuthHeaders(),
 			})
+
 			if (!res.ok) throw new Error('Не удалось загрузить сотрудников')
 
 			const data = await res.json()
@@ -66,13 +67,7 @@ export default function Employees() {
 
 	const fetchCities = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/cities', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
-			})
+			const res = await fetch(`${API_BASE_URL}/cities`)
 
 			if (res.ok) {
 				const data = await res.json()
@@ -87,13 +82,9 @@ export default function Employees() {
 		if (!window.confirm(`Удалить сотрудника ${name}?`)) return
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const response = await fetch(`http://127.0.0.1:8000/admin/users/${id}`, {
+			const response = await fetch(`${API_BASE_URL}/admin/users/${id}`, {
 				method: 'DELETE',
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getAuthHeaders(),
 			})
 
 			if (!response.ok) {
@@ -101,7 +92,6 @@ export default function Employees() {
 				throw new Error(data.detail || 'Ошибка удаления')
 			}
 
-			// 🔥 обновляем список без перезагрузки
 			setEmployees(prev => prev.filter(emp => emp.id !== id))
 		} catch (err) {
 			alert(err.message)
@@ -130,8 +120,6 @@ export default function Employees() {
 
 	const handleSave = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const body = {
 				email: formData.email,
 				name: formData.name,
@@ -148,13 +136,10 @@ export default function Employees() {
 			}
 
 			const response = await fetch(
-				`http://127.0.0.1:8000/admin/users/${selectedUser.id}`,
+				`${API_BASE_URL}/admin/users/${selectedUser.id}`,
 				{
 					method: 'PUT',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${token}`,
-					},
+					headers: getJsonAuthHeaders(),
 					body: JSON.stringify(body),
 				},
 			)

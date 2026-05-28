@@ -1,24 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/AttachmentsPanel.css'
-
-const BASE_URL = 'http://127.0.0.1:8000'
-
-const getAuthHeaders = () => {
-	const token = localStorage.getItem('access_token')
-
-	return {
-		Authorization: `Bearer ${token}`,
-	}
-}
-
-const getJsonHeaders = () => {
-	const token = localStorage.getItem('access_token')
-
-	return {
-		'Content-Type': 'application/json',
-		Authorization: `Bearer ${token}`,
-	}
-}
 
 const formatFileSize = bytes => {
 	const size = Number(bytes || 0)
@@ -70,7 +52,7 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 		try {
 			const res = await fetch(
-				`${BASE_URL}/attachments/entity/${normalizedEntityType}/${entityId}`,
+				`${API_BASE_URL}/attachments/entity/${normalizedEntityType}/${entityId}`,
 				{
 					headers: getAuthHeaders(),
 				},
@@ -103,7 +85,7 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 		try {
 			const res = await fetch(
-				`${BASE_URL}/attachments/entity/${normalizedEntityType}/${entityId}`,
+				`${API_BASE_URL}/attachments/entity/${normalizedEntityType}/${entityId}`,
 				{
 					method: 'POST',
 					headers: getAuthHeaders(),
@@ -148,9 +130,9 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 		}
 
 		try {
-			const res = await fetch(`${BASE_URL}/attachments/${attachmentId}`, {
+			const res = await fetch(`${API_BASE_URL}/attachments/${attachmentId}`, {
 				method: 'PATCH',
-				headers: getJsonHeaders(),
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({
 					display_name: nextName,
 				}),
@@ -189,7 +171,7 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 		}
 
 		try {
-			const res = await fetch(`${BASE_URL}/attachments/${attachment.id}`, {
+			const res = await fetch(`${API_BASE_URL}/attachments/${attachment.id}`, {
 				method: 'DELETE',
 				headers: getAuthHeaders(),
 			})
@@ -209,7 +191,7 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 	const downloadAttachment = async attachment => {
 		try {
 			const res = await fetch(
-				`${BASE_URL}/attachments/${attachment.id}/download`,
+				`${API_BASE_URL}/attachments/${attachment.id}/download`,
 				{
 					headers: getAuthHeaders(),
 				},

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { API_BASE_URL, getJsonAuthHeaders } from '../api'
 import '../styles/Requests.css'
 import '../styles/CreateClientModal.css'
 
@@ -95,8 +96,6 @@ export default function CreateClientModal({
 		setLoading(true)
 
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const payload = {
 				type: formData.type,
 				name: formData.name.trim(),
@@ -109,17 +108,14 @@ export default function CreateClientModal({
 			}
 
 			const url = isEditMode
-				? `http://127.0.0.1:8000/clients/${editClient.id}`
-				: 'http://127.0.0.1:8000/clients'
+				? `${API_BASE_URL}/clients/${editClient.id}`
+				: `${API_BASE_URL}/clients`
 
 			const method = isEditMode ? 'PATCH' : 'POST'
 
 			const res = await fetch(url, {
 				method,
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify(payload),
 			})
 

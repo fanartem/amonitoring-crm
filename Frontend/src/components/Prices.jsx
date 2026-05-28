@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/Prices.css'
-
-const API_BASE_URL = 'http://127.0.0.1:8000'
 
 const getUserRole = () => {
 	try {
@@ -87,26 +86,13 @@ export default function Prices() {
 		}
 	}, [selectedClientId])
 
-	const authHeaders = useMemo(() => {
-		const token = localStorage.getItem('access_token')
-
-		return {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`,
-		}
-	}, [])
-
 	const fetchPrices = async () => {
 		setLoading(true)
 		setError('')
 
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const res = await fetch(`${API_BASE_URL}/prices`, {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getAuthHeaders(),
 			})
 
 			if (!res.ok) {
@@ -125,12 +111,8 @@ export default function Prices() {
 
 	const fetchClients = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const res = await fetch(`${API_BASE_URL}/clients`, {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getAuthHeaders(),
 			})
 
 			if (res.ok) {
@@ -147,12 +129,8 @@ export default function Prices() {
 		setError('')
 
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const res = await fetch(`${API_BASE_URL}/prices/client/${clientId}`, {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getAuthHeaders(),
 			})
 
 			if (!res.ok) {
@@ -253,7 +231,7 @@ export default function Prices() {
 			if (editingPrice) {
 				res = await fetch(`${API_BASE_URL}/prices/${editingPrice.id}`, {
 					method: 'PATCH',
-					headers: authHeaders,
+					headers: getJsonAuthHeaders(),
 					body: JSON.stringify({
 						...payload,
 						is_active: baseForm.is_active,
@@ -262,7 +240,7 @@ export default function Prices() {
 			} else {
 				res = await fetch(`${API_BASE_URL}/prices`, {
 					method: 'POST',
-					headers: authHeaders,
+					headers: getJsonAuthHeaders(),
 					body: JSON.stringify(payload),
 				})
 			}
@@ -300,7 +278,7 @@ export default function Prices() {
 
 			const res = await fetch(url, {
 				method: isActive ? 'DELETE' : 'PATCH',
-				headers: authHeaders,
+				headers: getJsonAuthHeaders(),
 			})
 
 			if (!res.ok) {
@@ -343,7 +321,7 @@ export default function Prices() {
 				`${API_BASE_URL}/prices/client/${selectedClientId}`,
 				{
 					method: 'PUT',
-					headers: authHeaders,
+					headers: getJsonAuthHeaders(),
 					body: JSON.stringify({
 						prices: [
 							{
@@ -377,7 +355,7 @@ export default function Prices() {
 				`${API_BASE_URL}/prices/client/${selectedClientId}/${item.price_item_id}`,
 				{
 					method: 'DELETE',
-					headers: authHeaders,
+					headers: getJsonAuthHeaders(),
 				},
 			)
 

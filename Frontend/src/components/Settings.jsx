@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/Settings.css'
 
 const getUserRole = () => {
@@ -51,12 +52,8 @@ export default function Settings() {
 		setNotificationError('')
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/notifications/settings', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+			const res = await fetch(`${API_BASE_URL}/notifications/settings`, {
+				headers: getAuthHeaders(),
 			})
 
 			if (!res.ok) {
@@ -88,18 +85,13 @@ export default function Settings() {
 		setNotificationSettings(nextSettings)
 
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const changedSetting = nextSettings.find(
 				setting => setting.type_code === typeCode,
 			)
 
-			const res = await fetch('http://127.0.0.1:8000/notifications/settings', {
+			const res = await fetch(`${API_BASE_URL}/notifications/settings`, {
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({
 					settings: [
 						{
@@ -127,16 +119,9 @@ export default function Settings() {
 		setError('')
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch(
-				'http://127.0.0.1:8000/cities?active_only=false',
-				{
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
-				},
-			)
+			const res = await fetch(`${API_BASE_URL}/cities?active_only=false`, {
+				headers: getAuthHeaders(),
+			})
 
 			if (!res.ok) {
 				const data = await res.json().catch(() => null)
@@ -163,14 +148,9 @@ export default function Settings() {
 		}
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch('http://127.0.0.1:8000/cities', {
+			const res = await fetch(`${API_BASE_URL}/cities`, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ name }),
 			})
 
@@ -206,14 +186,9 @@ export default function Settings() {
 		}
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch(`http://127.0.0.1:8000/cities/${cityId}`, {
+			const res = await fetch(`${API_BASE_URL}/cities/${cityId}`, {
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ name }),
 			})
 
@@ -239,14 +214,9 @@ export default function Settings() {
 		if (!window.confirm(confirmText)) return
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const res = await fetch(`http://127.0.0.1:8000/cities/${city.id}`, {
+			const res = await fetch(`${API_BASE_URL}/cities/${city.id}`, {
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${token}`,
-				},
+				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ is_active: nextActive }),
 			})
 

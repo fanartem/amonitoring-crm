@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { API_BASE_URL, getAuthHeaders } from '../api'
 import '../styles/Approvals.css'
 
 export default function Approvals() {
@@ -15,7 +16,7 @@ export default function Approvals() {
 		WAREHOUSE_MANAGER: 'Заведующий складом',
 	}
 
-  const roleClasses = {
+	const roleClasses = {
 		ADMIN: 'role-admin',
 		MANAGER: 'role-manager',
 		SENIOR_TECHNICIAN: 'role-senior',
@@ -33,16 +34,9 @@ export default function Approvals() {
 		setError('')
 
 		try {
-			const token = localStorage.getItem('access_token')
-
-			const response = await fetch(
-				'http://127.0.0.1:8000/admin/pending-users',
-				{
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
-				},
-			)
+			const response = await fetch(`${API_BASE_URL}/admin/pending-users`, {
+				headers: getAuthHeaders(),
+			})
 
 			if (!response.ok) {
 				throw new Error('Не удалось загрузить список заявок на регистрацию')
@@ -59,15 +53,11 @@ export default function Approvals() {
 
 	const handleApprove = async userId => {
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const response = await fetch(
-				`http://127.0.0.1:8000/admin/approve-user/${userId}`,
+				`${API_BASE_URL}/admin/approve-user/${userId}`,
 				{
 					method: 'POST',
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
+					headers: getAuthHeaders(),
 				},
 			)
 
@@ -89,15 +79,11 @@ export default function Approvals() {
 		if (!confirmed) return
 
 		try {
-			const token = localStorage.getItem('access_token')
-
 			const response = await fetch(
-				`http://127.0.0.1:8000/admin/reject-user/${userId}`,
+				`${API_BASE_URL}/admin/reject-user/${userId}`,
 				{
 					method: 'DELETE',
-					headers: {
-						Authorization: `Bearer ${token}`,
-					},
+					headers: getAuthHeaders(),
 				},
 			)
 
@@ -151,12 +137,20 @@ export default function Approvals() {
 
 								{/* НОВОЕ: Вывод города, если пользователь его указал */}
 								{user.city && (
-									<div style={{ fontSize: '13px', color: '#666', marginTop: '4px', marginBottom: '8px', fontWeight: '500' }}>
+									<div
+										style={{
+											fontSize: '13px',
+											color: '#666',
+											marginTop: '4px',
+											marginBottom: '8px',
+											fontWeight: '500',
+										}}
+									>
 										📍 {user.city}
 									</div>
 								)}
 
-								<div 
+								<div
 									className={`approval-role role-badge ${roleClasses[user.role] || 'role-tech'}`}
 									style={{ marginTop: user.city ? '0' : '8px' }}
 								>

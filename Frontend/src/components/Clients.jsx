@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import { useLocation } from 'react-router-dom'
 import '../styles/Clients.css'
 import '../styles/Requests.css'
@@ -145,12 +146,10 @@ export default function Clients() {
 	const fetchClients = async () => {
 		setLoading(true)
 		setError('')
+
 		try {
-			const token = localStorage.getItem('access_token')
-			const response = await fetch('http://127.0.0.1:8000/clients', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+			const response = await fetch(`${API_BASE_URL}/clients`, {
+				headers: getAuthHeaders(),
 			})
 
 			if (!response.ok) {
@@ -168,10 +167,10 @@ export default function Clients() {
 
 	const fetchTechnicians = async () => {
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch('http://127.0.0.1:8000/users/technicians', {
-				headers: { Authorization: `Bearer ${token}` },
+			const res = await fetch(`${API_BASE_URL}/users/technicians`, {
+				headers: getAuthHeaders(),
 			})
+
 			if (res.ok) setTechnicians(await res.json())
 		} catch (err) {
 			console.error(err)
@@ -265,13 +264,9 @@ export default function Clients() {
 		setShowVehicles(false)
 
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(
-				`http://127.0.0.1:8000/clients/${client.id}/requests`,
-				{
-					headers: { Authorization: `Bearer ${token}` },
-				},
-			)
+			const res = await fetch(`${API_BASE_URL}/clients/${client.id}/requests`, {
+				headers: getAuthHeaders(),
+			})
 
 			if (res.ok) {
 				const data = await res.json()
@@ -285,19 +280,22 @@ export default function Clients() {
 
 	const fetchClientVehicles = async (clientId, silent = false) => {
 		setIsVehiclesLoading(true)
+
 		try {
-			const token = localStorage.getItem('access_token')
 			const res = await fetch(
-				`http://127.0.0.1:8000/vehicles?client_id=${clientId}`,
+				`${API_BASE_URL}/vehicles?client_id=${clientId}`,
 				{
-					headers: { Authorization: `Bearer ${token}` },
+					headers: getAuthHeaders(),
 				},
 			)
+
 			if (res.ok) {
 				const data = await res.json()
 				setClientVehicles(data)
-				if (data.length === 0 && !silent)
+
+				if (data.length === 0 && !silent) {
 					alert('У этого клиента пока нет добавленных автомобилей.')
+				}
 			}
 		} catch (err) {
 			console.error('Ошибка загрузки машин:', err)
@@ -308,7 +306,6 @@ export default function Clients() {
 
 	const fetchEquipmentForClientRequests = async requestsList => {
 		try {
-			const token = localStorage.getItem('access_token')
 			const equipmentByVehicle = {}
 
 			await Promise.all(
@@ -317,9 +314,9 @@ export default function Clients() {
 
 					try {
 						const res = await fetch(
-							`http://127.0.0.1:8000/warehouse/requests/${req.id}/equipment`,
+							`${API_BASE_URL}/warehouse/requests/${req.id}/equipment`,
 							{
-								headers: { Authorization: `Bearer ${token}` },
+								headers: getAuthHeaders(),
 							},
 						)
 
@@ -362,21 +359,23 @@ export default function Clients() {
 	const handleDeleteClient = async (e, clientId, clientName) => {
 		e.stopPropagation()
 		setActiveDropdown(null)
+
 		if (
 			!window.confirm(`Вы уверены, что хотите удалить клиента "${clientName}"?`)
-		)
+		) {
 			return
+		}
 
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(`http://127.0.0.1:8000/clients/${clientId}`, {
+			const res = await fetch(`${API_BASE_URL}/clients/${clientId}`, {
 				method: 'DELETE',
-				headers: { Authorization: `Bearer ${token}` },
+				headers: getAuthHeaders(),
 			})
 
 			if (res.ok) {
 				alert('Клиент успешно удален в корзину!')
 				fetchClients()
+
 				if (selectedClient && selectedClient.id === clientId) {
 					setSelectedClient(null)
 				}
@@ -404,28 +403,22 @@ export default function Clients() {
 	// ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ОТРЕДАКТИРОВАННОГО АВТО (без IMEI, так как он берется со склада)
 	const handleVehicleSubmit = async e => {
 		e.preventDefault()
+
 		try {
-			const token = localStorage.getItem('access_token')
-			const res = await fetch(
-				`http://127.0.0.1:8000/vehicles/${editingVehicle.id}`,
-				{
-					method: 'PATCH',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${token}`,
-					},
-					body: JSON.stringify({
-						brand: editingVehicle.brand,
-						model: editingVehicle.model,
-						plate_number: editingVehicle.plate_number,
-						vin: editingVehicle.vin,
-						year: editingVehicle.year
-							? parseInt(editingVehicle.year, 10)
-							: null,
-					}),
-				},
-			)
+			const res = await fetch(`${API_BASE_URL}/vehicles/${editingVehicle.id}`, {
+				method: 'PATCH',
+				headers: getJsonAuthHeaders(),
+				body: JSON.stringify({
+					brand: editingVehicle.brand,
+					model: editingVehicle.model,
+					plate_number: editingVehicle.plate_number,
+					vin: editingVehicle.vin,
+					year: editingVehicle.year ? parseInt(editingVehicle.year, 10) : null,
+				}),
+			})
+
 			if (!res.ok) throw new Error(await res.text())
+
 			alert('Данные авто успешно обновлены!')
 			setEditingVehicle(null)
 			fetchClientVehicles(selectedClient.id)
