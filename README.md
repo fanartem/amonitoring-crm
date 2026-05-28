@@ -22,34 +22,22 @@ MySQL → внешний Yandex Managed MySQL cluster
 
 Предлагаемая структура:
 
+```text
 amonitoring-crm/
-
 ├── Backend/
-
 │   ├── app/
-
 │   ├── requirements.txt
-
 │   ├── Dockerfile
-
 │   ├── .env
-
 │   └── ...
-
 ├── Frontend/
-
 │   ├── dist/
-
 │   └── ...
-
 ├── certs/
-
 │   └── root.crt
-
 ├── uploads/
-
 └── docker-compose.yml
-
+```
 
 Папка `uploads` нужна для хранения прикреплённых файлов к клиентам и заявкам. Её важно не удалять при пересборке контейнера.
 
@@ -61,6 +49,7 @@ amonitoring-crm/
 
 В `Backend/.env` нужно создать конфигурацию:
 
+```env
 DB_HOST=kz1-a-li88sf7alk3ogo1s.mdb.yandexcloud.kz
 DB_PORT=3306
 DB_USER=crm_user
@@ -74,6 +63,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES=480
 JWT_ALGORITHM=HS256
 
 CORS_ALLOWED_ORIGINS=https://crm.amonitoring.kz
+```
 
 Важно: `DB_SSL_CA` должен указывать на путь к сертификату внутри Docker-контейнера.
 Если сертификат на сервере лежит в `./certs/root.crt`, то внутри контейнера он будет доступен как `/app/certs/root.crt`.
@@ -84,6 +74,7 @@ CORS_ALLOWED_ORIGINS=https://crm.amonitoring.kz
 
 Файл `docker-compose.yml`:
 
+```yaml
 services:
   backend:
     build:
@@ -98,6 +89,7 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./certs:/app/certs:ro
+```
 
 Backend наружу напрямую не открываем. Он должен быть доступен только локально на сервере через `127.0.0.1:8000`, а наружу идти через nginx.
 
@@ -107,6 +99,7 @@ Backend наружу напрямую не открываем. Он должен
 
 В `Backend/Dockerfile`:
 
+```dockerfile
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -125,6 +118,7 @@ RUN mkdir -p uploads
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
 
 ---
 
@@ -138,9 +132,11 @@ VITE_API_BASE_URL=/api
 
 Перед деплоем frontend нужно собрать:
 
+```bash
 cd Frontend
 npm install
 npm run build
+```
 
 После сборки папку `Frontend/dist` нужно отдавать через nginx как статический frontend.
 
@@ -157,6 +153,7 @@ https://crm.amonitoring.kz/api → проксировал запросы на Fa
 
 Пример логики:
 
+```nginx
 location /api/ {
     proxy_pass http://127.0.0.1:8000/;
     proxy_set_header Host $host;
@@ -164,6 +161,7 @@ location /api/ {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
+```
 
 Важно именно:
 
@@ -173,9 +171,11 @@ proxy_pass http://127.0.0.1:8000/;
 
 с `/` в конце, чтобы:
 
+```text
 /api/requests → /requests
 /api/auth/login → /auth/login
 /api/docs → /docs
+```
 
 Если `/api` не срезать, backend будет получать `/api/requests` и вернёт 404.
 
@@ -185,17 +185,28 @@ proxy_pass http://127.0.0.1:8000/;
 
 Из корня проекта:
 
+```bash
 docker compose build
 docker compose up -d
+```
 
 Проверка логов:
+
+```bash
 docker compose logs -f backend
+```
 
 Проверка backend через сервер:
+
+```bash
 curl http://127.0.0.1:8000/docs
+```
 
 Проверка через nginx:
+
+```text
 https://crm.amonitoring.kz/api/docs
+```
 
 ---
 
@@ -203,10 +214,20 @@ https://crm.amonitoring.kz/api/docs
 
 Если база `crm` в Yandex MySQL пустая, нужно выполнить создание структуры таблиц.
 
-Перед запуском выполнить:
+Важно: `db_sync.py` пересоздаёт таблицы через `DROP TABLE IF EXISTS`. Запускать его можно только если база пустая или если мы осознанно хотим полностью пересоздать структуру.
 
+Перед запуском желательно проверить:
+
+```sql
+SHOW TABLES;
+```
+
+Если база пустая, выполнить:
+
+```bash
 docker exec -it amonitoring-crm-backend python db_sync.py
 docker exec -it amonitoring-crm-backend python init_admin.py
+```
 
 ---
 
@@ -232,12 +253,10 @@ docker exec -it amonitoring-crm-backend python init_admin.py
 10. Важные моменты
 
 Backend не должен быть напрямую открыт наружу.
-
 Папка `uploads` должна сохраняться между пересборками.
-
 Папка `certs` должна содержать SSL CA-сертификат для Yandex Managed MySQL.
-
 Если backend отдаёт 500 на `/cities`, `/clients`, `/requests`, первым делом нужно проверить `DB_SSL_CA` и наличие файла сертификата внутри контейнера:
 
-
+```bash
 docker exec -it amonitoring-crm-backend ls -la /app/certs
+```
