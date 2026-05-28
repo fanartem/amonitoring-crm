@@ -216,13 +216,7 @@ https://crm.amonitoring.kz/api/docs
 
 Важно: `db_sync.py` пересоздаёт таблицы через `DROP TABLE IF EXISTS`. Запускать его можно только если база пустая или если мы осознанно хотим полностью пересоздать структуру.
 
-Перед запуском желательно проверить:
-
-```sql
-SHOW TABLES;
-```
-
-Если база пустая, выполнить:
+Перед запуском выполнить:
 
 ```bash
 docker exec -it amonitoring-crm-backend python db_sync.py
@@ -253,8 +247,11 @@ docker exec -it amonitoring-crm-backend python init_admin.py
 10. Важные моменты
 
 Backend не должен быть напрямую открыт наружу.
+
 Папка `uploads` должна сохраняться между пересборками.
+
 Папка `certs` должна содержать SSL CA-сертификат для Yandex Managed MySQL.
+
 Если backend отдаёт 500 на `/cities`, `/clients`, `/requests`, первым делом нужно проверить `DB_SSL_CA` и наличие файла сертификата внутри контейнера:
 
 ```bash
