@@ -23,19 +23,33 @@ MySQL → внешний Yandex Managed MySQL cluster
 Предлагаемая структура:
 
 amonitoring-crm/
+
 ├── Backend/
+
 │   ├── app/
+
 │   ├── requirements.txt
+
 │   ├── Dockerfile
+
 │   ├── .env
+
 │   └── ...
+
 ├── Frontend/
+
 │   ├── dist/
+
 │   └── ...
+
 ├── certs/
+
 │   └── root.crt
+
 ├── uploads/
+
 └── docker-compose.yml
+
 
 Папка `uploads` нужна для хранения прикреплённых файлов к клиентам и заявкам. Её важно не удалять при пересборке контейнера.
 
