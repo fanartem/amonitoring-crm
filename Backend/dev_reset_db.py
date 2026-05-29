@@ -1,6 +1,14 @@
+import os
 from app.database import get_connection
 
 def sync_db():
+    if os.getenv("ALLOW_DB_RESET") != "YES":
+        raise RuntimeError(
+            "db_sync.py is dangerous after deployment. "
+            "It drops and recreates tables. "
+            "Set ALLOW_DB_RESET=YES only for local/dev database reset."
+        )
+
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
