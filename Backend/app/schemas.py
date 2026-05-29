@@ -12,7 +12,7 @@ class RequestCreate(BaseModel):
     address: str | None = None
     scheduled_at: datetime | None = None
     vehicles: list["RequestVehicleInput"]
-    price: "RequestPriceInput" | None = None
+    price: "RequestPriceInput | None" = None
 
 class RequestUpdate(BaseModel):
     visit_type: str | None = None
