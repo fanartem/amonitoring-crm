@@ -11,8 +11,8 @@ class RequestCreate(BaseModel):
     platform: str
     address: str | None = None
     scheduled_at: datetime | None = None
-    vehicles: list[RequestVehicleInput]
-    price: RequestPriceInput | None = None
+    vehicles: list["RequestVehicleInput"]
+    price: "RequestPriceInput" | None = None
 
 class RequestUpdate(BaseModel):
     visit_type: str | None = None
@@ -27,7 +27,7 @@ class RequestVehicleInput(BaseModel):
     vehicle_id: int
     has_beacon: bool = False
     has_blocking: bool = False
-    extra_sensors: list[ExtraSensorInput] = []
+    extra_sensors: list["ExtraSensorInput"] = []
 
 class ExtraSensorInput(BaseModel):
     name: str
@@ -220,7 +220,7 @@ class RequestPriceLineInput(BaseModel):
 
 class RequestPriceInput(BaseModel):
     total_price: float = 0
-    lines: list[RequestPriceLineInput] = []
+    lines: list["RequestPriceLineInput"] = []
     
 class NotificationTypeOut(BaseModel):
     id: int
