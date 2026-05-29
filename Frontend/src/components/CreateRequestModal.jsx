@@ -532,15 +532,15 @@ export default function CreateRequestModal({
 	const validateForm = () => {
 		const required = []
 
-		if (!formData.client_name) required.push('client_name')
-		if (!formData.phone) required.push('phone')
-		if (!formData.city) required.push('city')
-		if (!formData.platform) required.push('platform')
+		if (!formData.client_name.trim()) required.push('client_name')
+		if (!formData.phone.trim()) required.push('phone')
+		if (!formData.city.trim()) required.push('city')
+		if (!formData.platform.trim()) required.push('platform')
 
 		if (
 			clientKind === 'new' &&
 			(formData.client_type === 'ТОО' || formData.client_type === 'ИП') &&
-			!formData.company_name
+			!formData.company_name.trim()
 		) {
 			required.push('company_name')
 		}
@@ -752,13 +752,13 @@ export default function CreateRequestModal({
 					headers,
 					body: JSON.stringify({
 						type: mapTypeToDB(formData.client_type),
-						name: formData.client_name,
+						name: formData.client_name.trim(),
 						company_name:
 							formData.client_type === 'Физ. лицо'
 								? null
-								: formData.company_name,
-						phone: formData.phone,
-						email: formData.email || null,
+								: formData.company_name.trim(),
+						phone: formData.phone.trim(),
+						email: formData.email.trim() || null,
 					}),
 				})
 
@@ -781,13 +781,13 @@ export default function CreateRequestModal({
 					{
 						id: finalClientId,
 						type: mapTypeToDB(formData.client_type),
-						name: formData.client_name,
+						name: formData.client_name.trim(),
 						company_name:
 							formData.client_type === 'Физ. лицо'
 								? null
-								: formData.company_name,
-						phone: formData.phone,
-						email: formData.email || null,
+								: formData.company_name.trim(),
+						phone: formData.phone.trim(),
+						email: formData.email.trim() || null,
 					},
 				])
 			}

@@ -9,6 +9,26 @@ const CLIENT_TYPES = {
 	INDIVIDUAL: 'Физ. лицо',
 }
 
+const getErrorMessage = async res => {
+	const contentType = res.headers.get('content-type') || ''
+
+	if (contentType.includes('application/json')) {
+		const data = await res.json().catch(() => null)
+
+		if (typeof data?.detail === 'string') {
+			return data.detail
+		}
+
+		if (Array.isArray(data?.detail)) {
+			return data.detail.map(item => item.msg).join(', ')
+		}
+	}
+
+	const text = await res.text().catch(() => '')
+
+	return text || 'Ошибка сохранения клиента'
+}
+
 export default function CreateClientModal({
 	isOpen,
 	onClose,
@@ -88,6 +108,14 @@ export default function CreateClientModal({
 			return
 		}
 
+		if (
+			(formData.type === 'TOO' || formData.type === 'IP') &&
+			!formData.company_name.trim()
+		) {
+			setError('Название компании обязательно')
+			return
+		}
+
 		if (!formData.phone.trim()) {
 			setError('Телефон обязателен')
 			return
@@ -120,8 +148,7 @@ export default function CreateClientModal({
 			})
 
 			if (!res.ok) {
-				const errData = await res.json()
-				throw new Error(errData.detail || 'Ошибка сохранения клиента')
+				throw new Error(await getErrorMessage(res))
 			}
 
 			resetForm()
@@ -189,7 +216,7 @@ export default function CreateClientModal({
 
 								{(formData.type === 'TOO' || formData.type === 'IP') && (
 									<label className='create-client-field create-client-full'>
-										<span className='create-client-label'>
+										<span className='create-client-label required'>
 											Название компании
 										</span>
 										<input

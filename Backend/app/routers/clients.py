@@ -5,6 +5,90 @@ from app.security import get_current_user
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
+def normalize_text(value: str | None) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def normalize_phone(value: str | None) -> str:
+    """
+    Только цифры.
+    Например: +7 777 123 45 67 -> 77771234567
+    """
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def get_client_display_name(client: dict) -> str:
+    return client.get("company_name") or client.get("name") or f"ID {client.get('id')}"
+
+
+def find_duplicate_client(
+    cursor,
+    client_type: str,
+    name: str | None,
+    company_name: str | None,
+    phone: str | None,
+    exclude_client_id: int | None = None,
+):
+    normalized_phone = normalize_phone(phone)
+
+    if not normalized_phone:
+        return None
+
+    if client_type == "INDIVIDUAL":
+        normalized_name = normalize_text(name)
+
+        if not normalized_name:
+            return None
+
+        sql = """
+            SELECT id, type, name, company_name, phone, is_deleted
+            FROM clients
+            WHERE type = 'INDIVIDUAL'
+              AND is_deleted = 0
+              AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', ''), ')', '') = %s
+              AND LOWER(TRIM(name)) = %s
+        """
+
+        params = [normalized_phone, normalized_name]
+
+    else:
+        normalized_company_name = normalize_text(company_name)
+
+        if not normalized_company_name:
+            return None
+
+        sql = """
+            SELECT id, type, name, company_name, phone, is_deleted
+            FROM clients
+            WHERE type = %s
+              AND is_deleted = 0
+              AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', ''), ')', '') = %s
+              AND LOWER(TRIM(company_name)) = %s
+        """
+
+        params = [client_type, normalized_phone, normalized_company_name]
+
+    if exclude_client_id:
+        sql += " AND id != %s"
+        params.append(exclude_client_id)
+
+    sql += " LIMIT 1"
+
+    cursor.execute(sql, tuple(params))
+    return cursor.fetchone()
+
+
+def raise_duplicate_client_error(duplicate: dict):
+    client_name = get_client_display_name(duplicate)
+
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"Клиент уже существует: {client_name}, телефон: {duplicate.get('phone')}. "
+            "Выберите существующего клиента из списка, а не создавайте нового."
+        )
+    )
+
 def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
     """
     Добавляет к каждой заявке массив vehicles[] из request_vehicles.
@@ -109,18 +193,53 @@ def get_clients(current_user: dict = Depends(get_current_user)):
 def create_client(data: ClientCreate, current_user: dict = Depends(get_current_user)):
     # Только Админ и Менеджер могут создавать базу клиентов
     if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут создавать клиентов")
+        raise HTTPException(
+            status_code=403,
+            detail="Только Менеджер или Админ могут создавать клиентов"
+        )
 
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            sql = """INSERT INTO clients (type, name, company_name, phone, email) 
-                     VALUES (%s, %s, %s, %s, %s)"""
-            cursor.execute(sql, (data.type, data.name, data.company_name, data.phone, data.email))
+            duplicate = find_duplicate_client(
+                cursor=cursor,
+                client_type=data.type,
+                name=data.name,
+                company_name=data.company_name,
+                phone=data.phone,
+            )
+
+            if duplicate:
+                raise_duplicate_client_error(duplicate)
+
+            sql = """
+                INSERT INTO clients (type, name, company_name, phone, email)
+                VALUES (%s, %s, %s, %s, %s)
+            """
+            cursor.execute(
+                sql,
+                (
+                    data.type,
+                    data.name,
+                    data.company_name,
+                    data.phone,
+                    data.email,
+                )
+            )
+
             connection.commit()
-            new_id = cursor.lastrowid 
-            return {"id": new_id, "message": "client created"}
+            new_id = cursor.lastrowid
+
+            return {
+                "id": new_id,
+                "message": "client created"
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
     except Exception as e:
+        connection.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
@@ -194,6 +313,36 @@ def update_client(
 
             if not update_data:
                 return {"message": "Нет данных для обновления"}
+            
+            cursor.execute(
+                """
+                SELECT type, name, company_name, phone
+                FROM clients
+                WHERE id = %s
+                """,
+                (client_id,)
+            )
+            current_client_data = cursor.fetchone()
+
+            next_type = update_data.get("type", current_client_data["type"])
+            next_name = update_data.get("name", current_client_data["name"])
+            next_company_name = update_data.get(
+                "company_name",
+                current_client_data["company_name"]
+            )
+            next_phone = update_data.get("phone", current_client_data["phone"])
+
+            duplicate = find_duplicate_client(
+                cursor=cursor,
+                client_type=next_type,
+                name=next_name,
+                company_name=next_company_name,
+                phone=next_phone,
+                exclude_client_id=client_id,
+            )
+
+            if duplicate:
+                raise_duplicate_client_error(duplicate)
 
             allowed_fields = ["type", "name", "company_name", "phone", "email"]
 
