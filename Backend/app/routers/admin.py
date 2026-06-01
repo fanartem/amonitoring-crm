@@ -113,15 +113,25 @@ def update_user(
             if not (is_admin or is_self):
                 raise HTTPException(status_code=403, detail="No permission")
 
-            # ❗ не админ не может менять роль
-            if not is_admin and "role" in data:
-                raise HTTPException(status_code=403, detail="Cannot change role")
+            # Обычный пользователь может менять только свои разрешённые поля
+            if not is_admin:
+                forbidden_self_fields = {"email", "name", "role", "city"}
+                requested_forbidden_fields = forbidden_self_fields.intersection(data.keys())
 
-            # ❗ защита Main Admin
-            if user["email"] == "admin@example.com" and not is_admin:
-                raise HTTPException(status_code=403, detail="Cannot modify main admin")
+                if requested_forbidden_fields:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Самостоятельно можно менять только пароль"
+                    )
 
-            # 🔄 динамическое обновление
+            # Защита Main Admin от изменения не-админом
+            if user["email"] == "admin@amonitoring.kz" and not is_admin:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Нельзя изменять главного администратора"
+                )
+
+            # динамическое обновление
             updates = []
             values = []
 

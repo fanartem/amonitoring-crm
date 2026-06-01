@@ -36,6 +36,8 @@ export default function Employees() {
 	const currentUserId = Number(tokenPayload.sub)
 	const currentUserRole = tokenPayload.role || null
 	const isAdmin = currentUserRole === 'ADMIN'
+	const isEditingSelf = selectedUser && Number(selectedUser.id) === currentUserId
+	const canEditIdentityFields = isAdmin
 
 	const isCurrentUser = emp => {
 		return Number(emp.id) === currentUserId
@@ -120,19 +122,22 @@ export default function Employees() {
 
 	const handleSave = async () => {
 		try {
-			const body = {
-				email: formData.email,
-				name: formData.name,
+			const body = {}
+
+			if (isAdmin) {
+				body.email = formData.email
+				body.name = formData.name
+				body.role = formData.role
+				body.city = formData.city || null
 			}
 
 			if (formData.password) {
 				body.password = formData.password
 			}
 
-			// только админ может менять роль и город
-			if (isAdmin) {
-				body.role = formData.role
-				body.city = formData.city || null
+			if (Object.keys(body).length === 0) {
+				alert('Нет данных для сохранения')
+				return
 			}
 
 			const response = await fetch(
@@ -272,27 +277,35 @@ export default function Employees() {
 						</div>
 
 						<div className='employee-modal-body'>
-							<label>
-								Имя
-								<input
-									type='text'
-									name='name'
-									placeholder='Имя'
-									value={formData.name}
-									onChange={handleChange}
-								/>
-							</label>
+							{canEditIdentityFields ? (
+								<>
+									<label>
+										Имя
+										<input
+											type='text'
+											name='name'
+											placeholder='Имя'
+											value={formData.name}
+											onChange={handleChange}
+										/>
+									</label>
 
-							<label>
-								Email
-								<input
-									type='email'
-									name='email'
-									placeholder='Email'
-									value={formData.email}
-									onChange={handleChange}
-								/>
-							</label>
+									<label>
+										Email
+										<input
+											type='email'
+											name='email'
+											placeholder='Email'
+											value={formData.email}
+											onChange={handleChange}
+										/>
+									</label>
+								</>
+							) : (
+								<div className='employee-readonly-note'>
+									Имя и email может изменить только администратор.
+								</div>
+							)}
 
 							<label>
 								Новый пароль

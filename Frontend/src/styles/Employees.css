@@ -209,6 +209,15 @@
   margin-top: 22px;
 }
 
+.employee-readonly-note {
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: #f5f5f5;
+	color: #666;
+	font-size: 14px;
+	line-height: 1.4;
+}
+
 .btn-save {
   border: none;
   background: #2563eb;
