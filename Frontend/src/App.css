@@ -21,28 +21,197 @@ html, body, #root {
 }
 
 /* ─────────────────────────────────────────
+   HEADER
+───────────────────────────────────────── */
+.header {
+  background-color: #8DC63F;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 0;
+  flex-shrink: 0;
+}
+
+.logo { display: flex; align-items: center; padding: 0 10px; height: 100%; }
+.logo img { height: 32px; width: auto; display: block; }
+
+.header-right { display: flex; align-items: center; gap: 10px; }
+
+.search-wrap { position: relative; display: flex; align-items: center; }
+
+.search-wrap input {
+  background: #fff; border: none; border-radius: 20px;
+  padding: 5px 34px 5px 14px; font-size: 13px; color: #555;
+  width: 180px; outline: none;
+}
+.search-wrap input::placeholder { color: #aaa; }
+
+.search-icon {
+  position: absolute; right: 10px; top: 50%;
+  transform: translateY(-50%); color: #aaa; display: flex; align-items: center;
+}
+
+.user-btn {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: rgba(255,255,255,0.25); border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.user-btn svg { color: #fff; }
+
+/* ─────────────────────────────────────────
    LAYOUT
 ───────────────────────────────────────── */
 .body-row { display: flex; flex: 1; min-height: 0; }
 
 /* ─────────────────────────────────────────
-   SIDEBAR
+   ИСПРАВЛЕННЫЙ АДАПТИВНЫЙ САЙДБАР (БЕЗ БАГОВ)
 ───────────────────────────────────────── */
 .sidebar {
-  width: 68px; background-color: #5a8a1f;
-  display: flex; flex-direction: column; justify-content: space-between;
-  flex-shrink: 0; padding: 8px 0;
+  width: 150px; /* На десктопе всегда широкий */
+  background-color: #5a8a1f;
+  display: flex; 
+  flex-direction: column; 
+  justify-content: space-between;
+  flex-shrink: 0; 
+  padding: 8px 0;
+  transition: width 0.25s ease-in-out;
+  z-index: 999;
+  border-right: none !important;
 }
-.sidebar-top, .sidebar-bottom { display: flex; flex-direction: column; }
 
-.nav-item {
-  padding: 10px 6px; text-align: center; color: rgba(255,255,255,0.8);
-  font-size: 10.5px; cursor: pointer; user-select: none; line-height: 1.2;
-  white-space: normal; transition: background 0.15s, color 0.15s;
+/* Элемент меню (ПО УМОЛЧАНИЮ ДЛЯ ДЕСКТОПА — ВЫРАВНЕН СЛЕВА) */
+.sidebar .nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px 20px; 
+  color: rgba(255,255,255,0.8);
+  text-decoration: none;
+  font-size: 14px;
+  cursor: pointer; 
+  user-select: none; 
+  line-height: 1.2;
+  transition: background 0.15s, color 0.15s;
 }
-.nav-item:hover { color: #fff; background: rgba(255,255,255,0.08); }
-.nav-item.active { color: #fff; font-weight: 700; border-left: 3px solid #fff; padding-left: 3px; }
 
+/* Иконка внутри меню */
+.sidebar .nav-item i {
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+  margin: 0 !important;
+}
+
+/* Текст ссылки (НА ДЕСКТОПЕ ВСЕГДА ВИДЕН) */
+.sidebar .link-text {
+  display: inline-block;
+  white-space: nowrap;
+  opacity: 1;
+  margin-left: 10px;
+  transition: opacity 0.2s ease;
+}
+
+.sidebar .nav-item:hover { 
+  color: #fff; 
+  background: rgba(255,255,255,0.08); 
+}
+
+.sidebar .nav-item.active { 
+  color: #fff; 
+  font-weight: 700; 
+  background: rgba(255,255,255,0.12);
+  border-left: 4px solid #fff; 
+}
+
+/* Кнопка бургера (скрыта на ПК) */
+.menu-btn {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+  width: 100%;
+  height: 40px;
+  text-align: center;
+  line-height: 40px;
+  outline: none;
+  display: none;
+}
+
+/* ─────────────────────────────────────────
+   📱 МОБИЛЬНАЯ ВЕРСИЯ (Экран меньше 768px)
+───────────────────────────────────────── */
+@media (max-width: 768px) {
+  .menu-btn {
+    display: block; /* Показываем бургер */
+  }
+
+  .sidebar {
+    width: 65px; /* На мобилке по умолчанию узкий */
+  }
+
+  /* Скрываем текст и центрируем иконки в узком виде */
+  .sidebar .link-text {
+    display: none !important;
+    opacity: 0 !important;
+  }
+  
+  .sidebar .nav-item {
+    justify-content: center !important;
+    padding: 12px 0 !important;
+  }
+
+  /* ЕСЛИ САЙДБАР ОТКРЫТ НА МОБИЛКЕ (.active) */
+  .sidebar.active {
+    width: 240px;
+    position: absolute;
+    height: calc(100vh - 48px);
+    box-shadow: 4px 0 15px rgba(0,0,0,0.15) !important;
+  }
+
+  .sidebar.active .nav-item {
+    justify-content: flex-start !important;
+    padding: 12px 20px !important;
+  }
+
+  .sidebar.active .link-text {
+    display: inline-block !important;
+    opacity: 1 !important;
+  }
+  /* Выталкиваем верхний блок наверх, а нижний прижимаем ко дну */
+.sidebar-top {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1; /* Заставляет верхнюю часть занять всё свободное пространство */
+}
+
+.sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  margin-top: auto; /* Железобетонно прижимает блок настроек и выхода к низу */
+}
+}
+
+/* ─────────────────────────────────────────
+   БЕЗОПАСНЫЕ ФИКСЫ ДЛЯ УВЕДОМЛЕНИЙ И ПОЛОС
+───────────────────────────────────────── */
+
+/* Точечно поднимаем только контейнеры всплывающих уведомлений (Toastify), 
+   не трогая элементы интерфейса в шапке */
+.toast-container, 
+.react-toastify, 
+.Toastify__toast-container {
+  z-index: 99999 !important;
+}
+
+/* Убираем возможные бордеры, создающие белую полосу */
+.main, .content, .header {
+  border-left: none !important;
+  border-right: none !important;
+  box-shadow: none !important;
+}
 /* ─────────────────────────────────────────
    MAIN + SECTIONS
 ───────────────────────────────────────── */
