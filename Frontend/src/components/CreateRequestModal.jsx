@@ -337,15 +337,15 @@ export default function CreateRequestModal({
 				prev.map(vehicle =>
 					vehicle.local_id === localId
 						? {
-								...vehicle,
-								car_id: '',
-								car_type: 'Легковая',
-								car_brand: '',
-								car_model: '',
-								car_plate: '',
-								car_vin: '',
-								car_year: '',
-							}
+							...vehicle,
+							car_id: '',
+							car_type: 'Легковая',
+							car_brand: '',
+							car_model: '',
+							car_plate: '',
+							car_vin: '',
+							car_year: '',
+						}
 						: vehicle,
 				),
 			)
@@ -363,15 +363,15 @@ export default function CreateRequestModal({
 			prev.map(vehicle =>
 				vehicle.local_id === localId
 					? {
-							...vehicle,
-							car_id: selectedVehicle.id,
-							car_type: selectedVehicle.type || 'Легковая',
-							car_brand: selectedVehicle.brand || '',
-							car_model: selectedVehicle.model || '',
-							car_plate: selectedVehicle.plate_number || '',
-							car_vin: selectedVehicle.vin || '',
-							car_year: selectedVehicle.year || '',
-						}
+						...vehicle,
+						car_id: selectedVehicle.id,
+						car_type: selectedVehicle.type || 'Легковая',
+						car_brand: selectedVehicle.brand || '',
+						car_model: selectedVehicle.model || '',
+						car_plate: selectedVehicle.plate_number || '',
+						car_vin: selectedVehicle.vin || '',
+						car_year: selectedVehicle.year || '',
+					}
 					: vehicle,
 			),
 		)
@@ -434,12 +434,12 @@ export default function CreateRequestModal({
 			prev.map(vehicle =>
 				vehicle.local_id === vehicleLocalId
 					? {
-							...vehicle,
-							extra_sensors: [
-								...(vehicle.extra_sensors || []),
-								createEmptyExtraSensor(),
-							],
-						}
+						...vehicle,
+						extra_sensors: [
+							...(vehicle.extra_sensors || []),
+							createEmptyExtraSensor(),
+						],
+					}
 					: vehicle,
 			),
 		)
@@ -450,11 +450,11 @@ export default function CreateRequestModal({
 			prev.map(vehicle =>
 				vehicle.local_id === vehicleLocalId
 					? {
-							...vehicle,
-							extra_sensors: (vehicle.extra_sensors || []).filter(
-								sensor => sensor.local_id !== sensorLocalId,
-							),
-						}
+						...vehicle,
+						extra_sensors: (vehicle.extra_sensors || []).filter(
+							sensor => sensor.local_id !== sensorLocalId,
+						),
+					}
 					: vehicle,
 			),
 		)
@@ -470,16 +470,16 @@ export default function CreateRequestModal({
 			prev.map(vehicle =>
 				vehicle.local_id === vehicleLocalId
 					? {
-							...vehicle,
-							extra_sensors: (vehicle.extra_sensors || []).map(sensor =>
-								sensor.local_id === sensorLocalId
-									? {
-											...sensor,
-											[fieldName]: value,
-										}
-									: sensor,
-							),
-						}
+						...vehicle,
+						extra_sensors: (vehicle.extra_sensors || []).map(sensor =>
+							sensor.local_id === sensorLocalId
+								? {
+									...sensor,
+									[fieldName]: value,
+								}
+								: sensor,
+						),
+					}
 					: vehicle,
 			),
 		)
@@ -502,9 +502,9 @@ export default function CreateRequestModal({
 			prev.map(line =>
 				line.local_id === localId
 					? {
-							...line,
-							[fieldName]: value,
-						}
+						...line,
+						[fieldName]: value,
+					}
 					: line,
 			),
 		)
@@ -551,9 +551,12 @@ export default function CreateRequestModal({
 			requestVehicles.forEach(vehicle => {
 				if (!vehicle.car_brand) required.push(`car_brand_${vehicle.local_id}`)
 				if (!vehicle.car_model) required.push(`car_model_${vehicle.local_id}`)
+				if (!vehicle.car_vin || !vehicle.car_vin.trim()) {
+					required.push(`car_vin_${vehicle.local_id}`)
+				}
 
 				if (formData.work_type === 'Установка') {
-					;(vehicle.extra_sensors || []).forEach(sensor => {
+					; (vehicle.extra_sensors || []).forEach(sensor => {
 						if (!sensor.name.trim()) {
 							required.push(
 								`extra_sensor_name_${vehicle.local_id}_${sensor.local_id}`,
@@ -838,11 +841,11 @@ export default function CreateRequestModal({
 					extra_sensors:
 						formData.work_type === 'Установка'
 							? (vehicle.extra_sensors || [])
-									.filter(sensor => sensor.name.trim())
-									.map(sensor => ({
-										name: sensor.name.trim(),
-										price: sensor.price === '' ? 0 : Number(sensor.price),
-									}))
+								.filter(sensor => sensor.name.trim())
+								.map(sensor => ({
+									name: sensor.name.trim(),
+									price: sensor.price === '' ? 0 : Number(sensor.price),
+								}))
 							: [],
 				})
 			}
@@ -922,8 +925,8 @@ export default function CreateRequestModal({
 					: null,
 			visit_km:
 				visitType === 'ON_SITE' &&
-				formData.visit_price_code === 'BUSINESS_TRIP_KM' &&
-				formData.visit_km !== ''
+					formData.visit_price_code === 'BUSINESS_TRIP_KM' &&
+					formData.visit_km !== ''
 					? Number(formData.visit_km)
 					: null,
 			has_power_restore:
@@ -950,11 +953,11 @@ export default function CreateRequestModal({
 				extra_sensors:
 					workType === 'INSTALLATION'
 						? (vehicle.extra_sensors || [])
-								.filter(sensor => sensor.name.trim())
-								.map(sensor => ({
-									name: sensor.name.trim(),
-									price: sensor.price === '' ? 0 : Number(sensor.price),
-								}))
+							.filter(sensor => sensor.name.trim())
+							.map(sensor => ({
+								name: sensor.name.trim(),
+								price: sensor.price === '' ? 0 : Number(sensor.price),
+							}))
 						: [],
 			})),
 			manual_lines: manualPriceLines
@@ -1209,20 +1212,20 @@ export default function CreateRequestModal({
 
 									{(formData.client_type === 'ТОО' ||
 										formData.client_type === 'ИП') && (
-										<label className='request-modal-field'>
-											<span className='request-modal-label required'>
-												Наименование
-											</span>
-											<input
-												className={fieldClass('company_name')}
-												type='text'
-												name='company_name'
-												value={formData.company_name}
-												onChange={handleChange}
-												readOnly={isClientLocked}
-											/>
-										</label>
-									)}
+											<label className='request-modal-field'>
+												<span className='request-modal-label required'>
+													Наименование
+												</span>
+												<input
+													className={fieldClass('company_name')}
+													type='text'
+													name='company_name'
+													value={formData.company_name}
+													onChange={handleChange}
+													readOnly={isClientLocked}
+												/>
+											</label>
+										)}
 
 									<label className='request-modal-field'>
 										<span className='request-modal-label required'>ФИО</span>
@@ -1569,6 +1572,28 @@ export default function CreateRequestModal({
 																</label>
 
 																<label className='request-modal-field'>
+																	<span className='request-modal-label required'>
+																		
+																		VIN-код
+																	</span>
+																	<input
+																		className={fieldClass(`car_vin_${vehicle.local_id}`)}
+																		type='text'
+																		value={vehicle.car_vin}
+																		onChange={e =>
+																			handleVehicleChange(
+																				vehicle.local_id,
+																				'car_vin',
+																				e.target.value,
+																			)
+																		}
+																		readOnly={isVehicleLocked}
+																		placeholder='17 символов'
+																		maxLength='17'
+																	/>
+																</label>
+
+																<label className='request-modal-field'>
 																	<span className='request-modal-label'>
 																		Год выпуска
 																	</span>
@@ -1585,27 +1610,6 @@ export default function CreateRequestModal({
 																		}
 																		readOnly={isVehicleLocked}
 																		placeholder='2020'
-																	/>
-																</label>
-
-																<label className='request-modal-field'>
-																	<span className='request-modal-label'>
-																		VIN-код
-																	</span>
-																	<input
-																		className='request-modal-input'
-																		type='text'
-																		value={vehicle.car_vin}
-																		onChange={e =>
-																			handleVehicleChange(
-																				vehicle.local_id,
-																				'car_vin',
-																				e.target.value,
-																			)
-																		}
-																		readOnly={isVehicleLocked}
-																		placeholder='17 символов'
-																		maxLength='17'
 																	/>
 																</label>
 
@@ -1782,7 +1786,7 @@ export default function CreateRequestModal({
 																	</div>
 
 																	{!vehicle.extra_sensors ||
-																	vehicle.extra_sensors.length === 0 ? (
+																		vehicle.extra_sensors.length === 0 ? (
 																		<div className='request-extra-sensors-empty'>
 																			Дополнительные датчики не добавлены
 																		</div>
@@ -2009,7 +2013,7 @@ export default function CreateRequestModal({
 
 												<div className='request-price-line-actions'>
 													{editingPriceLineKey ===
-													getPriceLineUiKey(line, index) ? (
+														getPriceLineUiKey(line, index) ? (
 														<>
 															<input
 																className='request-price-edit-input'
@@ -2055,19 +2059,19 @@ export default function CreateRequestModal({
 															{priceLineOverrides[
 																getPriceLineUiKey(line, index)
 															] !== undefined && (
-																<button
-																	type='button'
-																	className='request-price-reset-line-btn'
-																	onClick={() =>
-																		resetEditPriceLine(
-																			getPriceLineUiKey(line, index),
-																		)
-																	}
-																	title='Вернуть исходную цену'
-																>
-																	↺
-																</button>
-															)}
+																	<button
+																		type='button'
+																		className='request-price-reset-line-btn'
+																		onClick={() =>
+																			resetEditPriceLine(
+																				getPriceLineUiKey(line, index),
+																			)
+																		}
+																		title='Вернуть исходную цену'
+																	>
+																		↺
+																	</button>
+																)}
 														</>
 													)}
 												</div>
