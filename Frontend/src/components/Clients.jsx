@@ -257,6 +257,15 @@ export default function Clients() {
 		}`
 	}
 
+	const getCreatorName = req => {
+		return req.created_by_name || 'Создатель не указан'
+	}
+
+	const getCreatorRoleLabel = req => {
+		if (!req.created_by_role) return null
+		return roleLabels[req.created_by_role] || req.created_by_role
+	}
+
 	const handleClientClick = async client => {
 		setSelectedClient(client)
 		setClientVehicles([])
@@ -440,6 +449,24 @@ export default function Clients() {
 		IN_PROGRESS: 'status-progress',
 		COMPLETED: 'status-done',
 		CANCELLED: 'status-cancelled',
+	}
+
+	const roleLabels = {
+		ADMIN: 'Админ',
+		MANAGER: 'Менеджер',
+		SENIOR_TECHNICIAN: 'Старший',
+		TECHNICIAN: 'Монтажник',
+		ACCOUNTANT: 'Бухгалтер',
+		WAREHOUSE_MANAGER: 'Зав. складом',
+	}
+
+	const roleClasses = {
+		ADMIN: 'role-admin',
+		MANAGER: 'role-manager',
+		SENIOR_TECHNICIAN: 'role-senior',
+		TECHNICIAN: 'role-tech',
+		ACCOUNTANT: 'role-accountant',
+		WAREHOUSE_MANAGER: 'role-warehouse',
 	}
 
 	const formatDate = dateString => {
@@ -847,16 +874,6 @@ export default function Clients() {
 								style={{ position: 'relative', cursor: 'default' }}
 							>
 								<div className='card-column'>
-									<div className='card-item'>
-										<span className='card-label'>Статус</span>
-										<div
-											className={`status-badge ${statusClasses[req.status] || 'status-new'}`}
-										>
-											{statusLabels[req.status] || req.status}
-										</div>
-									</div>
-
-									{/* --- НОВОЕ: Вид работы прямо под статусом --- */}
 									<div className='card-item' style={{ marginTop: '8px' }}>
 										<span className='card-label'>Вид работы</span>
 										<span
@@ -877,6 +894,33 @@ export default function Clients() {
 													? 'Снятие'
 													: 'Диагностика'}
 										</span>
+									</div>
+
+									<div className='card-item'>
+										<span className='card-label'>Статус</span>
+										<div
+											className={`status-badge ${statusClasses[req.status] || 'status-new'}`}
+										>
+											{statusLabels[req.status] || req.status}
+										</div>
+									</div>
+
+									<div className='card-item request-creator-card-item'>
+										<span className='card-label'>Создано</span>
+
+										<div className='request-creator-row'>
+											{req.created_by_role && (
+												<span
+													className={`request-creator-role-badge ${roleClasses[req.created_by_role] || 'role-tech'}`}
+												>
+													{getCreatorRoleLabel(req)}
+												</span>
+											)}
+
+											<span className='request-creator-name'>
+												{getCreatorName(req)}
+											</span>
+										</div>
 									</div>
 
 									{req.assigned_to && (

@@ -540,8 +540,13 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
                     r.assigned_to,
                     r.is_paid,
                     r.paid_at,
-                    r.total_price
+                    r.total_price,
+                    r.created_by,
+
+                    creator.name AS created_by_name,
+                    creator.role AS created_by_role
                 FROM requests r
+                LEFT JOIN users creator ON r.created_by = creator.id
                 WHERE r.client_id = %s
                   AND r.is_deleted = 0
                 ORDER BY r.created_at DESC

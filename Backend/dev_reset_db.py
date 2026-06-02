@@ -191,12 +191,14 @@ def sync_db():
                         is_paid BOOLEAN DEFAULT FALSE,
                         paid_at DATETIME NULL,
                         total_price DECIMAL(12,2) DEFAULT 0,
+                        created_by INT NULL,
                         is_deleted TINYINT DEFAULT 0,
                         deleted_at DATETIME NULL,
                         deleted_by INT NULL,
 
                         FOREIGN KEY (client_id) REFERENCES clients(id),
-                        FOREIGN KEY (assigned_to) REFERENCES users(id)
+                        FOREIGN KEY (assigned_to) REFERENCES users(id),
+                        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
                     );
                 """,
                 "request_vehicles": """

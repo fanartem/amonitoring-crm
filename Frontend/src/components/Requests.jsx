@@ -192,6 +192,15 @@ export default function Requests() {
 		}`
 	}
 
+	const getCreatorName = req => {
+		return req.created_by_name || 'Создатель не указан'
+	}
+
+	const getCreatorRoleLabel = req => {
+		if (!req.created_by_role) return null
+		return roleLabels[req.created_by_role] || req.created_by_role
+	}
+
 	useEffect(() => {
 		let result = requests
 		if (filters.search) {
@@ -235,12 +244,31 @@ export default function Requests() {
 		CANCELLED: 'Отменено',
 		COMPLETED: 'Работы завершены',
 	}
+
 	const statusClasses = {
 		NEW: 'status-new',
 		IN_PROGRESS: 'status-progress',
 		DONE: 'status-done',
 		COMPLETED: 'status-done',
 		CANCELLED: 'status-cancelled',
+	}
+
+	const roleLabels = {
+		ADMIN: 'Админ',
+		MANAGER: 'Менеджер',
+		SENIOR_TECHNICIAN: 'Старший',
+		TECHNICIAN: 'Монтажник',
+		ACCOUNTANT: 'Бухгалтер',
+		WAREHOUSE_MANAGER: 'Зав. складом',
+	}
+
+	const roleClasses = {
+		ADMIN: 'role-admin',
+		MANAGER: 'role-manager',
+		SENIOR_TECHNICIAN: 'role-senior',
+		TECHNICIAN: 'role-tech',
+		ACCOUNTANT: 'role-accountant',
+		WAREHOUSE_MANAGER: 'role-warehouse',
 	}
 
 	const formatDate = dateString => {
@@ -630,6 +658,7 @@ export default function Requests() {
 											: 'Диагностика'}
 								</span>
 							</div>
+							
 							<div className='card-item'>
 								<span className='card-label'>Статус</span>
 								<div
@@ -638,6 +667,25 @@ export default function Requests() {
 									{statusLabels[req.status] || req.status}
 								</div>
 							</div>
+
+							<div className='card-item request-creator-card-item'>
+								<span className='card-label'>Создано</span>
+
+								<div className='request-creator-row'>
+									{req.created_by_role && (
+										<span
+											className={`request-creator-role-badge ${roleClasses[req.created_by_role] || 'role-tech'}`}
+										>
+											{getCreatorRoleLabel(req)}
+										</span>
+									)}
+
+									<span className='request-creator-name'>
+										{getCreatorName(req)}
+									</span>
+								</div>
+							</div>
+
 							{req.assigned_to && (
 								<div className='card-item' style={{ marginTop: '5px' }}>
 									<span className='card-label'>Исполнитель</span>

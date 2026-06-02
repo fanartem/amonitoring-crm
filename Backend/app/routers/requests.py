@@ -254,7 +254,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     detail="Необходимо выбрать платформу мониторинга"
                 )
 
-            # Создаём шапку заявки
+            # шапка заявки
             cursor.execute(
                 """
                 INSERT INTO requests (
@@ -266,9 +266,10 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     platform,
                     scheduled_at,
                     status,
-                    total_price
+                    total_price,
+                    created_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     data.client_id,
@@ -280,6 +281,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     data.scheduled_at,
                     "NEW",
                     total_price,
+                    current_user["id"],
                 )
             )
 
@@ -531,6 +533,10 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     r.is_paid,
                     r.paid_at,
                     r.total_price,
+                    r.created_by,
+
+                    creator.name AS created_by_name,
+                    creator.role AS created_by_role,
 
                     c.name AS client_name,
                     c.company_name,
@@ -538,6 +544,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     c.type AS client_type
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
+                LEFT JOIN users creator ON r.created_by = creator.id
                 WHERE {where_clause}
                 ORDER BY r.created_at DESC
                 """,
@@ -582,6 +589,10 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                     r.total_price,
                     r.deleted_at,
                     r.deleted_by,
+                    r.created_by,
+
+                    creator.name AS created_by_name,
+                    creator.role AS created_by_role,
 
                     c.name AS client_name,
                     c.company_name,
@@ -592,6 +603,7 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 LEFT JOIN users u ON r.deleted_by = u.id
+                LEFT JOIN users creator ON r.created_by = creator.id
                 WHERE r.is_deleted = 1
                 ORDER BY r.deleted_at DESC
                 """
@@ -1263,6 +1275,10 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     r.is_paid,
                     r.paid_at,
                     r.total_price,
+                    r.created_by,
+
+                    creator.name AS created_by_name,
+                    creator.role AS created_by_role,
 
                     c.name AS client_name,
                     c.company_name,
@@ -1271,6 +1287,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     c.type AS client_type
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
+                LEFT JOIN users creator ON r.created_by = creator.id
                 WHERE r.id = %s AND r.is_deleted = 0
                 """,
                 (request_id,)

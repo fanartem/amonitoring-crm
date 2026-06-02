@@ -806,6 +806,50 @@
 	transform: translateY(1px);
 }
 
+.request-creator-card-item {
+	display: block !important;
+}
+
+.request-creator-row {
+	display: flex !important;
+	flex-direction: row !important;
+	align-items: center !important;
+	gap: 6px !important;
+	margin-top: 3px !important;
+	flex-wrap: nowrap !important;
+	white-space: nowrap !important;
+}
+
+.request-creator-role-badge {
+	display: inline-flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+	width: auto !important;
+	height: 18px !important;
+	min-height: 18px !important;
+	margin: 0 !important;
+	padding: 2px 7px !important;
+	border-radius: 999px !important;
+	font-size: 10px !important;
+	font-weight: 700 !important;
+	line-height: 1 !important;
+	white-space: nowrap !important;
+	flex: 0 0 auto !important;
+}
+
+.request-creator-name {
+	display: inline-flex !important;
+	align-items: center !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	font-size: 13px !important;
+	font-weight: 600 !important;
+	line-height: 18px !important;
+	color: #1f2937 !important;
+	white-space: nowrap !important;
+	flex: 0 0 auto !important;
+}
+
 @media (max-width: 640px) {
   .request-vehicle-header {
     flex-direction: column;
