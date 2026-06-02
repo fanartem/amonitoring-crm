@@ -59,7 +59,7 @@ class VehicleCreate(BaseModel):
     brand: str
     model: str
     plate_number: str
-    vin: str | None = None
+    vin: str
     year: int | None = None
     type: str | None = None
 

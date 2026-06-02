@@ -17,25 +17,30 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
 
     try:
         with connection.cursor() as cursor:
-            vin = data.vin.strip().upper() if data.vin else None
+            vin = data.vin.strip().upper() if data.vin else ""
 
-            if vin:
-                cursor.execute(
-                    """
-                    SELECT id, brand, model, plate_number
-                    FROM vehicles
-                    WHERE vin = %s
-                    AND is_deleted = 0
-                    """,
-                    (vin,)
+            if not vin:
+                raise HTTPException(
+                    status_code=400,
+                    detail="VIN обязателен при создании машины"
                 )
-                existing_vehicle = cursor.fetchone()
 
-                if existing_vehicle:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Автомобиль с VIN {vin} уже существует"
-                    )
+            cursor.execute(
+                """
+                SELECT id, brand, model, plate_number
+                FROM vehicles
+                WHERE vin = %s
+                AND is_deleted = 0
+                """,
+                (vin,)
+            )
+            existing_vehicle = cursor.fetchone()
+
+            if existing_vehicle:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Автомобиль с VIN {vin} уже существует"
+                )
 
             sql = """
             INSERT INTO vehicles (client_id, brand, model, plate_number, vin, year, type)
@@ -252,26 +257,31 @@ def update_vehicle(
                 return {"message": "Нет данных для обновления"}
             
             if "vin" in update_data:
-                new_vin = update_data["vin"].strip().upper() if update_data["vin"] else None
+                new_vin = update_data["vin"].strip().upper() if update_data["vin"] else ""
 
-                if new_vin:
-                    cursor.execute(
-                        """
-                        SELECT id
-                        FROM vehicles
-                        WHERE vin = %s
-                        AND id != %s
-                        AND is_deleted = 0
-                        """,
-                        (new_vin, vehicle_id)
+                if not new_vin:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="VIN обязателен. Нельзя сохранить машину без VIN"
                     )
-                    existing_vehicle = cursor.fetchone()
 
-                    if existing_vehicle:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Автомобиль с VIN {new_vin} уже существует"
-                        )
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM vehicles
+                    WHERE vin = %s
+                    AND id != %s
+                    AND is_deleted = 0
+                    """,
+                    (new_vin, vehicle_id)
+                )
+                existing_vehicle = cursor.fetchone()
+
+                if existing_vehicle:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Автомобиль с VIN {new_vin} уже существует"
+                    )
 
                 update_data["vin"] = new_vin
 

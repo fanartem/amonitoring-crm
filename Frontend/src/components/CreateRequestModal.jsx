@@ -812,7 +812,7 @@ export default function CreateRequestModal({
 							brand: vehicle.car_brand,
 							model: vehicle.car_model,
 							plate_number: vehicle.car_plate || 'без ГРНЗ',
-							vin: vehicle.car_vin || null,
+							vin: vehicle.car_vin.trim().toUpperCase(),
 							year: vehicle.car_year ? parseInt(vehicle.car_year, 10) : null,
 						}),
 					})
