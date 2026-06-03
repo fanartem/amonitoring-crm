@@ -205,7 +205,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
 
             cursor.execute(
                 f"""
-                SELECT id, client_id, is_deleted
+                SELECT id, client_id, is_deleted, vin
                 FROM vehicles
                 WHERE id IN ({placeholders})
                 """,
@@ -227,6 +227,12 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     raise HTTPException(
                         status_code=400,
                         detail=f"Машина {vehicle_input.vehicle_id} находится в корзине"
+                    )
+                
+                if not vehicle.get("vin") or not str(vehicle.get("vin")).strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"У машины {vehicle_input.vehicle_id} не указан VIN. Нельзя создать заявку без VIN"
                     )
 
                 if vehicle["client_id"] != data.client_id:
