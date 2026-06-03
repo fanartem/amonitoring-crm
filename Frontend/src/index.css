@@ -165,88 +165,118 @@ html, body, #root {
 .menu-btn {
   background: none;
   border: none;
-  color: #fff;
-  font-size: 24px;
+  color: rgba(255,255,255,0.8);
+  font-size: 14px;
   cursor: pointer;
   width: 100%;
-  height: 40px;
-  text-align: center;
-  line-height: 40px;
   outline: none;
-  display: none;
+  display: none; /* Скрыто на ПК */
+  align-items: center;
+  transition: background 0.15s, color 0.15s;
+  font-family: inherit;
+}
+
+/* Иконка бургера подгоняется под размер остальных иконок */
+.menu-btn i {
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+  margin: 0 !important;
+  font-style: normal;
+}
+
+.menu-btn:hover { 
+  color: #fff; 
+  background: rgba(255,255,255,0.08); 
 }
 
 /* ─────────────────────────────────────────
    📱 МОБИЛЬНАЯ ВЕРСИЯ (Экран меньше 768px)
 ───────────────────────────────────────── */
 @media (max-width: 768px) {
+  .body-row {
+    position: relative;
+  }
+
+  /* Контент жестко стоит на месте */
+  .main {
+    margin-left: 65px; 
+  }
+
   .menu-btn {
-    display: block; /* Показываем бургер */
+    display: flex; 
   }
 
   .sidebar {
-    width: 65px; /* На мобилке по умолчанию узкий */
+    width: 65px; 
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: calc(100vh - 48px);
+    z-index: 999;
+    transition: width 0.25s ease-in-out; /* Плавная анимация раскрытия */
+    overflow: hidden; /* Прячет вылезающий текст при закрытии */
   }
 
-  /* Скрываем текст и центрируем иконки в узком виде */
+  /* ВАЖНО: И для открытого, и для закрытого состояния делаем 
+     выравнивание влево и одинаковый padding. Иконки больше не будут прыгать! */
+  .sidebar .nav-item,
+  .sidebar .menu-btn {
+    display: flex !important;
+    justify-content: flex-start !important; 
+    align-items: center !important;
+    padding: 12px 20.5px !important; /* 20.5px идеально центрирует 24px иконку внутри 65px */
+    width: 240px !important; /* Фиксируем ширину контента, чтобы текст не сжимался при анимации */
+    background: transparent;
+  }
+
+  /* Унифицируем размеры иконок вкладок и бургера */
+  .sidebar .nav-item i,
+  .sidebar .menu-btn i {
+    font-size: 18px !important;
+    width: 24px !important;
+    text-align: center !important;
+    flex-shrink: 0 !important;
+    margin: 0 !important;
+    font-style: normal;
+  }
+
+  /* Текст ссылок */
   .sidebar .link-text {
-    display: none !important;
-    opacity: 0 !important;
-  }
-  
-  .sidebar .nav-item {
-    justify-content: center !important;
-    padding: 12px 0 !important;
+    margin-left: 12px;
+    white-space: nowrap;
+    transition: opacity 0.2s ease-in-out;
   }
 
-  /* ЕСЛИ САЙДБАР ОТКРЫТ НА МОБИЛКЕ (.active) */
+  /* Когда сайдбар ЗАКРЫТ: просто тушим текст, скрывая его */
+  .sidebar:not(.active) .link-text {
+    opacity: 0 !important;
+    pointer-events: none;
+  }
+
+  /* Когда сайдбар ОТКРЫТ: увеличиваем ширину фона и проявляем текст */
   .sidebar.active {
     width: 240px;
-    position: absolute;
-    height: calc(100vh - 48px);
     box-shadow: 4px 0 15px rgba(0,0,0,0.15) !important;
   }
 
-  .sidebar.active .nav-item {
-    justify-content: flex-start !important;
-    padding: 12px 20px !important;
-  }
-
   .sidebar.active .link-text {
-    display: inline-block !important;
     opacity: 1 !important;
   }
-  /* Выталкиваем верхний блок наверх, а нижний прижимаем ко дну */
-.sidebar-top {
-  display: flex;
-  flex-direction: column;
-  flex-grow: 1; /* Заставляет верхнюю часть занять всё свободное пространство */
-}
 
-.sidebar-bottom {
-  display: flex;
-  flex-direction: column;
-  margin-top: auto; /* Железобетонно прижимает блок настроек и выхода к низу */
-}
-}
+  /* Флекс-контейнеры для верха и низа */
+  .sidebar-top {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1; 
+  }
 
-/* ─────────────────────────────────────────
-   БЕЗОПАСНЫЕ ФИКСЫ ДЛЯ УВЕДОМЛЕНИЙ И ПОЛОС
-───────────────────────────────────────── */
-
-/* Точечно поднимаем только контейнеры всплывающих уведомлений (Toastify), 
-   не трогая элементы интерфейса в шапке */
-.toast-container, 
-.react-toastify, 
-.Toastify__toast-container {
-  z-index: 99999 !important;
-}
-
-/* Убираем возможные бордеры, создающие белую полосу */
-.main, .content, .header {
-  border-left: none !important;
-  border-right: none !important;
-  box-shadow: none !important;
+  .sidebar-bottom {
+    display: flex;
+    flex-direction: column;
+    margin-top: auto; 
+  }
 }
 
 /* ─────────────────────────────────────────

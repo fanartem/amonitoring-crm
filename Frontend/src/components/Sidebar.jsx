@@ -36,17 +36,25 @@ export default function Sidebar() {
 		setIsOpen(!isOpen)
 	}
 
+	// Функция автоматического закрытия при клике на вкладку (только для мобильных)
+	const handleMenuClick = () => {
+		if (window.innerWidth <= 768) {
+			setIsOpen(false)
+		}
+	}
+
 	return (
 		<nav className={`sidebar ${isOpen ? 'active' : ''}`}>
 			{/* Кнопка Бургера для мобильных устройств */}
 			<button className='menu-btn' onClick={toggleSidebar}>
-				&#9776;
+				<i>&#9776;</i> <span className='link-text'>Меню</span> 
 			</button>
 
 			<div className='sidebar-top'>
 				<NavLink
 					to='/requests'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					onClick={handleMenuClick}
 				>
 					<i className='fa-solid fa-clipboard-list'></i>
 					<span className='link-text'>Заявки</span>
@@ -55,6 +63,7 @@ export default function Sidebar() {
 				<NavLink
 					to='/clients'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					onClick={handleMenuClick}
 				>
 					<i className='fa-solid fa-users'></i>
 					<span className='link-text'>Клиенты</span>
@@ -64,6 +73,7 @@ export default function Sidebar() {
 					<NavLink
 						to='/prices'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
 					>
 						<i className='fa-solid fa-tags'></i>
 						<span className='link-text'>Цены</span>
@@ -73,6 +83,7 @@ export default function Sidebar() {
 				<NavLink
 					to='/employees'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					onClick={handleMenuClick}
 				>
 					<i className='fa-solid fa-user-tie'></i>
 					<span className='link-text'>Сотрудники</span>
@@ -82,6 +93,7 @@ export default function Sidebar() {
 					<NavLink
 						to='/approvals'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
 					>
 						<i className='fa-solid fa-user-check'></i>
 						<span className='link-text'>Одобрение</span>
@@ -92,6 +104,7 @@ export default function Sidebar() {
 					<NavLink
 						to='/warehouse'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
 					>
 						<i className='fa-solid fa-warehouse'></i>
 						<span className='link-text'>Склад</span>
@@ -102,6 +115,7 @@ export default function Sidebar() {
 					<NavLink
 						to='/trash'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
 					>
 						<i className='fa-solid fa-trash'></i>
 						<span className='link-text'>Корзина</span>
@@ -113,6 +127,7 @@ export default function Sidebar() {
 				<NavLink
 					to='/settings'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					onClick={handleMenuClick}
 				>
 					<i className='fa-solid fa-gear'></i>
 					<span className='link-text'>Настройки</span>
