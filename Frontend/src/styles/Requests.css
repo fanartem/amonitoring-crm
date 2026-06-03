@@ -275,9 +275,11 @@
 
 .custom-tabs {
   display: flex;
+  flex-shrink: 0;
   border-bottom: 1px solid #eaeaea;
   padding: 0 20px;
   background: #fff;
+  outline: none;
 }
 
 .custom-tab {
@@ -289,6 +291,7 @@
   cursor: pointer;
   border-bottom: 2px solid transparent;
   transition: color 0.2s, border-color 0.2s;
+  outline: none;
 }
 
 .custom-tab:hover {
@@ -313,6 +316,7 @@
 .custom-body {
   flex: 1;
   overflow-y: auto;
+  min-height: 0;
   padding: 20px;
   background: #f7f7f7;
 }
@@ -358,6 +362,7 @@
 }
 
 .custom-footer {
+  flex-shrink: 0;
   padding: 15px 20px;
   background: #fff;
   border-top: 1px solid #eaeaea;
@@ -386,6 +391,35 @@
   border-color: #5e9424;
 }
 
+@media (max-width: 768px) {
+  
+  /* 1. Обертка для кнопок */
+  .custom-tabs {
+    display: flex !important;
+    overflow-x: auto !important;          /* Включаем горизонтальный скролл */
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;   /* Плавный скролл на iOS */
+    gap: 8px !important;                 
+    padding: 4px 20px 8px 20px !important; /* ПОМЕНЯЛИ НА 20px, чтобы компенсировать маргины */
+    margin-left: -20px !important;       /* Выталкиваем в края экрана */
+    margin-right: -20px !important;       
+    
+    scrollbar-width: none;                /* Прячем полосу прокрутки */
+  }
+
+  .custom-tabs::-webkit-scrollbar {
+    display: none;                        /* Прячем полосу прокрутки для Chrome/Safari */
+  }
+
+  /* 2. Сами кнопки переключения */
+  .custom-tabs .custom-tab {
+    flex-shrink: 0 !important;            /* Запрещаем кнопкам сжиматься */
+    white-space: nowrap !important;       /* Запрещаем тексту переноситься */
+    padding: 8px 16px !important;         
+    font-size: 13px !important;
+    outline: none !important;             /* На всякий случай дублируем сброс рамки */
+  }
+}
 /* --- Common buttons used in requests --- */
 
 .btn-green {
