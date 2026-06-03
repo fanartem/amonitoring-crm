@@ -496,3 +496,183 @@
     width: 100%;
   }
 }
+/* ==========================================================================
+   MOBILE ADAPTATION (Экраны до 768px)
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  /* --- Верхняя панель кнопок --- */
+  .warehouse-header-bar {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+
+  .warehouse-header-actions {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .warehouse-top-btn {
+    width: 100% !important;
+    padding: 10px 8px !important;
+    font-size: 13px !important;
+    justify-content: center !important;
+    align-items: center !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .warehouse-header-actions .btn-add {
+    grid-column: span 2 !important; /* Кнопка "Добавить" на всю ширину */
+  }
+
+  .warehouse-view-toggle {
+    grid-column: span 2 !important; /* Переключатель "Активные/Корзина" на всю ширину */
+    display: flex !important;
+    width: 100% !important;
+  }
+
+  .warehouse-view-toggle button {
+    flex: 1 !important;
+    padding: 10px !important;
+    text-align: center !important;
+  }
+
+  /* --- Панель фильтров --- */
+  .warehouse-filters {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+    padding: 14px !important;
+  }
+
+  .warehouse-filters .filter-group {
+    width: 100% !important;
+    min-width: 100% !important;
+  }
+
+  .warehouse-filters .warehouse-btn-reset {
+    width: 100% !important;
+    margin-top: 5px !important;
+    padding: 10px !important;
+    justify-content: center !important;
+  }
+
+  /* --- Модалка проверки превью импорта CSV --- */
+  .import-preview-summary {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+  }
+
+  .import-preview-columns {
+    grid-template-columns: 1fr !important; /* Секции встают друг под друга */
+    gap: 14px !important;
+  }
+
+  .import-preview-list {
+    max-height: 240px !important;
+  }
+
+  /* --- ТРАНСФОРМАЦИЯ ТАБЛИЦЫ В КАРТОЧКИ --- */
+  .warehouse-table-wrapper {
+    border: none !important;
+    background: transparent !important;
+  }
+
+  .warehouse-main-table {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .warehouse-main-table thead {
+    display: none !important;
+  }
+
+  .warehouse-main-table tbody {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .warehouse-main-table tbody tr {
+    display: block !important;
+    width: 100% !important;
+    background: #ffffff !important;
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 10px !important;
+    padding: 12px 14px !important;
+    margin-bottom: 14px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.03) !important;
+    box-sizing: border-box !important;
+  }
+
+  .warehouse-main-table tbody tr:last-child {
+    margin-bottom: 0 !important;
+  }
+
+  .warehouse-main-table tbody td {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    padding: 8px 0 !important;
+    border-bottom: 1px solid #f3f4f6 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .warehouse-main-table tbody td:last-child {
+    border-bottom: none !important;
+    padding-bottom: 4px !important;
+    margin-top: 4px !important;
+  }
+
+  .warehouse-main-table tbody td .cell-value {
+    text-align: right !important;
+    font-size: 13px !important;
+    max-width: 60% !important;
+  }
+
+  .warehouse-main-table tbody td .warehouse-cell-actions {
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+  .warehouse-main-table tbody .warehouse-actions {
+    justify-content: flex-end !important;
+    width: 100% !important;
+  }
+
+  .warehouse-main-table tbody tr.warehouse-no-data-row {
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+  .warehouse-main-table tbody tr.warehouse-no-data-row td {
+    display: block !important;
+    text-align: center !important;
+    background: #fff !important;
+    border: 1px solid #eee !important;
+    border-radius: 8px !important;
+  }
+  .warehouse-main-table tbody td:nth-of-type(1)::before { content: "Наименование:"; }
+  .warehouse-main-table tbody td:nth-of-type(2)::before { content: "Категория:"; }
+  .warehouse-main-table tbody td:nth-of-type(3)::before { content: "Идентификатор:"; }
+  .warehouse-main-table tbody td:nth-of-type(4)::before { content: "Количество:"; }
+  .warehouse-main-table tbody td:nth-of-type(5)::before { content: "Статус:"; }
+  .warehouse-main-table tbody td:nth-of-type(6)::before { content: "Клиент:"; }
+  .warehouse-main-table tbody td:nth-of-type(7)::before { content: "Гос. номер:"; }
+  .warehouse-main-table tbody td:nth-of-type(8)::before { content: "VIN-код:"; }
+  .warehouse-main-table tbody td:nth-of-type(9)::before { content: "Действия:"; }
+
+  .warehouse-main-table tbody td::before {
+    font-weight: 600 !important;
+    color: #6b7280 !important;
+    font-size: 13px !important;
+    text-align: left !important;
+    padding-right: 10px !important;
+    white-space: nowrap !important;
+  }
+}

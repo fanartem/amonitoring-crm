@@ -617,7 +617,7 @@ export default function Warehouse() {
 	}
 
 	return (
-		<div className='requests-page-container'>
+		<div className='requests-page-container warehouse-page-container'>
 			<style>{`
 				@keyframes warehouseItemPulse {
 					0% {
@@ -638,20 +638,14 @@ export default function Warehouse() {
 					animation: warehouseItemPulse 2.5s ease-out forwards;
 				}
 			`}</style>
-			<div className='clients-header-bar' style={{ marginBottom: '15px' }}>
+			<div className='clients-header-bar warehouse-header-bar' style={{ marginBottom: '15px' }}>
 				<h2>Склад оборудования</h2>
-				<div style={{ display: 'flex', gap: '10px' }}>
+				<div className='warehouse-header-actions'>
 					{viewMode === 'active' && (
 						<>
 							<button
 								onClick={downloadTemplate}
-								style={{
-									padding: '8px 12px',
-									background: '#f5f5f5',
-									border: '1px solid #ddd',
-									borderRadius: '6px',
-									cursor: 'pointer',
-								}}
+								className='warehouse-top-btn btn-template'
 							>
 								📥 Шаблон CSV
 							</button>
@@ -666,20 +660,13 @@ export default function Warehouse() {
 
 							<button
 								onClick={() => fileInputRef.current.click()}
-								style={{
-									padding: '8px 12px',
-									background: '#e3f2fd',
-									color: '#1565c0',
-									border: '1px solid #bbdefb',
-									borderRadius: '6px',
-									cursor: 'pointer',
-								}}
+								className='warehouse-top-btn btn-import'
 							>
 								⬆️ Импорт CSV
 							</button>
 
 							<button
-								className='btn-green'
+								className='btn-green warehouse-top-btn btn-add'
 								onClick={() => {
 									setEditItem(null)
 									setIsModalOpen(true)
@@ -709,8 +696,8 @@ export default function Warehouse() {
 				</div>
 			</div>
 
-			<div className='filters-bar' style={{ marginBottom: '20px' }}>
-				<div className='filter-group' style={{ flex: '1.5' }}>
+			<div className='filters-bar warehouse-filters' style={{ marginBottom: '20px' }}>
+				<div className='filter-group filter-search-group'>
 					<label>Поиск по складу</label>
 					<input
 						className='filter-input'
@@ -753,12 +740,13 @@ export default function Warehouse() {
 						))}
 					</select>
 				</div>
-				<button className='btn-reset' onClick={resetFilters}>
+				<button className='btn-reset warehouse-btn-reset' onClick={resetFilters}>
 					Сбросить
 				</button>
 			</div>
 
 			<div
+				className='warehouse-table-wrapper'
 				style={{
 					background: '#fff',
 					borderRadius: '8px',
@@ -767,6 +755,7 @@ export default function Warehouse() {
 				}}
 			>
 				<table
+					className='warehouse-main-table'
 					style={{
 						width: '100%',
 						borderCollapse: 'collapse',
@@ -787,20 +776,15 @@ export default function Warehouse() {
 							<th style={{ padding: '12px 15px' }}>Идентификатор</th>
 							<th style={{ padding: '12px 15px' }}>Кол-во</th>
 							<th style={{ padding: '12px 15px' }}>Статус</th>
-
-							{/* --- НОВЫЕ ЗАГОЛОВКИ --- */}
 							<th style={{ padding: '12px 15px' }}>Клиент</th>
 							<th style={{ padding: '12px 15px' }}>Гос. номер</th>
 							<th style={{ padding: '12px 15px' }}>VIN-код</th>
-
-							<th style={{ padding: '12px 15px', textAlign: 'right' }}>
-								Действия
-							</th>
+							<th style={{ padding: '12px 15px', textAlign: 'right' }}>Действия</th>
 						</tr>
 					</thead>
 					<tbody>
 						{loading ? (
-							<tr>
+							<tr className='warehouse-no-data-row'>
 								<td
 									colSpan='9'
 									style={{ padding: '20px', textAlign: 'center' }}
@@ -809,7 +793,7 @@ export default function Warehouse() {
 								</td>
 							</tr>
 						) : items.length === 0 ? (
-							<tr>
+							<tr className='warehouse-no-data-row'>
 								<td
 									colSpan='9'
 									style={{
@@ -838,68 +822,77 @@ export default function Warehouse() {
 									style={{ borderBottom: '1px solid #eee' }}
 								>
 									<td style={{ padding: '12px 15px' }}>
-										<strong>{item.name}</strong>
+										<div className='cell-value'>
+											<strong>{item.name}</strong>
 
-										{item.model && (
-											<div style={{ fontSize: '12px', color: '#888' }}>
-												{item.manufacturer} {item.model}
-											</div>
-										)}
+											{item.model && (
+												<div style={{ fontSize: '12px', color: '#888' }}>
+													{item.manufacturer} {item.model}
+												</div>
+											)}
 
-										{viewMode === 'trash' && (
-											<div
-												style={{
-													fontSize: '12px',
-													color: '#c62828',
-													marginTop: '4px',
-												}}
-											>
-												Удалено:{' '}
-												{item.deleted_at
-													? new Date(item.deleted_at).toLocaleString('ru-RU')
-													: 'дата не указана'}
-												{item.deleted_by_name
-													? ` · ${item.deleted_by_name}`
-													: ''}
-											</div>
-										)}
+											{viewMode === 'trash' && (
+												<div
+													style={{
+														fontSize: '12px',
+														color: '#c62828',
+														marginTop: '4px',
+													}}
+												>
+													Удалено:{' '}
+													{item.deleted_at
+														? new Date(item.deleted_at).toLocaleString('ru-RU')
+														: 'дата не указана'}
+													{item.deleted_by_name
+														? ` · ${item.deleted_by_name}`
+														: ''}
+												</div>
+											)}
+										</div>
 									</td>
 									<td style={{ padding: '12px 15px' }}>
-										{CATEGORIES[item.category] || item.category}
+										<div className='cell-value'>
+											{CATEGORIES[item.category] || item.category}
+										</div>
 									</td>
 									<td style={{ padding: '12px 15px' }}>
-										{item.is_serialized ? (
-											<>
-												<span style={{ color: '#888', fontSize: '11px' }}>
-													{item.identifier_type}:
-												</span>{' '}
-												{item.identifier_value}
-											</>
-										) : (
-											<span style={{ color: '#aaa', fontSize: '12px' }}>
-												Расходник
-											</span>
-										)}
+										<div className='cell-value'>
+											{item.is_serialized ? (
+												<>
+													<span style={{ color: '#888', fontSize: '11px' }}>
+														{item.identifier_type}:
+													</span>{' '}
+													{item.identifier_value}
+												</>
+											) : (
+												<span style={{ color: '#aaa', fontSize: '12px' }}>
+													Расходник
+												</span>
+											)}
+										</div>
 									</td>
 									<td style={{ padding: '12px 15px', fontWeight: 'bold' }}>
-										{item.quantity} шт.
+										<div className='cell-value'>
+											{item.quantity} шт.
+										</div>
 									</td>
 									<td style={{ padding: '12px 15px' }}>
-										<span
-											style={{
-												background: STATUS_COLORS[item.status] || '#888',
-												color: '#fff',
-												padding: '2px 8px',
-												borderRadius: '12px',
-												fontSize: '11px',
-												fontWeight: 'bold',
-											}}
-										>
-											{STATUSES[item.status] || item.status}
-										</span>
+										<div className='cell-value'>
+											<span
+												style={{
+													background: STATUS_COLORS[item.status] || '#888',
+													color: '#fff',
+													padding: '2px 8px',
+													borderRadius: '12px',
+													fontSize: '11px',
+													fontWeight: 'bold',
+												}}
+											>
+												{STATUSES[item.status] || item.status}
+											</span>
+										</div>
 									</td>
 
-									{/* --- НОВЫЕ ЯЧЕЙКИ --- */}
 									<td
 										style={{
 											padding: '12px 15px',
@@ -907,10 +900,14 @@ export default function Warehouse() {
 											fontWeight: '500',
 										}}
 									>
-										{renderClientInfo(item)}
+										<div className='cell-value'>
+											{renderClientInfo(item)}
+										</div>
 									</td>
 									<td style={{ padding: '12px 15px', fontSize: '13px' }}>
-										{renderCarInfo(item, 'plate_number')}
+										<div className='cell-value'>
+											{renderCarInfo(item, 'plate_number')}
+										</div>
 									</td>
 									<td
 										style={{
@@ -919,36 +916,40 @@ export default function Warehouse() {
 											color: '#666',
 										}}
 									>
-										{renderCarInfo(item, 'vin')}
+										<div className='cell-value'>
+											{renderCarInfo(item, 'vin')}
+										</div>
 									</td>
 
 									<td style={{ padding: '12px 15px', textAlign: 'right' }}>
-										{viewMode === 'active' ? (
-											<div className='warehouse-actions'>
-												<button
-													className='warehouse-action-btn warehouse-edit-btn'
-													onClick={() => openEdit(item)}
-													title='Редактировать'
-												>
-													✎
-												</button>
+										<div className='cell-value warehouse-cell-actions'>
+											{viewMode === 'active' ? (
+												<div className='warehouse-actions'>
+													<button
+														className='warehouse-action-btn warehouse-edit-btn'
+														onClick={() => openEdit(item)}
+														title='Редактировать'
+													>
+														✎
+													</button>
 
+													<button
+														className='warehouse-action-btn warehouse-delete-btn'
+														onClick={() => handleDelete(item.id)}
+														title='Переместить в корзину'
+													>
+														🗑
+													</button>
+												</div>
+											) : (
 												<button
-													className='warehouse-action-btn warehouse-delete-btn'
-													onClick={() => handleDelete(item.id)}
-													title='Переместить в корзину'
+													className='warehouse-restore-btn'
+													onClick={() => handleRestore(item.id)}
 												>
-													🗑
+													Восстановить
 												</button>
-											</div>
-										) : (
-											<button
-												className='warehouse-restore-btn'
-												onClick={() => handleRestore(item.id)}
-											>
-												Восстановить
-											</button>
-										)}
+											)}
+										</div>
 									</td>
 								</tr>
 							))
