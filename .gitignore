@@ -3,6 +3,8 @@ Backend/venv/
 Backend/__pycache__/
 Backend/.env
 Backend/uploads/
+Backend/import_data/
+Backend/import_output/
 uploads/
 certs/
 

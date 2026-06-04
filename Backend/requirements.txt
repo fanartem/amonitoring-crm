@@ -7,10 +7,12 @@ click==8.3.1
 colorama==0.4.6
 cryptography==46.0.5
 ecdsa==0.19.2
+et_xmlfile==2.0.0
 fastapi==0.135.1
 greenlet==3.3.2
 h11==0.16.0
 idna==3.11
+openpyxl==3.1.5
 passlib==1.7.4
 pyasn1==0.6.3
 pycparser==3.0

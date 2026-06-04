@@ -8,6 +8,101 @@ router = APIRouter(prefix="/clients", tags=["Clients"])
 def normalize_text(value: str | None) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
+CRM_GROUP_NAME = "Обычные клиенты CRM"
+
+TECHNICAL_ROOT_PARENT_NAMES = {
+    'тоо "автопарк-слежение"',
+    'тоо «автопарк-слежение»',
+    'автопарк-слежение',
+    'автопарк слежение',
+}
+
+
+def is_technical_root_parent(value: str | None) -> bool:
+    normalized = normalize_text(value)
+    return normalized in TECHNICAL_ROOT_PARENT_NAMES
+
+
+def get_source_name(client: dict) -> str:
+    return (
+        client.get("source_client_name")
+        or client.get("company_name")
+        or client.get("name")
+        or f"ID {client.get('id')}"
+    )
+
+
+def get_parent_source_name(client: dict) -> str | None:
+    parent = client.get("source_parent_client_name")
+    if not parent:
+        return None
+
+    if is_technical_root_parent(parent):
+        return None
+
+    source_name = get_source_name(client)
+
+    if normalize_text(parent) == normalize_text(source_name):
+        return None
+
+    return parent
+
+
+def empty_group(group_name: str, is_import_group: bool = True) -> dict:
+    return {
+        "group_name": group_name,
+        "parent_client": None,
+        "clients_count": 0,
+        "subclients_count": 0,
+        "request_count": 0,
+        "vehicle_count": 0,
+        "is_import_group": is_import_group,
+        "clients": [],
+    }
+
+
+def build_client_node(client: dict) -> dict:
+    client["children"] = []
+    client["children_count"] = 0
+    client["total_vehicle_count"] = int(client.get("vehicle_count") or 0)
+    client["total_request_count"] = int(client.get("request_count") or 0)
+    return client
+
+
+def recalc_client_totals(
+    client: dict,
+    visited: set[int] | None = None
+) -> tuple[int, int, int]:
+    if visited is None:
+        visited = set()
+
+    client_id = int(client.get("id") or 0)
+
+    if client_id in visited:
+        return 0, 0, 0
+
+    visited.add(client_id)
+
+    children = client.get("children") or []
+
+    children_count = len(children)
+    total_vehicle_count = int(client.get("vehicle_count") or 0)
+    total_request_count = int(client.get("request_count") or 0)
+
+    for child in children:
+        child_children_count, child_vehicle_count, child_request_count = recalc_client_totals(
+            child,
+            visited,
+        )
+        children_count += child_children_count
+        total_vehicle_count += child_vehicle_count
+        total_request_count += child_request_count
+
+    client["children_count"] = children_count
+    client["total_vehicle_count"] = total_vehicle_count
+    client["total_request_count"] = total_request_count
+
+    return children_count, total_vehicle_count, total_request_count
 
 def normalize_phone(value: str | None) -> str:
     """
@@ -16,10 +111,8 @@ def normalize_phone(value: str | None) -> str:
     """
     return "".join(ch for ch in str(value or "") if ch.isdigit())
 
-
 def get_client_display_name(client: dict) -> str:
     return client.get("company_name") or client.get("name") or f"ID {client.get('id')}"
-
 
 def find_duplicate_client(
     cursor,
@@ -161,6 +254,10 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.source_system,
+                c.source_client_name,
+                c.source_parent_client_name,
+                c.source_inn,
                 c.created_at,
                 c.is_deleted,
                 c.deleted_at,
@@ -178,6 +275,10 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.source_system,
+                c.source_client_name,
+                c.source_parent_client_name,
+                c.source_inn,
                 c.created_at,
                 c.is_deleted,
                 c.deleted_at,
@@ -213,9 +314,20 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                 raise_duplicate_client_error(duplicate)
 
             sql = """
-                INSERT INTO clients (type, name, company_name, phone, email)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO clients (
+                    type,
+                    name,
+                    company_name,
+                    phone,
+                    email,
+                    source_system,
+                    source_client_name,
+                    source_parent_client_name,
+                    source_inn
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
+
             cursor.execute(
                 sql,
                 (
@@ -224,6 +336,10 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                     data.company_name,
                     data.phone,
                     data.email,
+                    getattr(data, "source_system", None),
+                    getattr(data, "source_client_name", None),
+                    getattr(data, "source_parent_client_name", None),
+                    getattr(data, "source_inn", None),
                 )
             )
 
@@ -261,6 +377,10 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.source_system,
+                c.source_client_name,
+                c.source_parent_client_name,
+                c.source_inn,
                 c.created_at,
                 c.deleted_at,
                 c.deleted_by,
@@ -272,11 +392,188 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
             WHERE c.is_deleted = 1
             GROUP BY 
                 c.id, c.type, c.name, c.company_name, c.phone, c.email,
+                c.source_system, c.source_client_name, c.source_parent_client_name, c.source_inn,
                 c.created_at, c.deleted_at, c.deleted_by, u.name
             ORDER BY c.deleted_at DESC
             """
             cursor.execute(sql)
             return cursor.fetchall()
+    finally:
+        connection.close()
+
+@router.get("/grouped")
+def get_clients_grouped(current_user: dict = Depends(get_current_user)):
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 
+                    c.id,
+                    c.type,
+                    c.name,
+                    c.company_name,
+                    c.phone,
+                    c.email,
+                    c.source_system,
+                    c.source_client_name,
+                    c.source_parent_client_name,
+                    c.source_inn,
+                    c.created_at,
+                    c.is_deleted,
+                    c.deleted_at,
+                    c.deleted_by,
+
+                    COUNT(DISTINCT r.id) AS request_count,
+                    COUNT(DISTINCT v.id) AS vehicle_count
+
+                FROM clients c
+
+                LEFT JOIN requests r 
+                    ON c.id = r.client_id 
+                    AND r.is_deleted = 0
+
+                LEFT JOIN vehicles v
+                    ON c.id = v.client_id
+                    AND v.is_deleted = 0
+
+                WHERE c.is_deleted = 0
+
+                GROUP BY 
+                    c.id,
+                    c.type,
+                    c.name,
+                    c.company_name,
+                    c.phone,
+                    c.email,
+                    c.source_system,
+                    c.source_client_name,
+                    c.source_parent_client_name,
+                    c.source_inn,
+                    c.created_at,
+                    c.is_deleted,
+                    c.deleted_at,
+                    c.deleted_by
+
+                ORDER BY 
+                    c.source_parent_client_name ASC,
+                    c.company_name ASC,
+                    c.name ASC
+                """
+            )
+
+            rows = cursor.fetchall()
+
+            regular_clients = []
+            import_clients = []
+
+            for row in rows:
+                if row.get("source_system") == "GLONASS_SOFT":
+                    import_clients.append(build_client_node(row))
+                else:
+                    regular_clients.append(build_client_node(row))
+
+            nodes_by_source_name = {}
+
+            for client in import_clients:
+                source_name = get_source_name(client)
+                nodes_by_source_name[normalize_text(source_name)] = client
+
+            root_clients = []
+            external_groups = {}
+
+            for client in import_clients:
+                parent_name = get_parent_source_name(client)
+
+                if not parent_name:
+                    root_clients.append(client)
+                    continue
+
+                parent_node = nodes_by_source_name.get(normalize_text(parent_name))
+
+                if parent_node:
+                    parent_node["children"].append(client)
+                else:
+                    if parent_name not in external_groups:
+                        external_groups[parent_name] = empty_group(
+                            group_name=parent_name,
+                            is_import_group=True,
+                        )
+
+                    external_groups[parent_name]["clients"].append(client)
+
+            groups = []
+
+            # Импортные root-клиенты как отдельные верхнеуровневые группы
+            for client in root_clients:
+                recalc_client_totals(client)
+
+                group_name = get_source_name(client)
+
+                group = empty_group(
+                    group_name=group_name,
+                    is_import_group=True,
+                )
+
+                group["parent_client"] = client
+                group["clients"] = client.get("children") or []
+                group["clients_count"] = 1 + int(client.get("children_count") or 0)
+                group["subclients_count"] = int(client.get("children_count") or 0)
+                group["request_count"] = int(client.get("total_request_count") or 0)
+                group["vehicle_count"] = int(client.get("total_vehicle_count") or 0)
+
+                groups.append(group)
+
+            # Внешние группы, где parent есть в GlonassSoft как имя, но не как клиент в clients
+            for group in external_groups.values():
+                total_clients = 0
+                total_requests = 0
+                total_vehicles = 0
+
+                for client in group["clients"]:
+                    recalc_client_totals(client)
+                    total_clients += 1 + int(client.get("children_count") or 0)
+                    total_requests += int(client.get("total_request_count") or 0)
+                    total_vehicles += int(client.get("total_vehicle_count") or 0)
+
+                group["clients_count"] = total_clients
+                group["subclients_count"] = total_clients
+                group["request_count"] = total_requests
+                group["vehicle_count"] = total_vehicles
+
+                groups.append(group)
+
+            # Обычные клиенты CRM отдельной группой
+            if regular_clients:
+                regular_group = empty_group(
+                    group_name=CRM_GROUP_NAME,
+                    is_import_group=False,
+                )
+
+                regular_group["clients"] = regular_clients
+                regular_group["clients_count"] = len(regular_clients)
+                regular_group["subclients_count"] = len(regular_clients)
+                regular_group["request_count"] = sum(
+                    int(client.get("request_count") or 0)
+                    for client in regular_clients
+                )
+                regular_group["vehicle_count"] = sum(
+                    int(client.get("vehicle_count") or 0)
+                    for client in regular_clients
+                )
+
+                groups.append(regular_group)
+
+            groups.sort(
+                key=lambda group: (
+                    group["group_name"] == CRM_GROUP_NAME,
+                    group["group_name"].lower(),
+                )
+            )
+
+            return groups
+
     finally:
         connection.close()
 
@@ -344,7 +641,17 @@ def update_client(
             if duplicate:
                 raise_duplicate_client_error(duplicate)
 
-            allowed_fields = ["type", "name", "company_name", "phone", "email"]
+            allowed_fields = [
+                "type",
+                "name",
+                "company_name",
+                "phone",
+                "email",
+                "source_system",
+                "source_client_name",
+                "source_parent_client_name",
+                "source_inn",
+            ]
 
             updates = []
             values = []

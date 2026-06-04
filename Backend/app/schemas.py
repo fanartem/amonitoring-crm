@@ -47,12 +47,22 @@ class ClientCreate(BaseModel):
     phone: str
     email: str | None = None
 
+    source_system: str | None = None
+    source_client_name: str | None = None
+    source_parent_client_name: str | None = None
+    source_inn: str | None = None
+
 class ClientUpdate(BaseModel):
     type: Optional[str] = None
     name: Optional[str] = None
     company_name: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+
+    source_system: Optional[str] = None
+    source_client_name: Optional[str] = None
+    source_parent_client_name: Optional[str] = None
+    source_inn: Optional[str] = None
 
 class VehicleCreate(BaseModel):
     client_id: int

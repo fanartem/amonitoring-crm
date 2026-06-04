@@ -30,6 +30,11 @@ const getUserRole = () => {
 
 export default function Clients() {
 	const [clients, setClients] = useState([])
+	const [clientGroups, setClientGroups] = useState([])
+	const [clientGroupsPage, setClientGroupsPage] = useState(1)
+	const [clientGroupsPageSize, setClientGroupsPageSize] = useState(20)
+	const [expandedGroups, setExpandedGroups] = useState({})
+	const [expandedClientNodes, setExpandedClientNodes] = useState({})
 	const [loading, setLoading] = useState(true)
 	const [error, setError] = useState('')
 
@@ -37,6 +42,9 @@ export default function Clients() {
 	const [clientRequests, setClientRequests] = useState([])
 	const [clientVehicles, setClientVehicles] = useState([])
 	const [isVehiclesLoading, setIsVehiclesLoading] = useState(false)
+	const [vehiclesPage, setVehiclesPage] = useState(1)
+	const [vehiclesPageSize, setVehiclesPageSize] = useState(20)
+	const [vehiclesTotal, setVehiclesTotal] = useState(0)
 	const [technicians, setTechnicians] = useState([])
 	const [vehicleEquipmentMap, setVehicleEquipmentMap] = useState({})
 
@@ -58,13 +66,22 @@ export default function Clients() {
 
 	// Состояние для навигации из строки поиска
 	const [pendingOpenClientId, setPendingOpenClientId] = useState(null)
+	const [pendingListClientId, setPendingListClientId] = useState(null)
+
 	const [pendingHighlightVehicleId, setPendingHighlightVehicleId] =
 		useState(null)
+
 	const [highlightedVehicleId, setHighlightedVehicleId] = useState(null)
+	const [highlightedClientId, setHighlightedClientId] = useState(null)
+	const [highlightedGroupName, setHighlightedGroupName] = useState(null)
+
 	const vehicleRefs = useRef({})
+	const clientRefs = useRef({})
+	const groupRefs = useRef({})
 
 	useEffect(() => {
 		fetchClients()
+		fetchClientGroups()
 		fetchTechnicians()
 	}, [])
 
@@ -82,23 +99,35 @@ export default function Clients() {
 
 		if (!openClientId) return
 
-		setPendingOpenClientId(Number(openClientId))
-
-		if (highlightVehicleId) {
-			setPendingHighlightVehicleId(Number(highlightVehicleId))
-		} else {
-			setPendingHighlightVehicleId(null)
-		}
-
-		// Закрываем возможные открытые модалки/дропдауны при переходе из поиска
 		setSelectedRequestId(null)
 		setActiveDropdown(null)
 		setEditingVehicle(null)
+
+		if (highlightVehicleId) {
+			// Поиск машины: открываем детали клиента и подсвечиваем машину.
+			setPendingOpenClientId(Number(openClientId))
+			setPendingHighlightVehicleId(Number(highlightVehicleId))
+			setPendingListClientId(null)
+			return
+		}
+
+		// Поиск клиента: НЕ открываем детали.
+		// Остаёмся во вкладке “Клиенты”, перелистываем к группе и подсвечиваем.
+		setSelectedClient(null)
+		setPendingOpenClientId(null)
+		setPendingHighlightVehicleId(null)
+		setPendingListClientId(Number(openClientId))
 	}, [location.state?.searchActionId])
 
 	// 2. Когда клиенты загружены + есть pending → открываем нужного клиента
 	useEffect(() => {
-		if (!pendingOpenClientId || clients.length === 0) return
+		if (
+			!pendingOpenClientId ||
+			!pendingHighlightVehicleId ||
+			clients.length === 0
+		) {
+			return
+		}
 
 		const client = clients.find(
 			c => Number(c.id) === Number(pendingOpenClientId),
@@ -108,14 +137,72 @@ export default function Clients() {
 
 		setPendingOpenClientId(null)
 		handleClientClick(client)
-	}, [clients, pendingOpenClientId])
+	}, [clients, pendingOpenClientId, pendingHighlightVehicleId])
+
+	useEffect(() => {
+		if (!pendingListClientId || clientGroups.length === 0) return
+
+		const result = findClientInGroups(pendingListClientId)
+
+		if (!result) return
+
+		const nextPage = Math.floor(result.groupIndex / clientGroupsPageSize) + 1
+
+		setClientGroupsPage(nextPage)
+
+		setExpandedGroups(prev => ({
+			...prev,
+			[result.group.group_name]: true,
+		}))
+
+		if (result.ancestorIds.length > 0) {
+			setExpandedClientNodes(prev => {
+				const next = { ...prev }
+
+				result.ancestorIds.forEach(clientId => {
+					next[clientId] = true
+				})
+
+				return next
+			})
+		}
+
+		if (result.isParentClient) {
+			setHighlightedGroupName(result.group.group_name)
+			setHighlightedClientId(null)
+		} else {
+			setHighlightedClientId(Number(pendingListClientId))
+			setHighlightedGroupName(null)
+		}
+
+		setPendingListClientId(null)
+
+		setTimeout(() => {
+			const el = result.isParentClient
+				? groupRefs.current[result.group.group_name]
+				: clientRefs.current[Number(result.client.id)]
+
+			if (el) {
+				el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+			}
+		}, 250)
+
+		setTimeout(() => {
+			setHighlightedClientId(null)
+			setHighlightedGroupName(null)
+		}, 2800)
+	}, [pendingListClientId, clientGroups, clientGroupsPageSize])
 
 	// 3. Когда клиент открыт + нужна подсветка → автоматически показываем и грузим машины
 	useEffect(() => {
 		if (!selectedClient || !pendingHighlightVehicleId) return
 
 		setShowVehicles(true)
-		fetchClientVehicles(selectedClient.id, true)
+		openVehiclePageForHighlight(
+			selectedClient.id,
+			pendingHighlightVehicleId,
+			vehiclesPageSize,
+		)
 	}, [selectedClient?.id, pendingHighlightVehicleId])
 
 	// 4. Когда машины загрузились + есть pending highlight → скролл и подсветка
@@ -162,6 +249,48 @@ export default function Clients() {
 			setError(err.message)
 		} finally {
 			setLoading(false)
+		}
+	}
+
+	const fetchClientGroups = async () => {
+		setLoading(true)
+		setError('')
+
+		try {
+			const response = await fetch(`${API_BASE_URL}/clients/grouped`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (!response.ok) {
+				throw new Error('Не удалось загрузить группы клиентов')
+			}
+
+			const data = await response.json()
+			setClientGroups(Array.isArray(data) ? data : [])
+
+			const initialExpanded = {}
+
+			;(Array.isArray(data) ? data : []).forEach(group => {
+				// Обычных клиентов сразу раскрываем, импортные группы — свернуты
+				if (group.group_name === 'Обычные клиенты CRM') {
+					initialExpanded[group.group_name] = true
+				}
+			})
+
+			setExpandedGroups(initialExpanded)
+		} catch (err) {
+			setError(err.message)
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	const refreshClientsData = () => {
+		fetchClients()
+		fetchClientGroups()
+
+		if (selectedClient) {
+			handleClientClick(selectedClient)
 		}
 	}
 
@@ -269,6 +398,8 @@ export default function Clients() {
 	const handleClientClick = async client => {
 		setSelectedClient(client)
 		setClientVehicles([])
+		setVehiclesPage(1)
+		setVehiclesTotal(0)
 		setVehicleEquipmentMap({})
 		setShowVehicles(false)
 
@@ -287,12 +418,19 @@ export default function Clients() {
 		}
 	}
 
-	const fetchClientVehicles = async (clientId, silent = false) => {
+	const fetchClientVehicles = async (
+		clientId,
+		silent = false,
+		page = vehiclesPage,
+		pageSize = vehiclesPageSize,
+	) => {
 		setIsVehiclesLoading(true)
+
+		const offset = (page - 1) * pageSize
 
 		try {
 			const res = await fetch(
-				`${API_BASE_URL}/vehicles?client_id=${clientId}`,
+				`${API_BASE_URL}/vehicles?client_id=${clientId}&limit=${pageSize}&offset=${offset}`,
 				{
 					headers: getAuthHeaders(),
 				},
@@ -300,9 +438,18 @@ export default function Clients() {
 
 			if (res.ok) {
 				const data = await res.json()
-				setClientVehicles(data)
 
-				if (data.length === 0 && !silent) {
+				const items = Array.isArray(data) ? data : data.items || []
+				const total = Array.isArray(data)
+					? data.length
+					: Number(data.total || 0)
+
+				setClientVehicles(items)
+				setVehiclesTotal(total)
+				setVehiclesPage(page)
+				setVehiclesPageSize(pageSize)
+
+				if (items.length === 0 && total === 0 && !silent) {
 					alert('У этого клиента пока нет добавленных автомобилей.')
 				}
 			}
@@ -311,6 +458,49 @@ export default function Clients() {
 		} finally {
 			setIsVehiclesLoading(false)
 		}
+	}
+
+	const openVehiclePageForHighlight = async (
+		clientId,
+		vehicleId,
+		pageSize = vehiclesPageSize,
+	) => {
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/vehicles/${vehicleId}/page?limit=${pageSize}`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (!res.ok) {
+				console.error('Не удалось определить страницу машины')
+				fetchClientVehicles(clientId, true, 1, pageSize)
+				return
+			}
+
+			const data = await res.json()
+
+			const nextPage = Number(data.page || 1)
+			const nextPageSize = Number(data.limit || pageSize)
+
+			fetchClientVehicles(clientId, true, nextPage, nextPageSize)
+		} catch (err) {
+			console.error('Ошибка определения страницы машины:', err)
+			fetchClientVehicles(clientId, true, 1, pageSize)
+		}
+	}
+
+	const handleVehiclesPageChange = nextPage => {
+		if (!selectedClient) return
+
+		fetchClientVehicles(selectedClient.id, true, nextPage, vehiclesPageSize)
+	}
+
+	const handleVehiclesPageSizeChange = nextPageSize => {
+		if (!selectedClient) return
+
+		fetchClientVehicles(selectedClient.id, true, 1, nextPageSize)
 	}
 
 	const fetchEquipmentForClientRequests = async requestsList => {
@@ -383,7 +573,7 @@ export default function Clients() {
 
 			if (res.ok) {
 				alert('Клиент успешно удален в корзину!')
-				fetchClients()
+				refreshClientsData()
 
 				if (selectedClient && selectedClient.id === clientId) {
 					setSelectedClient(null)
@@ -409,6 +599,20 @@ export default function Clients() {
 		setActiveDropdown(prev => (prev === clientId ? null : clientId))
 	}
 
+	const toggleGroup = groupName => {
+		setExpandedGroups(prev => ({
+			...prev,
+			[groupName]: !prev[groupName],
+		}))
+	}
+
+	const toggleClientNode = clientId => {
+		setExpandedClientNodes(prev => ({
+			...prev,
+			[clientId]: !prev[clientId],
+		}))
+	}
+
 	// ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ОТРЕДАКТИРОВАННОГО АВТО (без IMEI, так как он берется со склада)
 	const handleVehicleSubmit = async e => {
 		e.preventDefault()
@@ -430,8 +634,12 @@ export default function Clients() {
 
 			alert('Данные авто успешно обновлены!')
 			setEditingVehicle(null)
-			fetchClientVehicles(selectedClient.id)
-			handleClientClick(selectedClient)
+			fetchClientVehicles(
+				selectedClient.id,
+				true,
+				vehiclesPage,
+				vehiclesPageSize,
+			)
 		} catch (err) {
 			alert('Ошибка: ' + err.message)
 		}
@@ -487,6 +695,481 @@ export default function Clients() {
 		return `${number.toLocaleString('ru-RU')} тг`
 	}
 
+	const getPaginatedItems = (items, page, pageSize) => {
+		const start = (page - 1) * pageSize
+		return items.slice(start, start + pageSize)
+	}
+
+	const getTotalPages = (itemsCount, pageSize) => {
+		return Math.max(1, Math.ceil(itemsCount / pageSize))
+	}
+
+	const renderPagination = ({
+		page,
+		pageSize,
+		totalItems,
+		onPageChange,
+		onPageSizeChange,
+	}) => {
+		const totalPages = getTotalPages(totalItems, pageSize)
+
+		return (
+			<div className='pagination-bar'>
+				<div className='pagination-size'>
+					<span>Показывать:</span>
+
+					<select
+						value={pageSize}
+						onChange={e => {
+							onPageSizeChange(Number(e.target.value))
+							onPageChange(1)
+						}}
+					>
+						<option value={20}>20</option>
+						<option value={30}>30</option>
+						<option value={50}>50</option>
+					</select>
+				</div>
+
+				<div className='pagination-info'>
+					Страница {page} из {totalPages} · Всего: {totalItems}
+				</div>
+
+				<div className='pagination-actions'>
+					<button
+						className='btn-details'
+						disabled={page <= 1}
+						onClick={() => onPageChange(page - 1)}
+					>
+						Назад
+					</button>
+
+					<button
+						className='btn-details'
+						disabled={page >= totalPages}
+						onClick={() => onPageChange(page + 1)}
+					>
+						Вперёд
+					</button>
+				</div>
+			</div>
+		)
+	}
+
+	const findClientInTree = (clientsList, targetClientId, ancestors = []) => {
+		for (const client of clientsList || []) {
+			const clientId = Number(client.id)
+
+			if (clientId === Number(targetClientId)) {
+				return {
+					client,
+					ancestorIds: ancestors,
+				}
+			}
+
+			const childResult = findClientInTree(
+				client.children || [],
+				targetClientId,
+				[...ancestors, clientId],
+			)
+
+			if (childResult) {
+				return childResult
+			}
+		}
+
+		return null
+	}
+
+	const findClientInGroups = targetClientId => {
+		for (
+			let groupIndex = 0;
+			groupIndex < clientGroups.length;
+			groupIndex += 1
+		) {
+			const group = clientGroups[groupIndex]
+
+			if (
+				group.parent_client &&
+				Number(group.parent_client.id) === Number(targetClientId)
+			) {
+				return {
+					group,
+					groupIndex,
+					isParentClient: true,
+					client: group.parent_client,
+					ancestorIds: [],
+				}
+			}
+
+			const treeResult = findClientInTree(
+				group.clients || [],
+				targetClientId,
+				[],
+			)
+
+			if (treeResult) {
+				return {
+					group,
+					groupIndex,
+					isParentClient: false,
+					client: treeResult.client,
+					ancestorIds: treeResult.ancestorIds,
+				}
+			}
+		}
+
+		return null
+	}
+
+	const renderClientCard = (client, level = 0) => {
+		const hasChildren = client.children && client.children.length > 0
+		const isExpanded = Boolean(expandedClientNodes[client.id])
+		const isNested = level > 0
+
+		if (isNested) {
+			return (
+				<div
+					key={client.id}
+					ref={el => {
+						clientRefs.current[Number(client.id)] = el
+					}}
+					className={`client-tree-row-wrapper ${
+						Number(highlightedClientId) === Number(client.id)
+							? 'client-highlighted'
+							: ''
+					}`}
+				>
+					<div className='client-tree-row'>
+						<div className='client-tree-row-left'>
+							<div className='client-tree-branch-line' />
+
+							{hasChildren ? (
+								<button
+									type='button'
+									className='client-node-toggle small'
+									onClick={e => {
+										e.stopPropagation()
+										toggleClientNode(client.id)
+									}}
+									title={
+										isExpanded ? 'Скрыть подклиентов' : 'Показать подклиентов'
+									}
+								>
+									{isExpanded ? '▾' : '▸'}
+								</button>
+							) : (
+								<span className='client-tree-dot' />
+							)}
+
+							<div className='client-tree-row-info'>
+								<div className='client-tree-row-title'>
+									{client.company_name || client.name}
+								</div>
+
+								<div className='client-tree-row-meta'>
+									{getClientTypeLabel(client.type)}
+									{client.company_name ? ` · ${client.name}` : ''}
+									{client.phone ? ` · ${client.phone}` : ''}
+									{client.email ? ` · ${client.email}` : ''}
+								</div>
+							</div>
+						</div>
+
+						<div className='client-tree-row-right'>
+							<span className='client-tree-stat'>
+								Заявок: <b>{client.request_count || 0}</b>
+							</span>
+
+							<span className='client-tree-stat'>
+								Машин: <b>{client.vehicle_count || 0}</b>
+							</span>
+
+							{hasChildren && (
+								<span className='client-tree-stat'>
+									Подклиентов:{' '}
+									<b>{client.children_count || client.children.length}</b>
+								</span>
+							)}
+
+							<button
+								className='btn-details'
+								onClick={e => {
+									e.stopPropagation()
+									handleClientClick(client)
+								}}
+							>
+								Детали
+							</button>
+
+							{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+								<div
+									className='client-tree-actions'
+									onClick={e => e.stopPropagation()}
+								>
+									<button
+										type='button'
+										className='client-tree-actions-btn'
+										onClick={e => toggleDropdown(e, client.id)}
+									>
+										&#8942;
+									</button>
+
+									{activeDropdown === client.id && (
+										<div className='client-tree-dropdown'>
+											<div
+												className='client-tree-dropdown-item'
+												onClick={e => handleEditClientClick(e, client)}
+											>
+												Редактировать
+											</div>
+
+											{userRole === 'ADMIN' && (
+												<div
+													className='client-tree-dropdown-item danger'
+													onClick={e =>
+														handleDeleteClient(
+															e,
+															client.id,
+															client.company_name || client.name,
+														)
+													}
+												>
+													Удалить
+												</div>
+											)}
+										</div>
+									)}
+								</div>
+							)}
+						</div>
+					</div>
+
+					{hasChildren && isExpanded && (
+						<div className='client-tree-children-list'>
+							{client.children.map(child => renderClientCard(child, level + 1))}
+						</div>
+					)}
+				</div>
+			)
+		}
+
+		return (
+			<div
+				key={client.id}
+				ref={el => {
+					clientRefs.current[Number(client.id)] = el
+				}}
+				className={`client-tree-item ${
+					Number(highlightedClientId) === Number(client.id)
+						? 'client-highlighted'
+						: ''
+				}`}
+			>
+				<div
+					className='client-card'
+					style={{
+						cursor: 'default',
+						position: 'relative',
+						zIndex: activeDropdown === client.id ? 100 : 1,
+					}}
+				>
+					<div
+						className='client-card-title'
+						style={{
+							display: 'flex',
+							justifyContent: 'space-between',
+							alignItems: 'flex-start',
+							gap: '8px',
+						}}
+					>
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '8px',
+								minWidth: 0,
+							}}
+						>
+							{hasChildren && (
+								<button
+									type='button'
+									className='client-node-toggle'
+									onClick={e => {
+										e.stopPropagation()
+										toggleClientNode(client.id)
+									}}
+									title={
+										isExpanded ? 'Скрыть подклиентов' : 'Показать подклиентов'
+									}
+								>
+									{isExpanded ? '▾' : '▸'}
+								</button>
+							)}
+
+							<span style={{ paddingRight: '10px' }}>
+								{client.company_name || client.name}
+							</span>
+						</div>
+
+						{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+							<div
+								className='card-actions-wrapper'
+								style={{
+									position: 'relative',
+									marginTop: '-2px',
+									marginRight: '-5px',
+								}}
+							>
+								<div
+									className='card-actions'
+									style={{
+										cursor: 'pointer',
+										padding: '0 5px',
+										fontSize: '20px',
+										color: '#888',
+										lineHeight: '1',
+									}}
+									onClick={e => toggleDropdown(e, client.id)}
+								>
+									&#8942;
+								</div>
+
+								{activeDropdown === client.id && (
+									<div
+										className='dropdown-menu'
+										style={{
+											position: 'absolute',
+											right: 0,
+											top: '25px',
+											background: '#fff',
+											border: '1px solid #eee',
+											borderRadius: '6px',
+											boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+											padding: '5px 0',
+											minWidth: '150px',
+											zIndex: 100,
+										}}
+									>
+										<div
+											className='dropdown-item'
+											style={{
+												padding: '8px 15px',
+												cursor: 'pointer',
+												fontSize: '14px',
+												borderBottom: '1px solid #f5f5f5',
+												color: '#333',
+											}}
+											onClick={e => handleEditClientClick(e, client)}
+										>
+											Редактировать
+										</div>
+
+										{userRole === 'ADMIN' && (
+											<div
+												className='dropdown-item'
+												style={{
+													padding: '8px 15px',
+													cursor: 'pointer',
+													fontSize: '14px',
+													color: '#c62828',
+												}}
+												onClick={e =>
+													handleDeleteClient(
+														e,
+														client.id,
+														client.company_name || client.name,
+													)
+												}
+											>
+												Удалить
+											</div>
+										)}
+									</div>
+								)}
+							</div>
+						)}
+					</div>
+
+					<div className='client-card-type'>
+						{getClientTypeLabel(client.type)}
+						{client.company_name ? ` · ${client.name}` : ''}
+					</div>
+
+					<div className='client-card-info'>
+						{client.phone} {client.email ? ` · ${client.email}` : ''}
+					</div>
+
+					<div
+						className='client-card-footer'
+						style={{
+							display: 'flex',
+							justifyContent: 'space-between',
+							alignItems: 'center',
+							marginTop: '15px',
+						}}
+					>
+						<div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+							<div>
+								<span className='request-count-label'>Заявок:</span>
+								<span
+									className={`request-count-badge ${client.request_count > 0 ? 'active' : ''}`}
+									style={{ marginLeft: '8px' }}
+								>
+									{client.request_count || 0}
+								</span>
+							</div>
+
+							<div>
+								<span className='request-count-label'>Машин:</span>
+								<span
+									className={`request-count-badge ${client.vehicle_count > 0 ? 'active' : ''}`}
+									style={{ marginLeft: '8px' }}
+								>
+									{client.vehicle_count || 0}
+								</span>
+							</div>
+
+							{hasChildren && (
+								<div>
+									<span className='request-count-label'>Подклиентов:</span>
+									<span
+										className='request-count-badge active'
+										style={{ marginLeft: '8px' }}
+									>
+										{client.children_count || client.children.length}
+									</span>
+								</div>
+							)}
+						</div>
+
+						<button
+							className='btn-details'
+							onClick={e => {
+								e.stopPropagation()
+								handleClientClick(client)
+							}}
+						>
+							Детали
+						</button>
+					</div>
+				</div>
+
+				{hasChildren && isExpanded && (
+					<div className='client-tree-children-list root'>
+						{client.children.map(child => renderClientCard(child, level + 1))}
+					</div>
+				)}
+			</div>
+		)
+	}
+
+	const paginatedClientGroups = getPaginatedItems(
+		clientGroups,
+		clientGroupsPage,
+		clientGroupsPageSize,
+	)
+
 	return (
 		<div className='clients-page-container'>
 			<style>{`
@@ -533,153 +1216,117 @@ export default function Clients() {
 						>
 							{error}
 						</div>
-					) : clients.length === 0 ? (
+					) : clientGroups.length === 0 ? (
 						<div
 							style={{ padding: '40px', textAlign: 'center', color: '#888' }}
 						>
 							Нет клиентов
 						</div>
 					) : (
-						<div className='clients-grid'>
-							{clients.map(client => (
-								<div
-									key={client.id}
-									className='client-card'
-									style={{
-										cursor: 'default',
-										position: 'relative',
-										zIndex: activeDropdown === client.id ? 100 : 1,
-									}}
-								>
-									<div
-										className='client-card-title'
-										style={{
-											display: 'flex',
-											justifyContent: 'space-between',
-											alignItems: 'flex-start',
-										}}
-									>
-										<span style={{ paddingRight: '10px' }}>
-											{client.company_name || client.name}
-										</span>
+						<>
+							{renderPagination({
+								page: clientGroupsPage,
+								pageSize: clientGroupsPageSize,
+								totalItems: clientGroups.length,
+								onPageChange: setClientGroupsPage,
+								onPageSizeChange: setClientGroupsPageSize,
+							})}
 
-										{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+							<div className='client-groups-list'>
+								{paginatedClientGroups.map(group => {
+									const hasSubclients =
+										group.clients && group.clients.length > 0
+									const isExpanded = Boolean(expandedGroups[group.group_name])
+
+									return (
+										<div key={group.group_name} className='client-group-block'>
 											<div
-												className='card-actions-wrapper'
-												style={{
-													position: 'relative',
-													marginTop: '-2px',
-													marginRight: '-5px',
+												ref={el => {
+													groupRefs.current[group.group_name] = el
+												}}
+												className={`client-group-header ${hasSubclients ? 'clickable' : 'not-clickable'} ${
+													highlightedGroupName === group.group_name
+														? 'client-group-highlighted'
+														: ''
+												}`}
+												onClick={() => {
+													if (hasSubclients) {
+														toggleGroup(group.group_name)
+													}
 												}}
 											>
-												<div
-													className='card-actions'
-													style={{
-														cursor: 'pointer',
-														padding: '0 5px',
-														fontSize: '20px',
-														color: '#888',
-														lineHeight: '1',
-													}}
-													onClick={e => toggleDropdown(e, client.id)}
-												>
-													&#8942;
+												<div className='client-group-main'>
+													{hasSubclients && (
+														<span className='client-group-arrow'>
+															{isExpanded ? '▾' : '▸'}
+														</span>
+													)}
+
+													<div>
+														<div className='client-group-title'>
+															{group.group_name}
+														</div>
+
+														<div className='client-group-subtitle'>
+															{group.parent_client ? (
+																<>
+																	Подклиентов: {group.subclients_count || 0} ·
+																	Машин: {group.vehicle_count || 0} · Заявок:{' '}
+																	{group.request_count || 0}
+																</>
+															) : (
+																<>
+																	Клиентов: {group.clients_count || 0} · Машин:{' '}
+																	{group.vehicle_count || 0} · Заявок:{' '}
+																	{group.request_count || 0}
+																</>
+															)}
+														</div>
+													</div>
 												</div>
 
-												{activeDropdown === client.id && (
-													<div
-														className='dropdown-menu'
-														style={{
-															position: 'absolute',
-															right: 0,
-															top: '25px',
-															background: '#fff',
-															border: '1px solid #eee',
-															borderRadius: '6px',
-															boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-															padding: '5px 0',
-															minWidth: '150px',
-															zIndex: 100,
-														}}
-													>
-														<div
-															className='dropdown-item'
-															style={{
-																padding: '8px 15px',
-																cursor: 'pointer',
-																fontSize: '14px',
-																borderBottom: '1px solid #f5f5f5',
-																color: '#333',
+												<div className='client-group-actions'>
+													{group.parent_client && (
+														<button
+															className='btn-details'
+															onClick={e => {
+																e.stopPropagation()
+																handleClientClick(group.parent_client)
 															}}
-															onClick={e => handleEditClientClick(e, client)}
 														>
-															Редактировать
-														</div>
-														{userRole === 'ADMIN' && (
-															<div
-																className='dropdown-item'
-																style={{
-																	padding: '8px 15px',
-																	cursor: 'pointer',
-																	fontSize: '14px',
-																	color: '#c62828',
-																}}
-																onClick={e =>
-																	handleDeleteClient(
-																		e,
-																		client.id,
-																		client.company_name || client.name,
-																	)
-																}
-															>
-																Удалить
-															</div>
+															Детали
+														</button>
+													)}
+
+													{group.is_import_group && (
+														<span className='client-group-badge'>
+															GlonassSoft
+														</span>
+													)}
+												</div>
+											</div>
+
+											{isExpanded &&
+												group.clients &&
+												group.clients.length > 0 && (
+													<div className='client-group-tree-list'>
+														{group.clients.map(client =>
+															renderClientCard(client, 0),
 														)}
 													</div>
 												)}
-											</div>
-										)}
-									</div>
-
-									<div className='client-card-type'>
-										{getClientTypeLabel(client.type)}
-										{client.company_name ? ` · ${client.name}` : ''}
-									</div>
-									<div className='client-card-info'>
-										{client.phone} {client.email ? ` · ${client.email}` : ''}
-									</div>
-
-									<div
-										className='client-card-footer'
-										style={{
-											display: 'flex',
-											justifyContent: 'space-between',
-											alignItems: 'center',
-											marginTop: '15px',
-										}}
-									>
-										<div>
-											<span className='request-count-label'>Заявок:</span>
-											<span
-												className={`request-count-badge ${client.request_count > 0 ? 'active' : ''}`}
-												style={{ marginLeft: '8px' }}
-											>
-												{client.request_count || 0}
-											</span>
 										</div>
-										<button
-											className='btn-details'
-											onClick={e => {
-												e.stopPropagation()
-												handleClientClick(client)
-											}}
-										>
-											Детали
-										</button>
-									</div>
-								</div>
-							))}
-						</div>
+									)
+								})}
+							</div>
+							{renderPagination({
+								page: clientGroupsPage,
+								pageSize: clientGroupsPageSize,
+								totalItems: clientGroups.length,
+								onPageChange: setClientGroupsPage,
+								onPageSizeChange: setClientGroupsPageSize,
+							})}
+						</>
 					)}
 				</>
 			) : (
@@ -750,12 +1397,13 @@ export default function Clients() {
 									if (showVehicles) {
 										setShowVehicles(false)
 									} else {
-										if (clientVehicles.length > 0) {
-											setShowVehicles(true)
-										} else {
-											fetchClientVehicles(selectedClient.id)
-											setShowVehicles(true)
-										}
+										setShowVehicles(true)
+										fetchClientVehicles(
+											selectedClient.id,
+											false,
+											vehiclesPage,
+											vehiclesPageSize,
+										)
 									}
 								}}
 								disabled={isVehiclesLoading}
@@ -786,8 +1434,18 @@ export default function Clients() {
 											color: '#333',
 										}}
 									>
-										Транспорт клиента ({clientVehicles.length}):
+										Транспорт клиента ({vehiclesTotal || clientVehicles.length}
+										):
 									</h4>
+
+									{renderPagination({
+										page: vehiclesPage,
+										pageSize: vehiclesPageSize,
+										totalItems: vehiclesTotal,
+										onPageChange: handleVehiclesPageChange,
+										onPageSizeChange: handleVehiclesPageSizeChange,
+									})}
+
 									<div style={{ display: 'grid', gap: '10px' }}>
 										{clientVehicles.map(v => (
 											<div
@@ -838,6 +1496,14 @@ export default function Clients() {
 											</div>
 										))}
 									</div>
+
+									{renderPagination({
+										page: vehiclesPage,
+										pageSize: vehiclesPageSize,
+										totalItems: vehiclesTotal,
+										onPageChange: handleVehiclesPageChange,
+										onPageSizeChange: handleVehiclesPageSizeChange,
+									})}
 								</div>
 							)}
 						</div>
@@ -1264,10 +1930,7 @@ export default function Clients() {
 				onCreated={() => {
 					setCreateModalOpen(false)
 					setEditClientData(null)
-					fetchClients()
-					if (selectedClient) {
-						handleClientClick(selectedClient)
-					}
+					refreshClientsData()
 				}}
 			/>
 

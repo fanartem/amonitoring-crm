@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_connection
 from app.schemas import VehicleCreate, VehicleUpdate
 from app.security import get_current_user
@@ -77,10 +77,42 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
         connection.close()
 
 @router.get("")
-def get_vehicles(client_id: int, current_user: dict = Depends(get_current_user)):
+def get_vehicles(
+    client_id: int,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM vehicles
+                WHERE client_id = %s
+                AND is_deleted = 0
+                """,
+                (client_id,)
+            )
+            total_row = cursor.fetchone()
+            total = int(total_row["total"] or 0)
+
+            if limit is None:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM vehicles
+                    WHERE client_id = %s
+                    AND is_deleted = 0
+                    ORDER BY id DESC
+                    """,
+                    (client_id,)
+                )
+
+                return cursor.fetchall()
+
             cursor.execute(
                 """
                 SELECT *
@@ -88,10 +120,20 @@ def get_vehicles(client_id: int, current_user: dict = Depends(get_current_user))
                 WHERE client_id = %s
                 AND is_deleted = 0
                 ORDER BY id DESC
+                LIMIT %s OFFSET %s
                 """,
-                (client_id,)
+                (client_id, limit, offset)
             )
-            return cursor.fetchall()
+
+            items = cursor.fetchall()
+
+            return {
+                "items": items,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+
     finally:
         connection.close()
 
@@ -208,6 +250,86 @@ def get_deleted_vehicles(current_user: dict = Depends(get_current_user)):
             """
             cursor.execute(sql)
             return cursor.fetchall()
+    finally:
+        connection.close()
+
+@router.get("/{vehicle_id}/page")
+def get_vehicle_page(
+    vehicle_id: int,
+    limit: int = Query(default=20, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+):
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    client_id,
+                    brand,
+                    model,
+                    plate_number,
+                    vin
+                FROM vehicles
+                WHERE id = %s
+                  AND is_deleted = 0
+                LIMIT 1
+                """,
+                (vehicle_id,)
+            )
+
+            vehicle = cursor.fetchone()
+
+            if not vehicle:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Машина не найдена"
+                )
+
+            client_id = vehicle["client_id"]
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM vehicles
+                WHERE client_id = %s
+                  AND is_deleted = 0
+                """,
+                (client_id,)
+            )
+            total_row = cursor.fetchone()
+            total = int(total_row["total"] or 0)
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS before_count
+                FROM vehicles
+                WHERE client_id = %s
+                  AND is_deleted = 0
+                  AND id > %s
+                """,
+                (client_id, vehicle_id)
+            )
+            before_row = cursor.fetchone()
+            before_count = int(before_row["before_count"] or 0)
+
+            position = before_count + 1
+            page = ((position - 1) // limit) + 1
+            offset = (page - 1) * limit
+
+            return {
+                "vehicle": vehicle,
+                "client_id": client_id,
+                "vehicle_id": vehicle_id,
+                "total": total,
+                "position": position,
+                "page": page,
+                "limit": limit,
+                "offset": offset,
+            }
+
     finally:
         connection.close()
 
