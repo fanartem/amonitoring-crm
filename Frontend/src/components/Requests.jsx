@@ -63,6 +63,7 @@ export default function Requests() {
 
 	const [filters, setFilters] = useState({
 		search: '',
+		created_by: '',
 		status: '',
 		city: '',
 		format: '',
@@ -225,6 +226,14 @@ export default function Requests() {
 				return clientMatch || vehicleMatch
 			})
 		}
+
+		if (filters.created_by) {
+			const creatorFilter = filters.created_by.toLowerCase()
+			result = result.filter(r => 
+				r.created_by_name && r.created_by_name.toLowerCase().includes(creatorFilter)
+			)
+		}
+
 		if (filters.status) result = result.filter(r => r.status === filters.status)
 		if (filters.format)
 			result = result.filter(r => r.visit_type === filters.format)
@@ -235,7 +244,7 @@ export default function Requests() {
 	const handleFilterChange = e =>
 		setFilters({ ...filters, [e.target.name]: e.target.value })
 	const resetFilters = () =>
-		setFilters({ search: '', status: '', city: '', format: '' })
+		setFilters({ search: '', status: '', city: '', format: '', created_by: '' })
 
 	const statusLabels = {
 		NEW: 'В ожидании',
@@ -557,6 +566,18 @@ export default function Requests() {
 						style={{ minWidth: '250px' }}
 					/>
 				</div>
+                <div className='filter-group'>
+                    <label>Создатель заявки</label>
+                    <input
+                        className='filter-input'
+                        type='text'
+                        name='created_by'
+                        placeholder='ФИО...'
+                        value={filters.created_by || ''}
+                        onChange={handleFilterChange}
+                        style={{ minWidth: '180px' }}
+                    />
+                </div>
 				<div className='filter-group'>
 					<label>Статус</label>
 					<select
