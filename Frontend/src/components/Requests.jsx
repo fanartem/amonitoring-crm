@@ -566,51 +566,50 @@ export default function Requests() {
 	return (
 		<div className='requests-page-container'>
 			<div className='filters-bar'>
-				<div className='filter-group' style={{ flex: '1.5' }}>
+				<div className='filter-group filter-main'>
 					<label>Глобальный поиск</label>
 					<input
 						className='filter-input'
 						type='text'
 						name='search'
-						placeholder='Телефон, Гос.номер, VIN, Марка...'
+						placeholder='ФИО, Телефон, Гос.номер, VIN, Марка...'
 						value={filters.search}
 						onChange={handleFilterChange}
-						style={{ minWidth: '25px' }}
 					/>
 				</div>
-                <div className='filter-group'>
-                    <label>Создатель заявки</label>
-                    <input
-                        className='filter-input'
-                        type='text'
-                        name='created_by'
-                        placeholder='ФИО...'
-                        value={filters.created_by || ''}
-                        onChange={handleFilterChange}
-                        style={{ minWidth: '18px' }}
-                    />
-                </div>
-		<div className='filter-group' style={{ flex: '0 0 140px' }}>
-	<label>Дата от</label>
-	<input
-		className='filter-input'
-		type='date'
-		name='date_from'
-		value={filters.date_from}
-		onChange={handleFilterChange}
-	/>
-</div>
+				<div className='filter-group filter-creator'>
+					<label>Создатель заявки</label>
+					<input
+						className='filter-input'
+						type='text'
+						name='created_by'
+						placeholder='ФИО...'
+						value={filters.created_by || ''}
+						onChange={handleFilterChange}
+					/>
+				</div>
+				
+				<div className='filter-group'>
+					<label>Дата от</label>
+					<input
+						className='filter-input'
+						type='date'
+						name='date_from'
+						value={filters.date_from}
+						onChange={handleFilterChange}
+					/>
+				</div>
 
-<div className='filter-group' style={{ flex: '0 0 140px' }}>
-	<label>Дата до</label>
-	<input
-		className='filter-input'
-		type='date'
-		name='date_to'
-		value={filters.date_to}
-		onChange={handleFilterChange}
-	/>
-</div>
+				<div className='filter-group'>
+					<label>Дата до</label>
+					<input
+						className='filter-input'
+						type='date'
+						name='date_to'
+						value={filters.date_to}
+						onChange={handleFilterChange}
+					/>
+				</div>
 				<div className='filter-group'>
 					<label>Статус</label>
 					<select
@@ -660,7 +659,6 @@ export default function Requests() {
 					Сбросить
 				</button>
 			</div>
-
 			<div className='requests-list'>
 				{filteredRequests.map(req => (
 					<div
@@ -973,77 +971,60 @@ export default function Requests() {
 								</div>
 							)}
 						</div>
+{/* --- НИЖНИЙ ПРАВЫЙ УГОЛ: Кнопки действий по ролям --- */}
+<div
+    className='role-actions-wrapper'
+    style={{
+        position: 'absolute',
+        bottom: '15px', /* Прижимаем к низу карточки */
+        right: '15px',  /* Прижимаем к правому краю */
+        display: 'flex',
+        gap: '10px',    /* Ровный отступ между всеми кнопками */
+    }}
+>
+    {(userRole === 'WAREHOUSE_MANAGER' || userRole === 'ADMIN') && (
+        <button
+            className='btn-green'
+            onClick={e => {
+                e.stopPropagation()
+                setDetailModalTab('equipment')
+                setSelectedRequestId(req.id)
+            }}
+        >
+            Оборудование
+        </button>
+    )}
 
-						{/* --- НИЖНИЙ ПРАВЫЙ УГОЛ: Кнопки действий по ролям --- */}
-						<div
-							className='role-actions-wrapper'
-							style={{
-								position: 'absolute',
-								bottom: '15px' /* Прижимаем к низу карточки */,
-								right: '15px' /* Прижимаем к правому краю */,
-								display: 'flex',
-								gap: '10px',
-							}}
-						>
-							{(userRole === 'WAREHOUSE_MANAGER' || userRole === 'ADMIN') && (
-								<button
-									className='btn-green'
-									style={{
-										marginBottom: '12px',
-										marginRight: '30px',
-									}}
-									onClick={e => {
-										e.stopPropagation()
-										setDetailModalTab('equipment')
-										setSelectedRequestId(req.id)
-									}}
-								>
-									Оборудование
-								</button>
-							)}
+    {userRole === 'ACCOUNTANT' && !req.is_paid && (
+        <button
+            className='btn-green'
+            onClick={e => handlePayRequest(e, req.id)}
+        >
+            Оплатить
+        </button>
+    )}
 
-							{userRole === 'ACCOUNTANT' && !req.is_paid && (
-								<button
-									className='btn-green'
-									style={{
-										marginBottom: '12px',
-										marginRight: '30px',
-									}}
-									onClick={e => handlePayRequest(e, req.id)}
-								>
-									Оплатить
-								</button>
-							)}
+    {(userRole === 'TECHNICIAN' ||
+        userRole === 'SENIOR_TECHNICIAN') &&
+        req.status === 'NEW' &&
+        !req.assigned_to && (
+            <button
+                className='btn-green'
+                onClick={e => handleAcceptRequest(e, req)}
+            >
+                Принять заявку
+            </button>
+        )}
 
-							{(userRole === 'TECHNICIAN' ||
-								userRole === 'SENIOR_TECHNICIAN') &&
-								req.status === 'NEW' &&
-								!req.assigned_to && (
-									<button
-										className='btn-green'
-										style={{
-											marginBottom: '12px',
-											marginRight: '30px',
-										}}
-										onClick={e => handleAcceptRequest(e, req)}
-									>
-										Принять заявку
-									</button>
-								)}
-
-							{canCompleteRequest(req) && (
-								<button
-									className='btn-complete-request'
-									style={{
-										marginBottom: '12px',
-										marginRight: '30px',
-									}}
-									onClick={e => handleCompleteRequest(e, req)}
-								>
-									Завершить
-								</button>
-							)}
-						</div>
+    {canCompleteRequest(req) && (
+        <button
+            className='btn-complete-request'
+            onClick={e => handleCompleteRequest(e, req)}
+        >
+            Завершить
+        </button>
+    )}
+</div>
 					</div>
 				))}
 			</div>
