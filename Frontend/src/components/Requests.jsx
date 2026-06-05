@@ -67,6 +67,8 @@ export default function Requests() {
 		status: '',
 		city: '',
 		format: '',
+		date_from: '',
+		date_to: '',
 	})
 
 	const userRole = getUserRole()
@@ -233,6 +235,16 @@ export default function Requests() {
 				r.created_by_name && r.created_by_name.toLowerCase().includes(creatorFilter)
 			)
 		}
+		if (filters.date_from) {
+			const fromDate = new Date(filters.date_from)
+			fromDate.setHours(0, 0, 0, 0)
+			result = result.filter(r => new Date(r.created_at) >= fromDate)
+		}
+		if (filters.date_to) {
+			const toDate = new Date(filters.date_to)
+			toDate.setHours(23, 59, 59, 999)
+			result = result.filter(r => new Date(r.created_at) <= toDate)
+		}
 
 		if (filters.status) result = result.filter(r => r.status === filters.status)
 		if (filters.format)
@@ -244,7 +256,7 @@ export default function Requests() {
 	const handleFilterChange = e =>
 		setFilters({ ...filters, [e.target.name]: e.target.value })
 	const resetFilters = () =>
-		setFilters({ search: '', status: '', city: '', format: '', created_by: '' })
+		setFilters({ search: '', status: '', city: '', format: '', created_by: '',date_from: '', date_to: '', })
 
 	const statusLabels = {
 		NEW: 'В ожидании',
@@ -560,10 +572,10 @@ export default function Requests() {
 						className='filter-input'
 						type='text'
 						name='search'
-						placeholder='ФИО, Телефон, Гос.номер, VIN, Марка...'
+						placeholder='Телефон, Гос.номер, VIN, Марка...'
 						value={filters.search}
 						onChange={handleFilterChange}
-						style={{ minWidth: '250px' }}
+						style={{ minWidth: '25px' }}
 					/>
 				</div>
                 <div className='filter-group'>
@@ -575,9 +587,30 @@ export default function Requests() {
                         placeholder='ФИО...'
                         value={filters.created_by || ''}
                         onChange={handleFilterChange}
-                        style={{ minWidth: '180px' }}
+                        style={{ minWidth: '18px' }}
                     />
                 </div>
+		<div className='filter-group' style={{ flex: '0 0 140px' }}>
+	<label>Дата от</label>
+	<input
+		className='filter-input'
+		type='date'
+		name='date_from'
+		value={filters.date_from}
+		onChange={handleFilterChange}
+	/>
+</div>
+
+<div className='filter-group' style={{ flex: '0 0 140px' }}>
+	<label>Дата до</label>
+	<input
+		className='filter-input'
+		type='date'
+		name='date_to'
+		value={filters.date_to}
+		onChange={handleFilterChange}
+	/>
+</div>
 				<div className='filter-group'>
 					<label>Статус</label>
 					<select
