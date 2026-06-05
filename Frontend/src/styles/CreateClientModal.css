@@ -137,6 +137,180 @@
   cursor: not-allowed;
 }
 
+.create-client-subclient-block {
+	margin-top: 14px;
+}
+
+.create-client-subclient-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 9px;
+	min-height: 38px;
+	padding: 8px 14px;
+	border: 1px solid #d8d8d8;
+	border-radius: 999px;
+	background: #ffffff;
+	color: #333333;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	user-select: none;
+	transition:
+		background 0.2s ease,
+		border-color 0.2s ease,
+		color 0.2s ease,
+		box-shadow 0.2s ease;
+}
+
+.create-client-subclient-pill:hover {
+	border-color: #c8e6c9;
+	background: #fbfdf8;
+}
+
+.create-client-subclient-pill.active {
+	background: #f1f8e9;
+	border-color: #c8e6c9;
+	color: #558b2f;
+}
+
+.create-client-subclient-pill input {
+	display: none;
+}
+
+.create-client-subclient-checkmark {
+	width: 16px;
+	height: 16px;
+	border: 1px solid #bdbdbd;
+	border-radius: 50%;
+	background: #ffffff;
+	color: #5e9424;
+	font-size: 11px;
+	font-weight: 800;
+	line-height: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+}
+
+.create-client-subclient-pill.active .create-client-subclient-checkmark {
+	border-color: #5e9424;
+	background: #ffffff;
+}
+
+.create-client-parent-field {
+	margin-top: 12px;
+}
+
+/* SearchableSelect для модалки клиента */
+.searchable-select {
+	position: relative;
+	width: 100%;
+}
+
+.searchable-select-control {
+	width: 100%;
+	min-height: 40px;
+	border: 1px solid #d8d8d8;
+	border-radius: 6px;
+	background: #ffffff;
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.searchable-select-control:focus-within {
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.searchable-select-control.disabled {
+	background: #f1f1f1;
+	color: #777;
+	cursor: not-allowed;
+}
+
+.searchable-select-control input {
+	width: 100%;
+	border: none;
+	outline: none;
+	background: transparent;
+	padding: 9px 10px;
+	font-size: 14px;
+	font-family: inherit;
+	color: #222;
+	box-sizing: border-box;
+}
+
+.searchable-select-arrow {
+	padding: 0 10px;
+	color: #777;
+	font-size: 13px;
+}
+
+.searchable-select-clear {
+	width: 30px;
+	height: 30px;
+	border: none;
+	background: transparent;
+	color: #777;
+	font-size: 18px;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	margin-right: 4px;
+	border-radius: 6px;
+}
+
+.searchable-select-clear:hover {
+	background: #f3f4f6;
+	color: #333;
+}
+
+.searchable-select-dropdown {
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	right: 0;
+	z-index: 9999;
+	max-height: 260px;
+	overflow-y: auto;
+	background: #ffffff;
+	border: 1px solid #d8d8d8;
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+	padding: 4px 0;
+}
+
+.searchable-select-option {
+	padding: 9px 12px;
+	font-size: 14px;
+	color: #222;
+	cursor: pointer;
+	line-height: 1.35;
+}
+
+.searchable-select-option:hover {
+	background: #f1f8e9;
+}
+
+.searchable-select-option.selected {
+	background: #e8f5e9;
+	color: #2e5902;
+	font-weight: 700;
+}
+
+.searchable-select-empty,
+.searchable-select-more {
+	padding: 10px 12px;
+	font-size: 13px;
+	color: #888;
+	background: #fafafa;
+}
+
 @media (max-width: 640px) {
   .create-client-modal {
     width: 96%;

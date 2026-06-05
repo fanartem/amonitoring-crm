@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/CreateRequestModal.css'
 
@@ -57,6 +57,148 @@ const createEmptyManualPriceLine = () => ({
 	unit_price: '',
 })
 
+function SearchableSelect({
+	value,
+	options,
+	placeholder = 'Напишите или выберите',
+	onChange,
+	getOptionValue,
+	getOptionLabel,
+	getOptionSearchText,
+	disabled = false,
+	error = false,
+	emptyText = 'Ничего не найдено',
+}) {
+	const [query, setQuery] = useState('')
+	const [isOpen, setIsOpen] = useState(false)
+	const wrapperRef = useRef(null)
+
+	useEffect(() => {
+		const handleClickOutside = event => {
+			if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+				setIsOpen(false)
+				setQuery('')
+			}
+		}
+
+		document.addEventListener('mousedown', handleClickOutside)
+
+		return () => {
+			document.removeEventListener('mousedown', handleClickOutside)
+		}
+	}, [])
+
+	const selectedOption = options.find(
+		option => String(getOptionValue(option)) === String(value),
+	)
+
+	const inputValue = isOpen
+		? query
+		: selectedOption
+			? getOptionLabel(selectedOption)
+			: ''
+
+	const normalizedQuery = query.trim().toLowerCase()
+
+	const filteredOptions = normalizedQuery
+		? options.filter(option =>
+				getOptionSearchText(option).toLowerCase().includes(normalizedQuery),
+			)
+		: options
+
+	const handleSelect = option => {
+		onChange(option)
+		setQuery('')
+		setIsOpen(false)
+	}
+
+	const handleClear = e => {
+		e.stopPropagation()
+		onChange(null)
+		setQuery('')
+		setIsOpen(false)
+	}
+
+	return (
+		<div className='searchable-select' ref={wrapperRef}>
+			<div
+				className={`searchable-select-control ${error ? 'request-field-error' : ''} ${
+					disabled ? 'disabled' : ''
+				}`}
+				onClick={() => {
+					if (!disabled) setIsOpen(true)
+				}}
+			>
+				<input
+					type='text'
+					value={inputValue}
+					disabled={disabled}
+					placeholder={placeholder}
+					onFocus={() => {
+						if (!disabled) {
+							setIsOpen(true)
+							setQuery('')
+						}
+					}}
+					onChange={e => {
+						setQuery(e.target.value)
+						setIsOpen(true)
+					}}
+					onKeyDown={e => {
+						if (e.key === 'Escape') {
+							setIsOpen(false)
+							setQuery('')
+						}
+					}}
+				/>
+
+				{value && !disabled ? (
+					<button
+						type='button'
+						className='searchable-select-clear'
+						onClick={handleClear}
+					>
+						×
+					</button>
+				) : (
+					<span className='searchable-select-arrow'>▾</span>
+				)}
+			</div>
+
+			{isOpen && !disabled && (
+				<div className='searchable-select-dropdown'>
+					{filteredOptions.length === 0 ? (
+						<div className='searchable-select-empty'>{emptyText}</div>
+					) : (
+						filteredOptions.slice(0, 80).map(option => (
+							<div
+								key={getOptionValue(option)}
+								className={`searchable-select-option ${
+									String(getOptionValue(option)) === String(value)
+										? 'selected'
+										: ''
+								}`}
+								onMouseDown={e => {
+									e.preventDefault()
+									handleSelect(option)
+								}}
+							>
+								{getOptionLabel(option)}
+							</div>
+						))
+					)}
+
+					{filteredOptions.length > 80 && (
+						<div className='searchable-select-more'>
+							Показаны первые 80 совпадений. Уточните поиск.
+						</div>
+					)}
+				</div>
+			)}
+		</div>
+	)
+}
+
 export default function CreateRequestModal({
 	isOpen,
 	onClose,
@@ -95,6 +237,10 @@ export default function CreateRequestModal({
 		city: '',
 		company_name: '',
 
+		is_subclient: false,
+		parent_client_id: '',
+		parent_source_name: '',
+
 		work_type: 'Установка',
 		work_format: 'Выезд к клиенту',
 		visit_price_code: 'ON_SITE_CITY',
@@ -119,6 +265,10 @@ export default function CreateRequestModal({
 		email: '',
 		city: '',
 		company_name: '',
+
+		is_subclient: false,
+		parent_client_id: '',
+		parent_source_name: '',
 
 		work_type: 'Установка',
 		work_format: 'Выезд к клиенту',
@@ -153,6 +303,10 @@ export default function CreateRequestModal({
 				phone: editRequestData.phone || '',
 				city: editRequestData.city || '',
 				company_name: editRequestData.company_name || '',
+
+				is_subclient: false,
+				parent_client_id: '',
+				parent_source_name: '',
 
 				work_type:
 					editRequestData.work_type === 'INSTALLATION'
@@ -296,10 +450,80 @@ export default function CreateRequestModal({
 		clearMissingField(name)
 	}
 
-	const handleExistingClientSelect = e => {
-		const selectedId = e.target.value
-		const client = clientsList.find(c => c.id === Number(selectedId))
+	const getClientLabel = client => {
+		if (!client) return ''
 
+		const mainName = client.company_name || client.name || `Клиент #${client.id}`
+		const representative =
+			client.company_name && client.name ? ` — ${client.name}` : ''
+		const parent = client.source_parent_client_name
+			? ` / родитель: ${client.source_parent_client_name}`
+			: ''
+
+		return `${mainName}${representative}${parent}`
+	}
+
+	const getClientSearchText = client => {
+		return [
+			client.company_name,
+			client.name,
+			client.phone,
+			client.email,
+			client.source_client_name,
+			client.source_parent_client_name,
+			client.source_inn,
+		]
+			.filter(Boolean)
+			.join(' ')
+	}
+
+	const getClientSourceName = client => {
+		if (!client) return ''
+
+		return (
+			client.source_client_name ||
+			client.company_name ||
+			client.name ||
+			`Клиент #${client.id}`
+		)
+	}
+
+	const handleParentClientSelect = parentClient => {
+		setFormData(prev => ({
+			...prev,
+			parent_client_id: parentClient ? parentClient.id : '',
+			parent_source_name: parentClient ? getClientSourceName(parentClient) : '',
+		}))
+
+		clearMissingField('parent_client_id')
+	}
+
+	const getCityLabel = city => city.name
+
+	const getCitySearchText = city => city.name || ''
+
+	const getVehicleLabel = vehicle => {
+		const title = `${vehicle.brand || ''} ${vehicle.model || ''}`.trim()
+		const plate = vehicle.plate_number || 'б/н'
+		const vin = vehicle.vin || 'VIN не указан'
+
+		return `${title || 'Автомобиль'} (${plate}) · ${vin}`
+	}
+
+	const getVehicleSearchText = vehicle => {
+		return [
+			vehicle.brand,
+			vehicle.model,
+			vehicle.plate_number,
+			vehicle.vin,
+			vehicle.year,
+			vehicle.type,
+		]
+			.filter(Boolean)
+			.join(' ')
+	}
+
+	const handleExistingClientSelect = client => {
 		if (client) {
 			setFormData(prev => ({
 				...prev,
@@ -324,6 +548,7 @@ export default function CreateRequestModal({
 				client_type: 'Физ. лицо',
 				client_name: '',
 				phone: '',
+				email: '',
 				company_name: '',
 			}))
 
@@ -545,6 +770,14 @@ export default function CreateRequestModal({
 			required.push('company_name')
 		}
 
+		if (
+			clientKind === 'new' &&
+			formData.is_subclient &&
+			!formData.parent_client_id
+		) {
+			required.push('parent_client_id')
+		}
+
 		if (!isEditMode) {
 			if (!formData.work_date) required.push('work_date')
 
@@ -762,6 +995,16 @@ export default function CreateRequestModal({
 								: formData.company_name.trim(),
 						phone: formData.phone.trim(),
 						email: formData.email.trim() || null,
+
+						source_system: formData.is_subclient ? 'CRM' : null,
+						source_client_name:
+							formData.client_type === 'Физ. лицо'
+								? formData.client_name.trim()
+								: formData.company_name.trim(),
+						source_parent_client_name: formData.is_subclient
+							? formData.parent_source_name
+							: null,
+						source_inn: null,
 					}),
 				})
 
@@ -791,6 +1034,15 @@ export default function CreateRequestModal({
 								: formData.company_name.trim(),
 						phone: formData.phone.trim(),
 						email: formData.email.trim() || null,
+						source_system: formData.is_subclient ? 'CRM' : null,
+						source_client_name:
+							formData.client_type === 'Физ. лицо'
+								? formData.client_name.trim()
+								: formData.company_name.trim(),
+						source_parent_client_name: formData.is_subclient
+							? formData.parent_source_name
+							: null,
+						source_inn: null,
 					},
 				])
 			}
@@ -1155,7 +1407,16 @@ export default function CreateRequestModal({
 												type='radio'
 												value='new'
 												checked={clientKind === 'new'}
-												onChange={() => setClientKind('new')}
+												onChange={() => {
+													setClientKind('new')
+													setFormData(prev => ({
+														...prev,
+														client_id: '',
+														is_subclient: false,
+														parent_client_id: '',
+														parent_source_name: '',
+													}))
+												}}
 											/>
 											Новый клиент
 										</label>
@@ -1165,10 +1426,75 @@ export default function CreateRequestModal({
 												type='radio'
 												value='existing'
 												checked={clientKind === 'existing'}
-												onChange={() => setClientKind('existing')}
+												onChange={() => {
+													setClientKind('existing')
+													setFormData(prev => ({
+														...prev,
+														is_subclient: false,
+														parent_client_id: '',
+														parent_source_name: '',
+													}))
+												}}
 											/>
 											Существующий клиент
 										</label>
+									</div>
+								)}
+
+								{clientKind === 'new' && !isEditMode && (
+									<div className='request-subclient-block'>
+										<label
+											className={`request-subclient-pill ${formData.is_subclient ? 'active' : ''}`}
+										>
+											<input
+												type='checkbox'
+												checked={formData.is_subclient}
+												onChange={e => {
+													const checked = e.target.checked
+
+													setFormData(prev => ({
+														...prev,
+														is_subclient: checked,
+														parent_client_id: checked
+															? prev.parent_client_id
+															: '',
+														parent_source_name: checked
+															? prev.parent_source_name
+															: '',
+													}))
+
+													if (!checked) {
+														clearMissingField('parent_client_id')
+													}
+												}}
+											/>
+
+											<span className='request-subclient-checkmark'>
+												{formData.is_subclient ? '✓' : ''}
+											</span>
+
+											<span>Клиент является подклиентом</span>
+										</label>
+
+										{formData.is_subclient && (
+											<label className='request-modal-field request-modal-full request-modal-gap-top'>
+												<span className='request-modal-label required'>
+													Родительский клиент
+												</span>
+
+												<SearchableSelect
+													value={formData.parent_client_id}
+													options={clientsList}
+													placeholder='Напишите или выберите родительского клиента'
+													onChange={handleParentClientSelect}
+													getOptionValue={client => client.id}
+													getOptionLabel={getClientLabel}
+													getOptionSearchText={getClientSearchText}
+													error={missingFields.includes('parent_client_id')}
+													emptyText='Родительский клиент не найден'
+												/>
+											</label>
+										)}
 									</div>
 								)}
 
@@ -1177,18 +1503,17 @@ export default function CreateRequestModal({
 										<span className='request-modal-label required'>
 											Выберите клиента
 										</span>
-										<select
-											className='request-modal-input'
-											onChange={handleExistingClientSelect}
+										<SearchableSelect
 											value={formData.client_id}
-										>
-											<option value=''>— выберите —</option>
-											{clientsList.map(client => (
-												<option key={client.id} value={client.id}>
-													{client.company_name || client.name}
-												</option>
-											))}
-										</select>
+											options={clientsList}
+											placeholder='Напишите или выберите клиента'
+											onChange={handleExistingClientSelect}
+											getOptionValue={client => client.id}
+											getOptionLabel={getClientLabel}
+											getOptionSearchText={getClientSearchText}
+											error={missingFields.includes('client_id')}
+											emptyText='Клиент не найден'
+										/>
 									</label>
 								)}
 
@@ -1212,20 +1537,20 @@ export default function CreateRequestModal({
 
 									{(formData.client_type === 'ТОО' ||
 										formData.client_type === 'ИП') && (
-											<label className='request-modal-field'>
-												<span className='request-modal-label required'>
-													Наименование
-												</span>
-												<input
-													className={fieldClass('company_name')}
-													type='text'
-													name='company_name'
-													value={formData.company_name}
-													onChange={handleChange}
-													readOnly={isClientLocked}
-												/>
-											</label>
-										)}
+										<label className='request-modal-field'>
+											<span className='request-modal-label required'>
+												Наименование
+											</span>
+											<input
+												className={fieldClass('company_name')}
+												type='text'
+												name='company_name'
+												value={formData.company_name}
+												onChange={handleChange}
+												readOnly={isClientLocked}
+											/>
+										</label>
+									)}
 
 									<label className='request-modal-field'>
 										<span className='request-modal-label required'>ФИО</span>
@@ -1276,20 +1601,24 @@ export default function CreateRequestModal({
 								<div className='request-modal-grid'>
 									<label className='request-modal-field'>
 										<span className='request-modal-label required'>Город</span>
-										<select
-											className={fieldClass('city')}
-											name='city'
+										<SearchableSelect
 											value={formData.city}
-											onChange={handleChange}
-										>
-											<option value=''>— выберите город —</option>
+											options={cities}
+											placeholder='Напишите или выберите город'
+											onChange={city => {
+												setFormData(prev => ({
+													...prev,
+													city: city ? city.name : '',
+												}))
 
-											{cities.map(city => (
-												<option key={city.id} value={city.name}>
-													{city.name}
-												</option>
-											))}
-										</select>
+												clearMissingField('city')
+											}}
+											getOptionValue={city => city.name}
+											getOptionLabel={getCityLabel}
+											getOptionSearchText={getCitySearchText}
+											error={missingFields.includes('city')}
+											emptyText='Город не найден'
+										/>
 									</label>
 
 									{!isEditMode && (
@@ -1473,28 +1802,42 @@ export default function CreateRequestModal({
 																	<span className='request-modal-label'>
 																		Выберите авто
 																	</span>
-																	<select
-																		className='request-modal-input'
-																		onChange={e =>
+																	<SearchableSelect
+																		value={vehicle.car_id}
+																		options={[
+																			{
+																				id: '',
+																				brand: 'Новая машина',
+																				model: '',
+																				plate_number: '',
+																				vin: '',
+																			},
+																			...clientVehicles,
+																		]}
+																		placeholder='Напишите или выберите авто'
+																		onChange={selectedVehicle => {
 																			handleExistingVehicleSelect(
 																				vehicle.local_id,
-																				e.target.value,
+																				selectedVehicle
+																					? selectedVehicle.id
+																					: '',
 																			)
+																		}}
+																		getOptionValue={clientVehicle =>
+																			clientVehicle.id
 																		}
-																		value={vehicle.car_id}
-																	>
-																		<option value=''>— Новая машина —</option>
-																		{clientVehicles.map(clientVehicle => (
-																			<option
-																				key={clientVehicle.id}
-																				value={clientVehicle.id}
-																			>
-																				{clientVehicle.brand}{' '}
-																				{clientVehicle.model} (
-																				{clientVehicle.plate_number || 'б/н'})
-																			</option>
-																		))}
-																	</select>
+																		getOptionLabel={clientVehicle =>
+																			clientVehicle.id === ''
+																				? '— Новая машина —'
+																				: getVehicleLabel(clientVehicle)
+																		}
+																		getOptionSearchText={clientVehicle =>
+																			clientVehicle.id === ''
+																				? 'Новая машина'
+																				: getVehicleSearchText(clientVehicle)
+																		}
+																		emptyText='Авто не найдено'
+																	/>
 																</label>
 															)}
 
@@ -1573,11 +1916,12 @@ export default function CreateRequestModal({
 
 																<label className='request-modal-field'>
 																	<span className='request-modal-label required'>
-																		
 																		VIN-код
 																	</span>
 																	<input
-																		className={fieldClass(`car_vin_${vehicle.local_id}`)}
+																		className={fieldClass(
+																			`car_vin_${vehicle.local_id}`,
+																		)}
 																		type='text'
 																		value={vehicle.car_vin}
 																		onChange={e =>
@@ -1786,7 +2130,7 @@ export default function CreateRequestModal({
 																	</div>
 
 																	{!vehicle.extra_sensors ||
-																		vehicle.extra_sensors.length === 0 ? (
+																	vehicle.extra_sensors.length === 0 ? (
 																		<div className='request-extra-sensors-empty'>
 																			Дополнительные датчики не добавлены
 																		</div>
@@ -2013,7 +2357,7 @@ export default function CreateRequestModal({
 
 												<div className='request-price-line-actions'>
 													{editingPriceLineKey ===
-														getPriceLineUiKey(line, index) ? (
+													getPriceLineUiKey(line, index) ? (
 														<>
 															<input
 																className='request-price-edit-input'
@@ -2059,19 +2403,19 @@ export default function CreateRequestModal({
 															{priceLineOverrides[
 																getPriceLineUiKey(line, index)
 															] !== undefined && (
-																	<button
-																		type='button'
-																		className='request-price-reset-line-btn'
-																		onClick={() =>
-																			resetEditPriceLine(
-																				getPriceLineUiKey(line, index),
-																			)
-																		}
-																		title='Вернуть исходную цену'
-																	>
-																		↺
-																	</button>
-																)}
+																<button
+																	type='button'
+																	className='request-price-reset-line-btn'
+																	onClick={() =>
+																		resetEditPriceLine(
+																			getPriceLineUiKey(line, index),
+																		)
+																	}
+																	title='Вернуть исходную цену'
+																>
+																	↺
+																</button>
+															)}
 														</>
 													)}
 												</div>

@@ -466,24 +466,26 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
             rows = cursor.fetchall()
 
             regular_clients = []
-            import_clients = []
+            hierarchy_clients = []
 
             for row in rows:
-                if row.get("source_system") == "GLONASS_SOFT":
-                    import_clients.append(build_client_node(row))
+                # Клиенты с source_client_name/source_parent_client_name участвуют в дереве.
+                # Это и импорт GlonassSoft, и новые CRM-подклиенты.
+                if row.get("source_client_name") or row.get("source_parent_client_name"):
+                    hierarchy_clients.append(build_client_node(row))
                 else:
                     regular_clients.append(build_client_node(row))
 
             nodes_by_source_name = {}
 
-            for client in import_clients:
+            for client in hierarchy_clients:
                 source_name = get_source_name(client)
                 nodes_by_source_name[normalize_text(source_name)] = client
 
             root_clients = []
             external_groups = {}
 
-            for client in import_clients:
+            for client in hierarchy_clients:
                 parent_name = get_parent_source_name(client)
 
                 if not parent_name:
@@ -505,7 +507,7 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
 
             groups = []
 
-            # Импортные root-клиенты как отдельные верхнеуровневые группы
+            # Root-клиенты иерархии как отдельные верхнеуровневые группы
             for client in root_clients:
                 recalc_client_totals(client)
 
@@ -513,7 +515,7 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
 
                 group = empty_group(
                     group_name=group_name,
-                    is_import_group=True,
+                    is_import_group=client.get("source_system") == "GLONASS_SOFT",
                 )
 
                 group["parent_client"] = client
@@ -525,7 +527,7 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
 
                 groups.append(group)
 
-            # Внешние группы, где parent есть в GlonassSoft как имя, но не как клиент в clients
+            # Внешние группы, где parent указан как имя, но не найден как клиент в clients
             for group in external_groups.values():
                 total_clients = 0
                 total_requests = 0
