@@ -188,7 +188,6 @@ def get_price_items(
     finally:
         connection.close()
 
-
 @router.post("")
 def create_price_item(
     data: PriceItemCreate,
@@ -273,7 +272,6 @@ def create_price_item(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
-
 
 @router.patch("/{price_item_id}")
 def update_price_item(
@@ -413,7 +411,6 @@ def update_price_item(
     finally:
         connection.close()
 
-
 @router.delete("/{price_item_id}")
 def deactivate_price_item(
     price_item_id: int,
@@ -472,7 +469,6 @@ def deactivate_price_item(
     finally:
         connection.close()
 
-
 @router.patch("/{price_item_id}/restore")
 def restore_price_item(
     price_item_id: int,
@@ -529,7 +525,6 @@ def restore_price_item(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         connection.close()
-
 
 @router.get("/client/{client_id}")
 def get_client_prices(
@@ -602,7 +597,6 @@ def get_client_prices(
 
     finally:
         connection.close()
-
 
 @router.put("/client/{client_id}")
 def update_client_prices(
@@ -700,7 +694,6 @@ def update_client_prices(
     finally:
         connection.close()
 
-
 @router.delete("/client/{client_id}/{price_item_id}")
 def delete_client_price_override(
     client_id: int,
@@ -756,7 +749,7 @@ def calculate_request_price(
     work_type = data.work_type.upper()
     visit_type = data.visit_type.upper()
 
-    allowed_work_types = ["INSTALLATION", "REMOVAL", "DIAGNOSTIC"]
+    allowed_work_types = ["INSTALLATION", "REMOVAL", "DIAGNOSTIC", "REFLASHING"]
     allowed_visit_types = ["IN_OFFICE", "ON_SITE"]
 
     if work_type not in allowed_work_types:
@@ -1024,6 +1017,29 @@ def calculate_request_price(
                             unit=restore_item["unit"],
                             source=restore_item["source"],
                             vehicle_index=None,
+                        )
+
+            # Перепрошивка
+            elif work_type == "REFLASHING":
+                reflashing_item = get_effective_price(
+                    cursor,
+                    "REFLASHING_BASE",
+                    data.client_id
+                )
+
+                vehicle_count = max(len(data.vehicles), 1)
+
+                if reflashing_item:
+                    for index in range(1, vehicle_count + 1):
+                        add_price_line(
+                            lines,
+                            code=reflashing_item["code"],
+                            label=f"Авто {index}: {reflashing_item['name']}",
+                            quantity=1,
+                            unit_price=reflashing_item["unit_price"],
+                            unit=reflashing_item["unit"],
+                            source=reflashing_item["source"],
+                            vehicle_index=index,
                         )
 
             # Ручные строки калькулятора

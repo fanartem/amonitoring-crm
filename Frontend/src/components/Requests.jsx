@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import '../styles/Requests.css'
 import CreateRequestModal from './CreateRequestModal'
 import RequestDetailModal from './RequestDetailModal'
+import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
 
 const getUserRole = () => {
 	try {
@@ -500,14 +501,7 @@ export default function Requests() {
 				['Статус', statusLabels[req.status] || req.status],
 				['Город', req.city || '—'],
 				['Адрес выезда', req.address || '—'],
-				[
-					'Тип работ',
-					req.work_type === 'INSTALLATION'
-						? 'Установка'
-						: req.work_type === 'REMOVAL'
-							? 'Снятие'
-							: 'Диагностика',
-				],
+				['Тип работ', getWorkTypeLabel(req.work_type)],
 				[
 					'Формат',
 					req.visit_type === 'ON_SITE' ? 'Выезд к клиенту' : 'В офисе',
@@ -588,7 +582,7 @@ export default function Requests() {
 						onChange={handleFilterChange}
 					/>
 				</div>
-				
+
 				<div className='filter-group'>
 					<label>Дата от</label>
 					<input
@@ -693,24 +687,15 @@ export default function Requests() {
 									style={{
 										fontSize: '15px',
 										fontWeight: '600',
-										color:
-											req.work_type === 'INSTALLATION'
-												? '#1565c0'
-												: req.work_type === 'REMOVAL'
-													? '#c62828'
-													: '#e65100',
+										color: getWorkTypeColor(req.work_type),
 										marginTop: '5px',
 										display: 'inline-block',
 									}}
 								>
-									{req.work_type === 'INSTALLATION'
-										? 'Установка'
-										: req.work_type === 'REMOVAL'
-											? 'Снятие'
-											: 'Диагностика'}
+									{getWorkTypeLabel(req.work_type)}
 								</span>
 							</div>
-							
+
 							<div className='card-item'>
 								<span className='card-label'>Статус</span>
 								<div
@@ -971,60 +956,60 @@ export default function Requests() {
 								</div>
 							)}
 						</div>
-{/* --- НИЖНИЙ ПРАВЫЙ УГОЛ: Кнопки действий по ролям --- */}
-<div
-    className='role-actions-wrapper'
-    style={{
-        position: 'absolute',
-        bottom: '15px', /* Прижимаем к низу карточки */
-        right: '15px',  /* Прижимаем к правому краю */
-        display: 'flex',
-        gap: '10px',    /* Ровный отступ между всеми кнопками */
-    }}
->
-    {(userRole === 'WAREHOUSE_MANAGER' || userRole === 'ADMIN') && (
-        <button
-            className='btn-green'
-            onClick={e => {
-                e.stopPropagation()
-                setDetailModalTab('equipment')
-                setSelectedRequestId(req.id)
-            }}
-        >
-            Оборудование
-        </button>
-    )}
+						{/* --- НИЖНИЙ ПРАВЫЙ УГОЛ: Кнопки действий по ролям --- */}
+						<div
+							className='role-actions-wrapper'
+							style={{
+								position: 'absolute',
+								bottom: '15px' /* Прижимаем к низу карточки */,
+								right: '15px' /* Прижимаем к правому краю */,
+								display: 'flex',
+								gap: '10px' /* Ровный отступ между всеми кнопками */,
+							}}
+						>
+							{(userRole === 'WAREHOUSE_MANAGER' || userRole === 'ADMIN') && (
+								<button
+									className='btn-green'
+									onClick={e => {
+										e.stopPropagation()
+										setDetailModalTab('equipment')
+										setSelectedRequestId(req.id)
+									}}
+								>
+									Оборудование
+								</button>
+							)}
 
-    {userRole === 'ACCOUNTANT' && !req.is_paid && (
-        <button
-            className='btn-green'
-            onClick={e => handlePayRequest(e, req.id)}
-        >
-            Оплатить
-        </button>
-    )}
+							{userRole === 'ACCOUNTANT' && !req.is_paid && (
+								<button
+									className='btn-green'
+									onClick={e => handlePayRequest(e, req.id)}
+								>
+									Оплатить
+								</button>
+							)}
 
-    {(userRole === 'TECHNICIAN' ||
-        userRole === 'SENIOR_TECHNICIAN') &&
-        req.status === 'NEW' &&
-        !req.assigned_to && (
-            <button
-                className='btn-green'
-                onClick={e => handleAcceptRequest(e, req)}
-            >
-                Принять заявку
-            </button>
-        )}
+							{(userRole === 'TECHNICIAN' ||
+								userRole === 'SENIOR_TECHNICIAN') &&
+								req.status === 'NEW' &&
+								!req.assigned_to && (
+									<button
+										className='btn-green'
+										onClick={e => handleAcceptRequest(e, req)}
+									>
+										Принять заявку
+									</button>
+								)}
 
-    {canCompleteRequest(req) && (
-        <button
-            className='btn-complete-request'
-            onClick={e => handleCompleteRequest(e, req)}
-        >
-            Завершить
-        </button>
-    )}
-</div>
+							{canCompleteRequest(req) && (
+								<button
+									className='btn-complete-request'
+									onClick={e => handleCompleteRequest(e, req)}
+								>
+									Завершить
+								</button>
+							)}
+						</div>
 					</div>
 				))}
 			</div>

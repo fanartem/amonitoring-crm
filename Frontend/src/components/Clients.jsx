@@ -7,6 +7,7 @@ import '../styles/Requests.css'
 import CreateClientModal from './CreateClientModal'
 import RequestDetailModal from './RequestDetailModal'
 import AttachmentsPanel from './AttachmentsPanel'
+import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
 
 const getUserRole = () => {
 	try {
@@ -1546,19 +1547,10 @@ export default function Clients() {
 											style={{
 												fontSize: '15px',
 												fontWeight: '600',
-												color:
-													req.work_type === 'INSTALLATION'
-														? '#1565c0'
-														: req.work_type === 'REMOVAL'
-															? '#c62828'
-															: '#e65100',
+												color: getWorkTypeColor(req.work_type),
 											}}
 										>
-											{req.work_type === 'INSTALLATION'
-												? 'Установка'
-												: req.work_type === 'REMOVAL'
-													? 'Снятие'
-													: 'Диагностика'}
+											{getWorkTypeLabel(req.work_type)}
 										</span>
 									</div>
 

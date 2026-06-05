@@ -4,6 +4,7 @@ import '../styles/Requests.css'
 
 import RequestEquipmentPanel from './RequestEquipmentPanel'
 import AttachmentsPanel from './AttachmentsPanel'
+import { getWorkTypeLabel } from '../utils/workTypes'
 
 const getUserRole = () => {
 	try {
@@ -632,11 +633,7 @@ export default function RequestDetailModal({
 											<div className='info-row'>
 												<span className='info-key'>Форма работы</span>
 												<span className='info-val'>
-													{request.work_type === 'INSTALLATION'
-														? 'Установка'
-														: request.work_type === 'REMOVAL'
-															? 'Снятие'
-															: 'Диагностика'}
+													{getWorkTypeLabel(request.work_type)}
 												</span>
 											</div>
 											<div className='info-row'>

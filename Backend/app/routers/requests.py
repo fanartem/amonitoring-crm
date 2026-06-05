@@ -159,7 +159,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
             detail="Нужно добавить хотя бы один автомобиль в заявку"
         )
 
-    allowed_work_types = ["INSTALLATION", "DIAGNOSTIC", "REMOVAL"]
+    allowed_work_types = ["INSTALLATION", "DIAGNOSTIC", "REMOVAL", "REFLASHING"]
     allowed_visit_types = ["IN_OFFICE", "ON_SITE"]
 
     if data.work_type not in allowed_work_types:

@@ -199,6 +199,24 @@ function SearchableSelect({
 	)
 }
 
+const mapWorkTypeToUI = dbWorkType => {
+	if (dbWorkType === 'INSTALLATION') return 'Установка'
+	if (dbWorkType === 'REMOVAL') return 'Снятие'
+	if (dbWorkType === 'DIAGNOSTIC') return 'Диагностика'
+	if (dbWorkType === 'REFLASHING') return 'Перепрошивка'
+
+	return 'Диагностика'
+}
+
+const mapWorkTypeToAPI = uiWorkType => {
+	if (uiWorkType === 'Установка') return 'INSTALLATION'
+	if (uiWorkType === 'Снятие') return 'REMOVAL'
+	if (uiWorkType === 'Диагностика') return 'DIAGNOSTIC'
+	if (uiWorkType === 'Перепрошивка') return 'REFLASHING'
+
+	return 'DIAGNOSTIC'
+}
+
 export default function CreateRequestModal({
 	isOpen,
 	onClose,
@@ -309,11 +327,7 @@ export default function CreateRequestModal({
 				parent_source_name: '',
 
 				work_type:
-					editRequestData.work_type === 'INSTALLATION'
-						? 'Установка'
-						: editRequestData.work_type === 'REMOVAL'
-							? 'Снятие'
-							: 'Диагностика',
+					mapWorkTypeToUI(editRequestData.work_type),
 
 				work_format:
 					editRequestData.visit_type === 'ON_SITE'
@@ -946,12 +960,7 @@ export default function CreateRequestModal({
 					formData.work_format === 'Выезд к клиенту'
 						? formData.work_address
 						: null,
-				work_type:
-					formData.work_type === 'Установка'
-						? 'INSTALLATION'
-						: formData.work_type === 'Снятие'
-							? 'REMOVAL'
-							: 'DIAGNOSTIC',
+				work_type: mapWorkTypeToAPI(formData.work_type),
 				visit_type:
 					formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
 				platform: formData.platform.trim(),
@@ -1154,9 +1163,7 @@ export default function CreateRequestModal({
 	}
 
 	const getWorkTypeForApi = () => {
-		if (formData.work_type === 'Установка') return 'INSTALLATION'
-		if (formData.work_type === 'Снятие') return 'REMOVAL'
-		return 'DIAGNOSTIC'
+		return mapWorkTypeToAPI(formData.work_type)
 	}
 
 	const getVisitTypeForApi = () => {
@@ -1641,7 +1648,7 @@ export default function CreateRequestModal({
 									<div className='request-modal-label required'>Тип работ</div>
 
 									<div className='request-radio-list'>
-										{['Установка', 'Снятие', 'Диагностика'].map(type => (
+										{['Установка', 'Снятие', 'Диагностика', 'Перепрошивка'].map(type => (
 											<label
 												key={type}
 												className={`request-radio-pill ${formData.work_type === type ? 'active' : ''}`}

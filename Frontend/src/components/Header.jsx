@@ -3,6 +3,7 @@ import { API_BASE_URL, getJsonAuthHeaders } from '../api'
 import { useNavigate } from 'react-router-dom'
 import logoImg from '../assets/logo.png'
 import '../styles/Header.css'
+import { getWorkTypeLabel } from '../utils/workTypes'
 
 export default function Header() {
 	const userDataStr = localStorage.getItem('user_data')
@@ -345,12 +346,7 @@ export default function Header() {
 			if (!clientMatch && !matchedVehicle) return
 			if (requestResultsMap.has(r.id)) return
 
-			const workTypeRu =
-				r.work_type === 'INSTALLATION'
-					? 'Установка'
-					: r.work_type === 'REMOVAL'
-						? 'Снятие'
-						: 'Диагностика'
+			const workTypeRu = getWorkTypeLabel(r.work_type)
 
 			const vehicleText = matchedVehicle
 				? ` • Авто: ${`${matchedVehicle.brand || ''} ${matchedVehicle.model || ''}`.trim()} ${matchedVehicle.plate_number ? `(${matchedVehicle.plate_number})` : ''}`

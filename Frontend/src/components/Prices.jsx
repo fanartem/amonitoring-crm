@@ -26,12 +26,15 @@ const categoryLabels = {
 	GPS_TRACKER: 'Трекеры',
 	BEACON: 'Маяки',
 	SUBSCRIPTION: 'Абонентская плата',
+
 	INSTALLATION_SERVICE: 'Установка',
+	REMOVAL_SERVICE: 'Снятие',
+	DIAGNOSTIC_SERVICE: 'Диагностика',
+	REFLASHING_SERVICE: 'Перепрошивка',
+
 	VISIT: 'Выезды',
 	FUEL_SENSOR: 'ДУТ',
 	GPS_CAN: 'CAN-шина',
-	REMOVAL_SERVICE: 'Снятие',
-	DIAGNOSTIC_SERVICE: 'Диагностика',
 }
 
 const formatMoney = value => {
