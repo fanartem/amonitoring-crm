@@ -528,6 +528,98 @@
 	flex-wrap: wrap;
 }
 
+.warehouse-category-row td {
+	padding: 0;
+	background: #f9fafb;
+	border-bottom: 1px solid #e5e7eb;
+}
+
+.warehouse-item-group-row td {
+	padding: 0;
+	background: #ffffff;
+	border-bottom: 1px solid #eef0f2;
+}
+
+.warehouse-tree-row {
+	width: 100%;
+	border: none;
+	background: transparent;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	text-align: left;
+	cursor: pointer;
+	padding: 13px 15px;
+	font-family: inherit;
+}
+
+.warehouse-category-toggle {
+	background: #f3f4f6;
+}
+
+.warehouse-category-toggle:hover {
+	background: #e9f2dd;
+}
+
+.warehouse-item-group-toggle {
+	padding-left: 38px;
+	background: #ffffff;
+}
+
+.warehouse-item-group-toggle:hover {
+	background: #fbfdf8;
+}
+
+.warehouse-tree-arrow {
+	width: 18px;
+	flex: 0 0 18px;
+	color: #5e9424;
+	font-weight: 800;
+}
+
+.warehouse-tree-title {
+	font-weight: 800;
+	color: #1f2933;
+	min-width: 220px;
+}
+
+.warehouse-category-toggle .warehouse-tree-title {
+	text-transform: uppercase;
+	letter-spacing: 0.02em;
+}
+
+.warehouse-tree-counts {
+	color: #666;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+@media (max-width: 768px) {
+	.warehouse-tree-row {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 5px;
+		padding: 12px;
+	}
+
+	.warehouse-tree-arrow {
+		width: auto;
+	}
+
+	.warehouse-tree-title {
+		min-width: 0;
+	}
+
+	.warehouse-tree-counts {
+		font-size: 12px;
+		line-height: 1.35;
+	}
+
+	.warehouse-item-group-toggle {
+		padding-left: 22px;
+	}
+}
+
 /* --- Small screens --- */
 
 @media (max-width: 640px) {

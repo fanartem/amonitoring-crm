@@ -31,6 +31,9 @@ const STATUS_COLORS = {
 
 export default function Warehouse() {
 	const [items, setItems] = useState([])
+	const [groupedItems, setGroupedItems] = useState([])
+	const [expandedCategories, setExpandedCategories] = useState({})
+	const [expandedItemGroups, setExpandedItemGroups] = useState({})
 	const [loading, setLoading] = useState(false)
 	const [filters, setFilters] = useState({
 		search: '',
@@ -108,21 +111,44 @@ export default function Warehouse() {
 
 	const fetchItems = async () => {
 		setLoading(true)
+
 		try {
 			const params = new URLSearchParams()
+
 			if (filters.category) params.append('category', filters.category)
 			if (filters.status) params.append('status', filters.status)
 			if (filters.search) params.append('search', filters.search)
 
-			const res = await fetch(
-				`${API_BASE_URL}/warehouse/items?${params.toString()}`,
-				{
+			const [flatRes, groupedRes] = await Promise.all([
+				fetch(`${API_BASE_URL}/warehouse/items?${params.toString()}`, {
 					headers: getAuthHeaders(),
-				},
-			)
+				}),
+				fetch(`${API_BASE_URL}/warehouse/items/grouped?${params.toString()}`, {
+					headers: getAuthHeaders(),
+				}),
+			])
 
-			if (res.ok) {
-				setItems(await res.json())
+			if (flatRes.ok) {
+				setItems(await flatRes.json())
+			}
+
+			if (groupedRes.ok) {
+				const data = await groupedRes.json()
+				const groups = Array.isArray(data) ? data : []
+
+				setGroupedItems(groups)
+
+				setExpandedCategories(prev => {
+					const next = { ...prev }
+
+					groups.forEach(categoryGroup => {
+						if (next[categoryGroup.category] === undefined) {
+							next[categoryGroup.category] = true
+						}
+					})
+
+					return next
+				})
 			}
 		} catch (err) {
 			console.error(err)
@@ -616,6 +642,196 @@ export default function Warehouse() {
 		return item[field] || '—'
 	}
 
+	const toggleCategory = category => {
+		setExpandedCategories(prev => ({
+			...prev,
+			[category]: !prev[category],
+		}))
+	}
+
+	const getItemGroupKey = (category, groupKey) => {
+		return `${category}:${groupKey}`
+	}
+
+	const toggleItemGroup = (category, groupKey) => {
+		const key = getItemGroupKey(category, groupKey)
+
+		setExpandedItemGroups(prev => ({
+			...prev,
+			[key]: !prev[key],
+		}))
+	}
+
+	const formatStatusCounts = (counts, isConsumable = false) => {
+		const orderedStatuses = ['IN_STOCK', 'RESERVED', 'INSTALLED', 'WRITTEN_OFF']
+
+		return orderedStatuses
+			.filter(status => {
+				const value = Number(counts?.[status] || 0)
+
+				if (isConsumable) {
+					return value > 0
+				}
+
+				return true
+			})
+			.map(
+				status =>
+					`${STATUSES[status] || status}: ${Number(counts?.[status] || 0)}`,
+			)
+			.join(' · ')
+	}
+
+	const isConsumableCategoryGroup = categoryGroup => {
+		return (categoryGroup.groups || []).every(
+			group => group.is_consumable_group,
+		)
+	}
+
+	const renderWarehouseItemRow = item => {
+		return (
+			<tr
+				key={item.id}
+				ref={el => {
+					itemRefs.current[Number(item.id)] = el
+				}}
+				className={
+					Number(highlightedItemId) === Number(item.id)
+						? 'warehouse-item-highlighted'
+						: ''
+				}
+				style={{ borderBottom: '1px solid #eee' }}
+			>
+				<td style={{ padding: '12px 15px' }}>
+					<div className='cell-value'>
+						<strong>{item.name}</strong>
+
+						{item.model && (
+							<div style={{ fontSize: '12px', color: '#888' }}>
+								{item.manufacturer} {item.model}
+							</div>
+						)}
+
+						{viewMode === 'trash' && (
+							<div
+								style={{
+									fontSize: '12px',
+									color: '#c62828',
+									marginTop: '4px',
+								}}
+							>
+								Удалено:{' '}
+								{item.deleted_at
+									? new Date(item.deleted_at).toLocaleString('ru-RU')
+									: 'дата не указана'}
+								{item.deleted_by_name ? ` · ${item.deleted_by_name}` : ''}
+							</div>
+						)}
+					</div>
+				</td>
+
+				<td style={{ padding: '12px 15px' }}>
+					<div className='cell-value'>
+						{CATEGORIES[item.category] || item.category}
+					</div>
+				</td>
+
+				<td style={{ padding: '12px 15px' }}>
+					<div className='cell-value'>
+						{item.is_serialized ? (
+							<>
+								<span style={{ color: '#888', fontSize: '11px' }}>
+									{item.identifier_type}:
+								</span>{' '}
+								{item.identifier_value}
+							</>
+						) : (
+							<span style={{ color: '#aaa', fontSize: '12px' }}>Расходник</span>
+						)}
+					</div>
+				</td>
+
+				<td style={{ padding: '12px 15px', fontWeight: 'bold' }}>
+					<div className='cell-value'>{item.quantity} шт.</div>
+				</td>
+
+				<td style={{ padding: '12px 15px' }}>
+					<div className='cell-value'>
+						<span
+							style={{
+								background: STATUS_COLORS[item.status] || '#888',
+								color: '#fff',
+								padding: '2px 8px',
+								borderRadius: '12px',
+								fontSize: '11px',
+								fontWeight: 'bold',
+							}}
+						>
+							{STATUSES[item.status] || item.status}
+						</span>
+					</div>
+				</td>
+
+				<td
+					style={{
+						padding: '12px 15px',
+						fontSize: '13px',
+						fontWeight: '500',
+					}}
+				>
+					<div className='cell-value'>{renderClientInfo(item)}</div>
+				</td>
+
+				<td style={{ padding: '12px 15px', fontSize: '13px' }}>
+					<div className='cell-value'>
+						{renderCarInfo(item, 'plate_number')}
+					</div>
+				</td>
+
+				<td
+					style={{
+						padding: '12px 15px',
+						fontSize: '12px',
+						color: '#666',
+					}}
+				>
+					<div className='cell-value'>{renderCarInfo(item, 'vin')}</div>
+				</td>
+
+				<td style={{ padding: '12px 15px', textAlign: 'right' }}>
+					<div className='cell-value warehouse-cell-actions'>
+						{viewMode === 'active' ? (
+							<div className='warehouse-actions'>
+								<button
+									className='warehouse-action-btn warehouse-edit-btn'
+									onClick={() => openEdit(item)}
+									title='Редактировать'
+								>
+									✎
+								</button>
+
+								<button
+									className='warehouse-action-btn warehouse-delete-btn'
+									onClick={() => handleDelete(item.id)}
+									title='Переместить в корзину'
+								>
+									🗑
+								</button>
+							</div>
+						) : (
+							<button
+								className='warehouse-restore-btn'
+								onClick={() => handleRestore(item.id)}
+							>
+								Восстановить
+							</button>
+						)}
+					</div>
+				</td>
+			</tr>
+		)
+	}
+
 	return (
 		<div className='requests-page-container warehouse-page-container'>
 			<style>{`
@@ -638,7 +854,10 @@ export default function Warehouse() {
 					animation: warehouseItemPulse 2.5s ease-out forwards;
 				}
 			`}</style>
-			<div className='clients-header-bar warehouse-header-bar' style={{ marginBottom: '15px' }}>
+			<div
+				className='clients-header-bar warehouse-header-bar'
+				style={{ marginBottom: '15px' }}
+			>
 				<h2>Склад оборудования</h2>
 				<div className='warehouse-header-actions'>
 					{viewMode === 'active' && (
@@ -696,7 +915,10 @@ export default function Warehouse() {
 				</div>
 			</div>
 
-			<div className='filters-bar warehouse-filters' style={{ marginBottom: '20px' }}>
+			<div
+				className='filters-bar warehouse-filters'
+				style={{ marginBottom: '20px' }}
+			>
 				<div className='filter-group filter-search-group'>
 					<label>Поиск по складу</label>
 					<input
@@ -740,7 +962,10 @@ export default function Warehouse() {
 						))}
 					</select>
 				</div>
-				<button className='btn-reset warehouse-btn-reset' onClick={resetFilters}>
+				<button
+					className='btn-reset warehouse-btn-reset'
+					onClick={resetFilters}
+				>
 					Сбросить
 				</button>
 			</div>
@@ -779,7 +1004,9 @@ export default function Warehouse() {
 							<th style={{ padding: '12px 15px' }}>Клиент</th>
 							<th style={{ padding: '12px 15px' }}>Гос. номер</th>
 							<th style={{ padding: '12px 15px' }}>VIN-код</th>
-							<th style={{ padding: '12px 15px', textAlign: 'right' }}>Действия</th>
+							<th style={{ padding: '12px 15px', textAlign: 'right' }}>
+								Действия
+							</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -792,7 +1019,7 @@ export default function Warehouse() {
 									Загрузка...
 								</td>
 							</tr>
-						) : items.length === 0 ? (
+						) : viewMode === 'active' && groupedItems.length === 0 ? (
 							<tr className='warehouse-no-data-row'>
 								<td
 									colSpan='9'
@@ -802,157 +1029,114 @@ export default function Warehouse() {
 										color: '#888',
 									}}
 								>
-									{viewMode === 'active'
-										? 'Оборудование не найдено'
-										: 'Корзина склада пуста'}
+									Оборудование не найдено
 								</td>
 							</tr>
-						) : (
-							items.map(item => (
-								<tr
-									key={item.id}
-									ref={el => {
-										itemRefs.current[Number(item.id)] = el
+						) : viewMode === 'trash' && items.length === 0 ? (
+							<tr className='warehouse-no-data-row'>
+								<td
+									colSpan='9'
+									style={{
+										padding: '20px',
+										textAlign: 'center',
+										color: '#888',
 									}}
-									className={
-										Number(highlightedItemId) === Number(item.id)
-											? 'warehouse-item-highlighted'
-											: ''
-									}
-									style={{ borderBottom: '1px solid #eee' }}
 								>
-									<td style={{ padding: '12px 15px' }}>
-										<div className='cell-value'>
-											<strong>{item.name}</strong>
+									Корзина склада пуста
+								</td>
+							</tr>
+						) : viewMode === 'trash' ? (
+							items.map(item => renderWarehouseItemRow(item))
+						) : (
+							groupedItems.map(categoryGroup => {
+								const isCategoryExpanded = Boolean(
+									expandedCategories[categoryGroup.category],
+								)
 
-											{item.model && (
-												<div style={{ fontSize: '12px', color: '#888' }}>
-													{item.manufacturer} {item.model}
-												</div>
-											)}
+								const categoryIsConsumable =
+									isConsumableCategoryGroup(categoryGroup)
 
-											{viewMode === 'trash' && (
-												<div
-													style={{
-														fontSize: '12px',
-														color: '#c62828',
-														marginTop: '4px',
-													}}
-												>
-													Удалено:{' '}
-													{item.deleted_at
-														? new Date(item.deleted_at).toLocaleString('ru-RU')
-														: 'дата не указана'}
-													{item.deleted_by_name
-														? ` · ${item.deleted_by_name}`
-														: ''}
-												</div>
-											)}
-										</div>
-									</td>
-									<td style={{ padding: '12px 15px' }}>
-										<div className='cell-value'>
-											{CATEGORIES[item.category] || item.category}
-										</div>
-									</td>
-									<td style={{ padding: '12px 15px' }}>
-										<div className='cell-value'>
-											{item.is_serialized ? (
-												<>
-													<span style={{ color: '#888', fontSize: '11px' }}>
-														{item.identifier_type}:
-													</span>{' '}
-													{item.identifier_value}
-												</>
-											) : (
-												<span style={{ color: '#aaa', fontSize: '12px' }}>
-													Расходник
-												</span>
-											)}
-										</div>
-									</td>
-									<td style={{ padding: '12px 15px', fontWeight: 'bold' }}>
-										<div className='cell-value'>
-											{item.quantity} шт.
-										</div>
-									</td>
-									<td style={{ padding: '12px 15px' }}>
-										<div className='cell-value'>
-											<span
-												style={{
-													background: STATUS_COLORS[item.status] || '#888',
-													color: '#fff',
-													padding: '2px 8px',
-													borderRadius: '12px',
-													fontSize: '11px',
-													fontWeight: 'bold',
-												}}
-											>
-												{STATUSES[item.status] || item.status}
-											</span>
-										</div>
-									</td>
-
-									<td
-										style={{
-											padding: '12px 15px',
-											fontSize: '13px',
-											fontWeight: '500',
-										}}
-									>
-										<div className='cell-value'>
-											{renderClientInfo(item)}
-										</div>
-									</td>
-									<td style={{ padding: '12px 15px', fontSize: '13px' }}>
-										<div className='cell-value'>
-											{renderCarInfo(item, 'plate_number')}
-										</div>
-									</td>
-									<td
-										style={{
-											padding: '12px 15px',
-											fontSize: '12px',
-											color: '#666',
-										}}
-									>
-										<div className='cell-value'>
-											{renderCarInfo(item, 'vin')}
-										</div>
-									</td>
-
-									<td style={{ padding: '12px 15px', textAlign: 'right' }}>
-										<div className='cell-value warehouse-cell-actions'>
-											{viewMode === 'active' ? (
-												<div className='warehouse-actions'>
-													<button
-														className='warehouse-action-btn warehouse-edit-btn'
-														onClick={() => openEdit(item)}
-														title='Редактировать'
-													>
-														✎
-													</button>
-
-													<button
-														className='warehouse-action-btn warehouse-delete-btn'
-														onClick={() => handleDelete(item.id)}
-														title='Переместить в корзину'
-													>
-														🗑
-													</button>
-												</div>
-											) : (
+								return (
+									<React.Fragment key={categoryGroup.category}>
+										<tr className='warehouse-category-row'>
+											<td colSpan='9'>
 												<button
-													className='warehouse-restore-btn'
-													onClick={() => handleRestore(item.id)}
+													type='button'
+													className='warehouse-tree-row warehouse-category-toggle'
+													onClick={() => toggleCategory(categoryGroup.category)}
 												>
-													Восстановить
+													<span className='warehouse-tree-arrow'>
+														{isCategoryExpanded ? '▾' : '▸'}
+													</span>
+
+													<span className='warehouse-tree-title'>
+														{CATEGORIES[categoryGroup.category] ||
+															categoryGroup.category_name ||
+															categoryGroup.category}
+													</span>
+
+													<span className='warehouse-tree-counts'>
+														{formatStatusCounts(
+															categoryGroup.counts,
+															categoryIsConsumable,
+														)}
+													</span>
 												</button>
-											)}
-										</div>
-									</td>
-								</tr>
-							))
+											</td>
+										</tr>
+
+										{isCategoryExpanded &&
+											(categoryGroup.groups || []).map(itemGroup => {
+												const groupKey = getItemGroupKey(
+													categoryGroup.category,
+													itemGroup.group_key,
+												)
+												const isGroupExpanded = Boolean(
+													expandedItemGroups[groupKey],
+												)
+
+												return (
+													<React.Fragment key={groupKey}>
+														<tr className='warehouse-item-group-row'>
+															<td colSpan='9'>
+																<button
+																	type='button'
+																	className='warehouse-tree-row warehouse-item-group-toggle'
+																	onClick={() =>
+																		toggleItemGroup(
+																			categoryGroup.category,
+																			itemGroup.group_key,
+																		)
+																	}
+																>
+																	<span className='warehouse-tree-arrow'>
+																		{isGroupExpanded ? '▾' : '▸'}
+																	</span>
+
+																	<span className='warehouse-tree-title'>
+																		{itemGroup.name}
+																	</span>
+
+																	<span className='warehouse-tree-counts'>
+																		{formatStatusCounts(
+																			itemGroup.counts,
+																			itemGroup.is_consumable_group,
+																		)}
+																	</span>
+																</button>
+															</td>
+														</tr>
+
+														{isGroupExpanded &&
+															(itemGroup.items || []).map(item =>
+																renderWarehouseItemRow(item),
+															)}
+													</React.Fragment>
+												)
+											})}
+									</React.Fragment>
+								)
+							})
 						)}
 					</tbody>
 				</table>

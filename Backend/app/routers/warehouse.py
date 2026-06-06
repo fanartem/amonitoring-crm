@@ -112,6 +112,34 @@ def parse_int(value, default=0):
         return int(value)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Некорректное числовое значение: {value}")
+    
+def normalize_group_key(value):
+    return " ".join(str(value or "").strip().lower().split())
+
+def empty_status_counts():
+    return {
+        "IN_STOCK": 0,
+        "RESERVED": 0,
+        "INSTALLED": 0,
+        "WRITTEN_OFF": 0,
+    }
+
+def add_status_count(counts: dict, status: str, quantity: int):
+    status_key = status if status in ALLOWED_STATUSES else "IN_STOCK"
+    counts[status_key] = int(counts.get(status_key, 0)) + int(quantity or 0)
+
+def get_warehouse_item_quantity(row):
+    if bool(row.get("is_serialized")):
+        return 1
+
+    return int(row.get("quantity") or 0)
+
+def get_item_group_name(row):
+    """
+    Группируем по name, потому что заведующий складом при импорте
+    чаще всего заполняет только 'Наименование'.
+    """
+    return str(row.get("name") or "Без наименования").strip() or "Без наименования"
 
 @router.get("/template")
 def download_warehouse_template(current_user: dict = Depends(get_current_user)):
@@ -369,6 +397,214 @@ async def import_warehouse_items(
     except Exception as e:
         connection.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.get("/items/grouped")
+def get_warehouse_items_grouped(
+    category: str | None = Query(None),
+    status: str | None = Query(None),
+    search: str | None = Query(None),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Иерархический список склада:
+    Категория -> Наименование -> позиции.
+
+    Для серийного оборудования quantity считается как 1 на строку.
+    Для расходников quantity берется из warehouse_items.quantity.
+    """
+    require_warehouse_read(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            sql = """
+            SELECT 
+                wi.id,
+                wi.category,
+                wi.name,
+                wi.manufacturer,
+                wi.model,
+                wi.identifier_type,
+                wi.identifier_value,
+                wi.serial_number,
+                wi.is_serialized,
+                wi.quantity,
+                wi.status,
+                wi.note,
+                wi.created_at,
+                wi.updated_at,
+                u.name AS created_by_name,
+
+                r.id AS installed_request_id,
+                r.city AS installed_city,
+                r.address AS installed_address,
+
+                c.id AS installed_client_id,
+                c.type AS client_type,
+                c.name AS client_name,
+                c.company_name,
+
+                rv.id AS installed_request_vehicle_id,
+                v.id AS installed_vehicle_id,
+                v.brand,
+                v.model AS vehicle_model,
+                v.plate_number,
+                v.vin
+                
+            FROM warehouse_items wi
+            LEFT JOIN users u ON wi.created_by = u.id
+
+            LEFT JOIN (
+                SELECT 
+                    warehouse_item_id,
+                    MAX(id) AS last_equipment_link_id
+                FROM request_equipment
+                GROUP BY warehouse_item_id
+            ) latest_eq ON wi.id = latest_eq.warehouse_item_id
+
+            LEFT JOIN request_equipment re ON latest_eq.last_equipment_link_id = re.id
+            LEFT JOIN requests r ON re.request_id = r.id AND r.is_deleted = 0
+            LEFT JOIN clients c ON r.client_id = c.id
+            LEFT JOIN request_vehicles rv ON re.request_vehicle_id = rv.id
+            LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+
+            WHERE wi.is_deleted = 0
+            """
+            values = []
+
+            if category:
+                sql += " AND wi.category = %s"
+                values.append(category)
+
+            if status:
+                sql += " AND wi.status = %s"
+                values.append(status)
+
+            if search:
+                sql += """
+                AND (
+                    wi.name LIKE %s OR
+                    wi.manufacturer LIKE %s OR
+                    wi.model LIKE %s OR
+                    wi.identifier_value LIKE %s OR
+                    wi.serial_number LIKE %s OR
+                    wi.note LIKE %s
+                )
+                """
+                like_value = f"%{search}%"
+                values.extend([
+                    like_value,
+                    like_value,
+                    like_value,
+                    like_value,
+                    like_value,
+                    like_value,
+                ])
+
+            sql += """
+            ORDER BY
+                wi.category ASC,
+                wi.name ASC,
+                wi.status ASC,
+                wi.created_at DESC
+            """
+
+            cursor.execute(sql, tuple(values))
+            rows = cursor.fetchall()
+
+            categories_map = {}
+
+            for row in rows:
+                item_quantity = get_warehouse_item_quantity(row)
+                category_key = row.get("category") or "OTHER"
+                category_name = category_key
+
+                if category_key not in categories_map:
+                    categories_map[category_key] = {
+                        "category": category_key,
+                        "category_name": category_name,
+                        "counts": empty_status_counts(),
+                        "total_quantity": 0,
+                        "total_rows": 0,
+                        "groups": {},
+                    }
+
+                category_group = categories_map[category_key]
+
+                add_status_count(
+                    category_group["counts"],
+                    row.get("status"),
+                    item_quantity,
+                )
+                category_group["total_quantity"] += item_quantity
+                category_group["total_rows"] += 1
+
+                item_group_name = get_item_group_name(row)
+                item_group_key = normalize_group_key(item_group_name)
+
+                if item_group_key not in category_group["groups"]:
+                    category_group["groups"][item_group_key] = {
+                        "group_key": item_group_key,
+                        "name": item_group_name,
+                        "manufacturer": row.get("manufacturer"),
+                        "model": row.get("model"),
+                        "is_consumable_group": not bool(row.get("is_serialized")),
+                        "counts": empty_status_counts(),
+                        "total_quantity": 0,
+                        "total_rows": 0,
+                        "items": [],
+                    }
+
+                item_group = category_group["groups"][item_group_key]
+
+                add_status_count(
+                    item_group["counts"],
+                    row.get("status"),
+                    item_quantity,
+                )
+                item_group["total_quantity"] += item_quantity
+                item_group["total_rows"] += 1
+
+                # Если в одной группе есть и серийные, и несерийные позиции,
+                # группа считается смешанной, но расходники всё равно видны по quantity.
+                if bool(row.get("is_serialized")):
+                    item_group["is_consumable_group"] = False
+
+                item_group["items"].append(row)
+
+            result = []
+
+            for category_data in categories_map.values():
+                groups = list(category_data["groups"].values())
+
+                groups.sort(
+                    key=lambda group: (
+                        group["name"].lower(),
+                        group["group_key"],
+                    )
+                )
+
+                for group in groups:
+                    group["items"].sort(
+                        key=lambda item: (
+                            item.get("status") or "",
+                            item.get("identifier_value") or "",
+                            item.get("serial_number") or "",
+                            -int(item.get("id") or 0),
+                        )
+                    )
+
+                category_data["groups"] = groups
+
+                result.append(category_data)
+
+            result.sort(key=lambda item: item["category"])
+
+            return result
+
     finally:
         connection.close()
 
