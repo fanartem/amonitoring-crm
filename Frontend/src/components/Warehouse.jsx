@@ -221,8 +221,10 @@ export default function Warehouse() {
 			})
 
 			if (!res.ok) {
-				const err = await res.json()
-				throw new Error(err.detail)
+				const err = await res.json().catch(() => null)
+				throw new Error(
+					err?.detail || 'Не удалось переместить оборудование в корзину',
+				)
 			}
 
 			fetchItems()
