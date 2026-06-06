@@ -695,11 +695,11 @@ export default function Warehouse() {
 				ref={el => {
 					itemRefs.current[Number(item.id)] = el
 				}}
-				className={
+				className={`warehouse-item-row ${
 					Number(highlightedItemId) === Number(item.id)
 						? 'warehouse-item-highlighted'
 						: ''
-				}
+				}`}
 				style={{ borderBottom: '1px solid #eee' }}
 			>
 				<td style={{ padding: '12px 15px' }}>

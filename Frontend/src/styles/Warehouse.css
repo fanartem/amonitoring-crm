@@ -596,27 +596,55 @@
 
 @media (max-width: 768px) {
 	.warehouse-tree-row {
-		align-items: flex-start;
-		flex-direction: column;
-		gap: 5px;
-		padding: 12px;
+		width: 100%;
+		display: grid;
+		grid-template-columns: auto 1fr;
+		grid-template-areas:
+			"arrow title"
+			"arrow counts";
+		column-gap: 8px;
+		row-gap: 4px;
+		align-items: center;
+		padding: 12px 14px;
+		border-radius: 10px;
+		box-sizing: border-box;
 	}
 
 	.warehouse-tree-arrow {
-		width: auto;
+		grid-area: arrow;
+		width: 22px;
+		height: 22px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 50%;
+		background: #eef7e8;
+		color: #5e9424;
+		font-size: 13px;
+		font-weight: 800;
 	}
 
 	.warehouse-tree-title {
+		grid-area: title;
 		min-width: 0;
+		font-size: 14px;
+		line-height: 1.25;
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 
 	.warehouse-tree-counts {
+		grid-area: counts;
 		font-size: 12px;
 		line-height: 1.35;
+		color: #6b7280;
+		font-weight: 600;
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 
 	.warehouse-item-group-toggle {
-		padding-left: 22px;
+		padding-left: 14px;
 	}
 }
 
@@ -848,5 +876,155 @@
 		text-align: left !important;
 		padding-right: 10px !important;
 		white-space: nowrap !important;
+	}
+}
+
+@media (max-width: 768px) {
+	/* Строки категорий и групп не должны превращаться в карточки оборудования */
+	.warehouse-main-table tbody tr.warehouse-category-row,
+	.warehouse-main-table tbody tr.warehouse-item-group-row {
+		display: block !important;
+		width: 100% !important;
+		padding: 0 !important;
+		margin: 0 0 8px !important;
+		border: none !important;
+		border-radius: 0 !important;
+		box-shadow: none !important;
+		background: transparent !important;
+	}
+
+	.warehouse-main-table tbody tr.warehouse-category-row td,
+	.warehouse-main-table tbody tr.warehouse-item-group-row td {
+		display: block !important;
+		width: 100% !important;
+		padding: 0 !important;
+		border: none !important;
+		background: transparent !important;
+	}
+
+	.warehouse-main-table tbody tr.warehouse-category-row td::before,
+	.warehouse-main-table tbody tr.warehouse-item-group-row td::before {
+		content: none !important;
+		display: none !important;
+	}
+
+	.warehouse-category-toggle {
+		background: #f3f7ef !important;
+		border: 1px solid #d8ead0 !important;
+		color: #1f2933 !important;
+	}
+
+	.warehouse-category-toggle:hover {
+		background: #eef7e8 !important;
+	}
+
+	.warehouse-item-group-toggle {
+		background: #ffffff !important;
+		border: 1px solid #e5e7eb !important;
+		color: #1f2933 !important;
+		margin-left: 12px;
+		width: calc(100% - 12px);
+	}
+
+	.warehouse-item-group-toggle:hover {
+		background: #fbfdf8 !important;
+	}
+
+	/* Обычные строки оборудования остаются карточками */
+	.warehouse-main-table tbody tr.warehouse-item-row {
+		display: block !important;
+		width: 100% !important;
+		background: #ffffff !important;
+		border: 1px solid #e0e0e0 !important;
+		border-radius: 10px !important;
+		padding: 12px 14px !important;
+		margin: 0 0 14px 24px !important;
+		width: calc(100% - 24px) !important;
+		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03) !important;
+		box-sizing: border-box !important;
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td {
+		display: flex !important;
+		justify-content: space-between !important;
+		align-items: flex-start !important;
+		padding: 8px 0 !important;
+		border-bottom: 1px solid #f3f4f6 !important;
+		width: 100% !important;
+		box-sizing: border-box !important;
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:last-child {
+		border-bottom: none !important;
+		padding-bottom: 4px !important;
+		margin-top: 4px !important;
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td .cell-value {
+		text-align: right !important;
+		font-size: 13px !important;
+		max-width: 60% !important;
+		word-break: break-word;
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td::before {
+		font-weight: 600 !important;
+		color: #6b7280 !important;
+		font-size: 13px !important;
+		text-align: left !important;
+		padding-right: 10px !important;
+		white-space: nowrap !important;
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(1)::before {
+		content: 'Наименование:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(2)::before {
+		content: 'Категория:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(3)::before {
+		content: 'Идентификатор:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(4)::before {
+		content: 'Количество:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(5)::before {
+		content: 'Статус:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(6)::before {
+		content: 'Клиент:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(7)::before {
+		content: 'Гос. номер:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(8)::before {
+		content: 'VIN-код:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(9)::before {
+		content: 'Действия:';
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row .warehouse-cell-actions {
+		max-width: 100% !important;
+		width: 100% !important;
+	}
+
+	.warehouse-main-table tbody tr.warehouse-item-row .warehouse-actions {
+		justify-content: flex-end !important;
+		width: 100% !important;
+	}
+
+	/* Пустые строки / загрузка */
+	.warehouse-main-table tbody tr.warehouse-no-data-row {
+		margin-left: 0 !important;
+		width: 100% !important;
 	}
 }
