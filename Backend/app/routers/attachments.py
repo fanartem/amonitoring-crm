@@ -10,7 +10,6 @@ from app.database import get_connection
 from app.security import get_current_user
 from app.schemas import AttachmentUpdate
 
-
 router = APIRouter(prefix="/attachments", tags=["Attachments"])
 
 UPLOADS_ROOT = Path("uploads")
@@ -24,7 +23,6 @@ ALLOWED_EXTENSIONS = {
     ".xls", ".xlsx", ".csv",
     ".txt"
 }
-
 
 def normalize_entity_type(entity_type: str) -> str:
     value = str(entity_type or "").strip().upper()
@@ -94,6 +92,18 @@ def can_manage_attachment(attachment: dict, current_user: dict) -> bool:
 
     return False
 
+def is_attachment_restricted_user(current_user: dict) -> bool:
+    return current_user.get("role") in ["TECHNICIAN", "SENIOR_TECHNICIAN"]
+
+
+def can_view_attachment(attachment: dict, current_user: dict) -> bool:
+    if not is_attachment_restricted_user(current_user):
+        return True
+
+    return (
+        attachment.get("uploaded_by") is not None
+        and int(attachment["uploaded_by"]) == int(current_user["id"])
+    )
 
 @router.get("/entity/{entity_type}/{entity_id}")
 def get_attachments(
@@ -109,8 +119,22 @@ def get_attachments(
         with connection.cursor() as cursor:
             check_entity_exists(cursor, entity_type, entity_id)
 
+            conditions = [
+                "a.entity_type = %s",
+                "a.entity_id = %s",
+                "a.is_deleted = 0",
+            ]
+
+            values = [entity_type, entity_id]
+
+            if is_attachment_restricted_user(current_user):
+                conditions.append("a.uploaded_by = %s")
+                values.append(current_user["id"])
+
+            where_clause = " AND ".join(conditions)
+
             cursor.execute(
-                """
+                f"""
                 SELECT
                     a.id,
                     a.entity_type,
@@ -129,12 +153,10 @@ def get_attachments(
                     a.deleted_by
                 FROM attachments a
                 LEFT JOIN users u ON a.uploaded_by = u.id
-                WHERE a.entity_type = %s
-                AND a.entity_id = %s
-                AND a.is_deleted = 0
+                WHERE {where_clause}
                 ORDER BY a.uploaded_at DESC
                 """,
-                (entity_type, entity_id)
+                tuple(values)
             )
 
             rows = cursor.fetchall()
@@ -255,6 +277,7 @@ def download_attachment(
                     display_name,
                     file_path,
                     content_type,
+                    uploaded_by,
                     is_deleted
                 FROM attachments
                 WHERE id = %s
@@ -266,6 +289,12 @@ def download_attachment(
 
             if not attachment or attachment["is_deleted"]:
                 raise HTTPException(status_code=404, detail="Файл не найден")
+            
+            if not can_view_attachment(attachment, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра файла"
+                )
 
             file_path = Path(attachment["file_path"])
 

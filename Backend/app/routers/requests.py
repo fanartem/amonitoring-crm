@@ -15,6 +15,23 @@ router = APIRouter(prefix="/requests", tags=["Requests"])
 
 CITY_RESTRICTED_ROLES = ["TECHNICIAN", "SENIOR_TECHNICIAN"]
 
+PRICE_RESTRICTED_ROLES = ["TECHNICIAN", "SENIOR_TECHNICIAN"]
+
+
+def is_price_restricted_user(current_user: dict) -> bool:
+    return current_user.get("role") in PRICE_RESTRICTED_ROLES
+
+
+def hide_request_prices(requests: list[dict]) -> list[dict]:
+    for req in requests:
+        req["total_price"] = None
+        req["is_paid"] = None
+        req["paid_at"] = None
+
+        if "price_lines" in req:
+            req["price_lines"] = []
+
+    return requests
 
 def is_city_restricted_user(current_user: dict) -> bool:
     return current_user.get("role") in CITY_RESTRICTED_ROLES
@@ -558,7 +575,12 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
             )
 
             requests = cursor.fetchall()
-            return attach_vehicles_to_requests(cursor, requests)
+            requests = attach_vehicles_to_requests(cursor, requests)
+
+            if is_price_restricted_user(current_user):
+                requests = hide_request_prices(requests)
+
+            return requests
 
     finally:
         connection.close()
@@ -1338,30 +1360,37 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
             )
             history = cursor.fetchall()
 
-            cursor.execute(
-                """
-                SELECT
-                    id,
-                    request_id,
-                    request_vehicle_id,
-                    line_key,
-                    code,
-                    label,
-                    quantity,
-                    unit,
-                    unit_price,
-                    total_price,
-                    source,
-                    is_manual,
-                    created_at
-                FROM request_price_lines
-                WHERE request_id = %s
-                ORDER BY id ASC
-                """,
-                (request_id,)
-            )
+            if is_price_restricted_user(current_user):
+                request_data["total_price"] = None
+                request_data["is_paid"] = None
+                request_data["paid_at"] = None
+                price_lines = []
+            else:
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        request_id,
+                        request_vehicle_id,
+                        line_key,
+                        code,
+                        label,
+                        quantity,
+                        unit,
+                        unit_price,
+                        total_price,
+                        source,
+                        is_manual,
+                        created_at
+                    FROM request_price_lines
+                    WHERE request_id = %s
+                    ORDER BY id ASC
+                    """,
+                    (request_id,)
+                )
 
-            price_lines = cursor.fetchall()
+                price_lines = cursor.fetchall()
+
             request_data["price_lines"] = price_lines
 
             return {

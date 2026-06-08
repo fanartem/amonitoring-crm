@@ -27,6 +27,26 @@ const formatDateTime = value => {
 	}
 }
 
+const getUserRole = () => {
+	try {
+		const token = localStorage.getItem('access_token')
+		if (!token) return null
+
+		const base64Url = token.split('.')[1]
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+		const jsonPayload = decodeURIComponent(
+			atob(base64)
+				.split('')
+				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+				.join(''),
+		)
+
+		return JSON.parse(jsonPayload).role
+	} catch {
+		return null
+	}
+}
+
 export default function AttachmentsPanel({ entityType, entityId }) {
 	const fileInputRef = useRef(null)
 
@@ -39,6 +59,11 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 	const [editingName, setEditingName] = useState('')
 
 	const normalizedEntityType = String(entityType || '').toUpperCase()
+
+	const userRole = getUserRole()
+
+	const isAttachmentRestrictedUser =
+		userRole === 'TECHNICIAN' || userRole === 'SENIOR_TECHNICIAN'
 
 	useEffect(() => {
 		if (!normalizedEntityType || !entityId) return
@@ -222,7 +247,11 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 			<div className='attachments-panel-header'>
 				<div>
 					<h3>Прикрепленные файлы</h3>
-					<p>Документы, фото, чеки и другие файлы по этому объекту.</p>
+					<p>
+						{isAttachmentRestrictedUser
+							? 'Вы видите только файлы, загруженные вами.'
+							: 'Документы, фото, чеки и другие файлы по этому объекту.'}
+					</p>
 				</div>
 
 				<div>
@@ -250,7 +279,11 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 			{loading ? (
 				<div className='attachments-empty'>Загрузка файлов...</div>
 			) : attachments.length === 0 ? (
-				<div className='attachments-empty'>Файлы пока не прикреплены</div>
+				<div className='attachments-empty'>
+					{isAttachmentRestrictedUser
+						? 'У вас пока нет загруженных файлов по этому объекту.'
+						: 'Файлы пока не прикреплены'}
+				</div>
 			) : (
 				<div className='attachments-list'>
 					{attachments.map(file => (
