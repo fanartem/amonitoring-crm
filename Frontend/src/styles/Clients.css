@@ -124,6 +124,16 @@
   background: #fafafa;
   margin-bottom: 25px;
   box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+  position: relative;
+}
+
+/* Кнопка «Редактировать» — абсолютно поверх info-box на десктопе */
+.client-edit-btn-wrapper {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  gap: 10px;
 }
 
 .info-row {
@@ -624,7 +634,7 @@
 	align-items: center;
 	justify-content: flex-end;
 	gap: 10px;
-	flex-wrap: nowrap;
+	flex-wrap: wrap;
 	white-space: nowrap;
 }
 
@@ -837,5 +847,100 @@
   .vehicle-cancel-btn,
   .vehicle-submit-btn {
     width: 100%;
+  }
+
+  /* Группа клиентов: кнопка «Детали» под бейджем «GlonassSoft» */
+  .client-group-header {
+    align-items: flex-start;
+  }
+
+  .client-group-actions {
+    flex-direction: column-reverse; /* GlonassSoft сверху, Детали снизу */
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  /* Кнопка «Редактировать» — выходит из потока и встаёт после Email */
+  .client-edit-btn-wrapper {
+    position: static;
+    margin-top: 12px;
+    justify-content: flex-end;
+  }
+
+  /* Блок прикреплённых файлов — не даём кнопке вылезти за рамку */
+  .client-files-section {
+    overflow: hidden;
+    padding: 14px;
+  }
+
+  /* Пагинация: перенос на несколько строк */
+  .pagination-bar {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .pagination-info {
+    order: -1;      /* строка с номером страницы — первой */
+    width: 100%;
+    text-align: center;
+  }
+
+  .pagination-size {
+    flex: 0 0 auto;
+  }
+
+  .pagination-actions {
+    flex: 1;                        /* занимает остаток строки */
+    justify-content: space-between; /* Назад — слева, Вперёд — справа */
+  }
+
+  /* ─── Карточка клиента (верхний уровень) ─── */
+  /* Футер: статистика + кнопка «Детали» переносятся на две строки */
+  .client-card-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  /* Ряд со статистикой: разрешаем перенос, чтобы «Подклиентов» не вылезал */
+  .client-card-footer > div:first-child {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  /* Кнопка «Детали» в карточке клиента — во всю ширину */
+  .client-card-footer > .btn-details {
+    width: 100%;
+    text-align: center;
+  }
+
+  /* ─── Строка дерева (вложенный клиент) ─── */
+  /* Меняем grid с двух колонок на одну, чтобы правая часть не вылезала */
+  /* position: relative нужен для абсолютного позиционирования трёх точек */
+  .client-tree-row {
+    position: relative;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding-right: 46px; /* резервируем место под кнопку ⋮ */
+  }
+
+  /* Три точки — фиксируем в правом верхнем углу строки */
+  .client-tree-row .client-tree-actions {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+  }
+
+  /* Правая часть (статы + кнопка): выравниваем влево, разрешаем перенос */
+  .client-tree-row-right {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+  }
+
+  /* Кнопка «Детали» в строке дерева — во всю ширину */
+  .client-tree-row-right > .btn-details {
+    width: 100%;
+    text-align: center;
   }
 }

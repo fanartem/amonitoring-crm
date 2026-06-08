@@ -10,6 +10,19 @@
 	margin-bottom: 16px;
 }
 
+@media (max-width: 480px) {
+	.attachments-panel-header {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 12px;
+	}
+
+	.attachments-add-btn {
+		width: 100%;
+		text-align: center;
+	}
+}
+
 .attachments-panel-header h3 {
 	margin: 0;
 	font-size: 18px;

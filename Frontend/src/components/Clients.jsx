@@ -1344,26 +1344,7 @@ export default function Clients() {
 						</div>
 					</div>
 
-					<div className='client-info-box' style={{ position: 'relative' }}>
-						{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
-							<div
-								style={{
-									position: 'absolute',
-									top: '20px',
-									right: '20px',
-									display: 'flex',
-									gap: '10px',
-								}}
-							>
-								<button
-									className='btn-edit-request'
-									onClick={e => handleEditClientClick(e, selectedClient)}
-								>
-									✎ Редактировать
-								</button>
-							</div>
-						)}
-
+					<div className='client-info-box'>
 						<div className='info-row'>
 							<span className='info-key'>ФИО / Название</span>
 							<span className='info-val'>
@@ -1384,6 +1365,17 @@ export default function Clients() {
 							<span className='info-key'>Email</span>
 							<span className='info-val'>{selectedClient.email || '—'}</span>
 						</div>
+
+						{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+							<div className='client-edit-btn-wrapper'>
+								<button
+									className='btn-edit-request'
+									onClick={e => handleEditClientClick(e, selectedClient)}
+								>
+									✎ Редактировать
+								</button>
+							</div>
+						)}
 
 						<div
 							style={{
