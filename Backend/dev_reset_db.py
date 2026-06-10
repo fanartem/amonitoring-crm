@@ -32,7 +32,16 @@ def sync_db():
                         hashed_password VARCHAR(255) NOT NULL,
                         name VARCHAR(255) NOT NULL,
                         city VARCHAR(100) NULL,
-                        role ENUM('ADMIN', 'MANAGER', 'TECHNICIAN', 'SENIOR_TECHNICIAN', 'ACCOUNTANT', 'WAREHOUSE_MANAGER') NOT NULL,
+                        role ENUM(
+                            'ADMIN',
+                            'MANAGER',
+                            'TECHNICIAN',
+                            'SENIOR_TECHNICIAN',
+                            'ACCOUNTANT',
+                            'WAREHOUSE_MANAGER',
+                            'TECH_SUPPORT',
+                            'ROP'
+                        ) NOT NULL,
                         is_approved BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
@@ -126,14 +135,35 @@ def sync_db():
                         company_name VARCHAR(255),
                         phone VARCHAR(50) NOT NULL,
                         email VARCHAR(255),
+
+                        status ENUM('ACTIVE', 'BLOCKED', 'DEBTOR') NOT NULL DEFAULT 'ACTIVE',
+
                         source_system VARCHAR(50) NULL,
                         source_client_name VARCHAR(255) NULL,
                         source_parent_client_name VARCHAR(255) NULL,
                         source_inn VARCHAR(100) NULL,
+
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        created_by INT NULL,
+
+                        responsible_manager_id INT NULL,
+                        status_changed_at DATETIME NULL,
+                        status_changed_by INT NULL,
+                        responsible_changed_at DATETIME NULL,
+                        responsible_changed_by INT NULL,
+
                         is_deleted TINYINT DEFAULT 0,
                         deleted_at DATETIME NULL,
-                        deleted_by INT NULL
+                        deleted_by INT NULL,
+
+                        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+                        FOREIGN KEY (responsible_manager_id) REFERENCES users(id) ON DELETE SET NULL,
+                        FOREIGN KEY (status_changed_by) REFERENCES users(id) ON DELETE SET NULL,
+                        FOREIGN KEY (responsible_changed_by) REFERENCES users(id) ON DELETE SET NULL,
+
+                        INDEX idx_clients_status (status),
+                        INDEX idx_clients_created_by (created_by),
+                        INDEX idx_clients_responsible_manager_id (responsible_manager_id)
                     );
                 """,
                 "price_items": """
@@ -183,7 +213,7 @@ def sync_db():
                     CREATE TABLE requests (
                         id INT AUTO_INCREMENT PRIMARY KEY,
                         client_id INT,
-                        work_type ENUM('INSTALLATION', 'DIAGNOSTIC', 'REMOVAL'),
+                        work_type ENUM('INSTALLATION', 'DIAGNOSTIC', 'REMOVAL', 'REFLASHING'),
                         visit_type ENUM('IN_OFFICE', 'ON_SITE'),
                         address TEXT,
                         city TEXT,
@@ -485,6 +515,13 @@ def sync_db():
                     "name": "Восстановление питания",
                     "category": "DIAGNOSTIC_SERVICE",
                     "default_price": 0,
+                    "unit": "шт",
+                },
+                {
+                    "code": "REFLASHING_BASE",
+                    "name": "Перепрошивка",
+                    "category": "REFLASHING_SERVICE",
+                    "default_price": 5000,
                     "unit": "шт",
                 },
             ]

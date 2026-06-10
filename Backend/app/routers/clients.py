@@ -1,7 +1,25 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.database import get_connection
-from app.schemas import ClientCreate, ClientUpdate
+from app.schemas import (
+    ClientCreate,
+    ClientUpdate,
+    ClientStatusUpdate,
+    ClientResponsibleUpdate,
+)
 from app.security import get_current_user
+from app.permissions import (
+    ADMIN,
+    ROP,
+    MANAGER,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+    can_open_client_details,
+    can_edit_client,
+    can_change_client_status,
+    can_reassign_clients,
+    can_create_request_for_client,
+    is_valid_client_status,
+)
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
@@ -17,6 +35,101 @@ TECHNICAL_ROOT_PARENT_NAMES = {
     'автопарк слежение',
 }
 
+ALLOWED_CLIENT_CREATOR_ROLES = [ADMIN, ROP, MANAGER, TECH_SUPPORT]
+ALLOWED_RESPONSIBLE_ROLES = [MANAGER, ROP, ADMIN]
+
+
+def normalize_optional_str(value):
+    if value is None:
+        return None
+
+    value = str(value).strip()
+    return value or None
+
+
+def get_client_status(value: str | None) -> str:
+    status = str(value or "ACTIVE").strip().upper()
+
+    if not is_valid_client_status(status):
+        raise HTTPException(status_code=400, detail="Некорректный статус клиента")
+
+    return status
+
+
+def get_default_responsible_manager_id(data: ClientCreate, current_user: dict):
+    """
+    При создании клиента:
+    - MANAGER становится ответственным автоматически.
+    - ADMIN/ROP могут передать responsible_manager_id.
+    - TECH_SUPPORT клиента создать может, но ответственным автоматически не становится.
+    """
+    requested_responsible_id = getattr(data, "responsible_manager_id", None)
+
+    if requested_responsible_id is not None:
+        return requested_responsible_id
+
+    if current_user.get("role") == MANAGER:
+        return current_user["id"]
+
+    return None
+
+
+def ensure_responsible_user_allowed(cursor, responsible_manager_id: int | None):
+    if responsible_manager_id is None:
+        return
+
+    cursor.execute(
+        """
+        SELECT id, role, is_approved
+        FROM users
+        WHERE id = %s
+        """,
+        (responsible_manager_id,)
+    )
+    user = cursor.fetchone()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Ответственный пользователь не найден")
+
+    if user["role"] not in ALLOWED_RESPONSIBLE_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail="Ответственным за клиента можно назначить только менеджера, РОП или админа"
+        )
+
+    if not user["is_approved"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя назначить неутверждённого пользователя ответственным"
+        )
+
+
+def attach_client_permissions(client: dict, current_user: dict) -> dict:
+    client["can_open_details"] = can_open_client_details(client, current_user)
+    client["can_edit"] = can_edit_client(client, current_user)
+    client["can_change_status"] = can_change_client_status(current_user)
+    client["can_reassign"] = can_reassign_clients(current_user)
+    client["can_create_request"] = can_create_request_for_client(client, current_user)
+    return client
+
+
+def attach_clients_permissions(clients: list[dict], current_user: dict) -> list[dict]:
+    for client in clients:
+        attach_client_permissions(client, current_user)
+
+        for child in client.get("children") or []:
+            attach_client_tree_permissions(child, current_user)
+
+    return clients
+
+
+def attach_client_tree_permissions(client: dict, current_user: dict):
+    attach_client_permissions(client, current_user)
+
+    for child in client.get("children") or []:
+        attach_client_tree_permissions(child, current_user)
+
+    return client
 
 def is_technical_root_parent(value: str | None) -> bool:
     normalized = normalize_text(value)
@@ -241,6 +354,75 @@ def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
 
     return requests
 
+def get_subclient_ids_recursive(cursor, root_client_id: int) -> list[int]:
+    cursor.execute(
+        """
+        SELECT
+            id,
+            source_client_name,
+            company_name,
+            name
+        FROM clients
+        WHERE id = %s
+        AND is_deleted = 0
+        """,
+        (root_client_id,)
+    )
+    root = cursor.fetchone()
+
+    if not root:
+        return []
+
+    root_source_name = get_source_name(root)
+    visited_names = {normalize_text(root_source_name)}
+    result_ids = []
+
+    while True:
+        if not visited_names:
+            break
+
+        placeholders = ", ".join(["%s"] * len(visited_names))
+
+        cursor.execute(
+            f"""
+            SELECT
+                id,
+                source_client_name,
+                source_parent_client_name,
+                company_name,
+                name
+            FROM clients
+            WHERE is_deleted = 0
+            AND LOWER(TRIM(source_parent_client_name)) IN ({placeholders})
+            """,
+            tuple(visited_names)
+        )
+
+        children = cursor.fetchall()
+        new_names = set()
+
+        for child in children:
+            child_id = int(child["id"])
+
+            if child_id == int(root_client_id):
+                continue
+
+            if child_id not in result_ids:
+                result_ids.append(child_id)
+
+                child_source_name = get_source_name(child)
+                normalized_child_name = normalize_text(child_source_name)
+
+                if normalized_child_name and normalized_child_name not in visited_names:
+                    new_names.add(normalized_child_name)
+
+        if not new_names:
+            break
+
+        visited_names.update(new_names)
+
+    return result_ids
+
 @router.get("")
 def get_clients(current_user: dict = Depends(get_current_user)):
     connection = get_connection()
@@ -254,16 +436,33 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.status,
                 c.source_system,
                 c.source_client_name,
                 c.source_parent_client_name,
                 c.source_inn,
                 c.created_at,
+                c.created_by,
+                c.responsible_manager_id,
+                c.status_changed_at,
+                c.status_changed_by,
+                c.responsible_changed_at,
+                c.responsible_changed_by,
                 c.is_deleted,
                 c.deleted_at,
                 c.deleted_by,
+
+                creator.name AS created_by_name,
+                responsible.name AS responsible_manager_name,
+                status_user.name AS status_changed_by_name,
+                responsible_user.name AS responsible_changed_by_name,
+
                 COUNT(r.id) AS request_count
             FROM clients c
+            LEFT JOIN users creator ON c.created_by = creator.id
+            LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+            LEFT JOIN users status_user ON c.status_changed_by = status_user.id
+            LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
             LEFT JOIN requests r 
                 ON c.id = r.client_id 
                 AND r.is_deleted = 0
@@ -275,28 +474,44 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.status,
                 c.source_system,
                 c.source_client_name,
                 c.source_parent_client_name,
                 c.source_inn,
                 c.created_at,
+                c.created_by,
+                c.responsible_manager_id,
+                c.status_changed_at,
+                c.status_changed_by,
+                c.responsible_changed_at,
+                c.responsible_changed_by,
                 c.is_deleted,
                 c.deleted_at,
-                c.deleted_by
+                c.deleted_by,
+                creator.name,
+                responsible.name,
+                status_user.name,
+                responsible_user.name
             ORDER BY c.created_at DESC
             """
             cursor.execute(sql)
-            return cursor.fetchall()
+            clients = cursor.fetchall()
+
+            for client in clients:
+                attach_client_permissions(client, current_user)
+
+            return clients
     finally:
         connection.close()
 
 @router.post("")
 def create_client(data: ClientCreate, current_user: dict = Depends(get_current_user)):
     # Только Админ и Менеджер могут создавать базу клиентов
-    if current_user["role"] not in ["ADMIN", "MANAGER"]:
+    if current_user["role"] not in ALLOWED_CLIENT_CREATOR_ROLES:
         raise HTTPException(
             status_code=403,
-            detail="Только Менеджер или Админ могут создавать клиентов"
+            detail="Недостаточно прав для создания клиента"
         )
 
     connection = get_connection()
@@ -313,6 +528,19 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
             if duplicate:
                 raise_duplicate_client_error(duplicate)
 
+            client_status = get_client_status(getattr(data, "status", None))
+
+            # Обычные роли при создании не должны создавать сразу BLOCKED/DEBTOR.
+            # Статус меняется отдельным endpoint'ом бухгалтером/РОП/админом.
+            if client_status != "ACTIVE" and not can_change_client_status(current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для создания клиента с этим статусом"
+                )
+
+            responsible_manager_id = get_default_responsible_manager_id(data, current_user)
+            ensure_responsible_user_allowed(cursor, responsible_manager_id)
+
             sql = """
                 INSERT INTO clients (
                     type,
@@ -320,26 +548,37 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                     company_name,
                     phone,
                     email,
+                    status,
                     source_system,
                     source_client_name,
                     source_parent_client_name,
-                    source_inn
+                    source_inn,
+                    created_by,
+                    responsible_manager_id,
+                    responsible_changed_at,
+                    responsible_changed_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
             """
 
             cursor.execute(
                 sql,
                 (
-                    data.type,
-                    data.name,
-                    data.company_name,
-                    data.phone,
-                    data.email,
-                    getattr(data, "source_system", None),
-                    getattr(data, "source_client_name", None),
-                    getattr(data, "source_parent_client_name", None),
-                    getattr(data, "source_inn", None),
+                    (
+                        data.type,
+                        data.name,
+                        data.company_name,
+                        data.phone,
+                        data.email,
+                        client_status,
+                        getattr(data, "source_system", None),
+                        getattr(data, "source_client_name", None),
+                        getattr(data, "source_parent_client_name", None),
+                        getattr(data, "source_inn", None),
+                        current_user["id"],
+                        responsible_manager_id,
+                        current_user["id"] if responsible_manager_id else None,
+                    )
                 )
             )
 
@@ -377,23 +616,48 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.status,
                 c.source_system,
                 c.source_client_name,
                 c.source_parent_client_name,
                 c.source_inn,
                 c.created_at,
+                c.created_by,
+                c.responsible_manager_id,
                 c.deleted_at,
                 c.deleted_by,
+
                 u.name AS deleted_by_name,
+                creator.name AS created_by_name,
+                responsible.name AS responsible_manager_name,
+
                 COUNT(r.id) AS request_count
             FROM clients c
             LEFT JOIN users u ON c.deleted_by = u.id
+            LEFT JOIN users creator ON c.created_by = creator.id
+            LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
             LEFT JOIN requests r ON c.id = r.client_id
             WHERE c.is_deleted = 1
             GROUP BY 
-                c.id, c.type, c.name, c.company_name, c.phone, c.email,
-                c.source_system, c.source_client_name, c.source_parent_client_name, c.source_inn,
-                c.created_at, c.deleted_at, c.deleted_by, u.name
+                c.id,
+                c.type,
+                c.name,
+                c.company_name,
+                c.phone,
+                c.email,
+                c.status,
+                c.source_system,
+                c.source_client_name,
+                c.source_parent_client_name,
+                c.source_inn,
+                c.created_at,
+                c.created_by,
+                c.responsible_manager_id,
+                c.deleted_at,
+                c.deleted_by,
+                u.name,
+                creator.name,
+                responsible.name
             ORDER BY c.deleted_at DESC
             """
             cursor.execute(sql)
@@ -416,19 +680,36 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                     c.company_name,
                     c.phone,
                     c.email,
+                    c.status,
                     c.source_system,
                     c.source_client_name,
                     c.source_parent_client_name,
                     c.source_inn,
                     c.created_at,
+                    c.created_by,
+                    c.responsible_manager_id,
+                    c.status_changed_at,
+                    c.status_changed_by,
+                    c.responsible_changed_at,
+                    c.responsible_changed_by,
                     c.is_deleted,
                     c.deleted_at,
                     c.deleted_by,
+
+                    creator.name AS created_by_name,
+                    responsible.name AS responsible_manager_name,
+                    status_user.name AS status_changed_by_name,
+                    responsible_user.name AS responsible_changed_by_name,
 
                     COUNT(DISTINCT r.id) AS request_count,
                     COUNT(DISTINCT v.id) AS vehicle_count
 
                 FROM clients c
+
+                LEFT JOIN users creator ON c.created_by = creator.id
+                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+                LEFT JOIN users status_user ON c.status_changed_by = status_user.id
+                LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
 
                 LEFT JOIN requests r 
                     ON c.id = r.client_id 
@@ -454,7 +735,18 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                     c.created_at,
                     c.is_deleted,
                     c.deleted_at,
-                    c.deleted_by
+                    c.deleted_by,
+                    c.status,
+                    c.created_by,
+                    c.responsible_manager_id,
+                    c.status_changed_at,
+                    c.status_changed_by,
+                    c.responsible_changed_at,
+                    c.responsible_changed_by,
+                    creator.name,
+                    responsible.name,
+                    status_user.name,
+                    responsible_user.name
 
                 ORDER BY 
                     c.source_parent_client_name ASC,
@@ -574,6 +866,13 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                 )
             )
 
+            for group in groups:
+                if group.get("parent_client"):
+                    attach_client_tree_permissions(group["parent_client"], current_user)
+
+                for client in group.get("clients") or []:
+                    attach_client_tree_permissions(client, current_user)
+
             return groups
 
     finally:
@@ -585,16 +884,16 @@ def update_client(
     data: ClientUpdate,
     current_user: dict = Depends(get_current_user)
 ):
-    """Редактирование клиента. Только ADMIN и MANAGER."""
-    if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут редактировать клиентов")
-
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, is_deleted
+                SELECT
+                    id,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -607,8 +906,18 @@ def update_client(
 
             if client["is_deleted"]:
                 raise HTTPException(status_code=400, detail="Нельзя редактировать клиента из корзины")
+            
+            if not can_edit_client(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для редактирования этого клиента"
+                )
 
             update_data = data.dict(exclude_unset=True)
+
+            for forbidden_field in ["status", "responsible_manager_id"]:
+                if forbidden_field in update_data:
+                    update_data.pop(forbidden_field, None)
 
             if not update_data:
                 return {"message": "Нет данных для обновления"}
@@ -690,11 +999,162 @@ def update_client(
     finally:
         connection.close()
 
+@router.patch("/{client_id}/status")
+def update_client_status(
+    client_id: int,
+    data: ClientStatusUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    if not can_change_client_status(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для изменения статуса клиента"
+        )
+
+    new_status = get_client_status(data.status)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, status, is_deleted
+                FROM clients
+                WHERE id = %s
+                """,
+                (client_id,)
+            )
+            client = cursor.fetchone()
+
+            if not client:
+                raise HTTPException(status_code=404, detail="Клиент не найден")
+
+            if client["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя менять статус клиента из корзины"
+                )
+
+            if client["status"] == new_status:
+                return {
+                    "message": "Статус клиента не изменился",
+                    "client_id": client_id,
+                    "status": new_status,
+                }
+
+            cursor.execute(
+                """
+                UPDATE clients
+                SET status = %s,
+                    status_changed_at = NOW(),
+                    status_changed_by = %s
+                WHERE id = %s
+                """,
+                (
+                    new_status,
+                    current_user["id"],
+                    client_id,
+                )
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Статус клиента обновлён",
+                "client_id": client_id,
+                "old_status": client["status"],
+                "new_status": new_status,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.patch("/{client_id}/responsible")
+def update_client_responsible(
+    client_id: int,
+    data: ClientResponsibleUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    if not can_reassign_clients(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для переназначения клиента"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, is_deleted
+                FROM clients
+                WHERE id = %s
+                """,
+                (client_id,)
+            )
+            client = cursor.fetchone()
+
+            if not client:
+                raise HTTPException(status_code=404, detail="Клиент не найден")
+
+            if client["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя менять ответственного у клиента из корзины"
+                )
+
+            ensure_responsible_user_allowed(cursor, data.responsible_manager_id)
+
+            target_ids = [client_id]
+
+            if data.apply_to_subclients:
+                target_ids.extend(get_subclient_ids_recursive(cursor, client_id))
+
+            placeholders = ", ".join(["%s"] * len(target_ids))
+
+            cursor.execute(
+                f"""
+                UPDATE clients
+                SET responsible_manager_id = %s,
+                    responsible_changed_at = NOW(),
+                    responsible_changed_by = %s
+                WHERE id IN ({placeholders})
+                """,
+                tuple([data.responsible_manager_id, current_user["id"]] + target_ids)
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Ответственный менеджер обновлён",
+                "client_id": client_id,
+                "responsible_manager_id": data.responsible_manager_id,
+                "updated_clients_count": len(target_ids),
+                "updated_client_ids": target_ids,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
 @router.delete("/{client_id}")
 def delete_client(client_id: int, current_user: dict = Depends(get_current_user)):
     """Soft delete клиента. Только ADMIN."""
-    if current_user["role"] != "ADMIN":
-        raise HTTPException(status_code=403, detail="Только Админ может удалять клиентов")
+    if current_user["role"] not in [ADMIN, ROP]:
+        raise HTTPException(status_code=403, detail="Только Админ или РОП может удалять клиентов")
 
     connection = get_connection()
     try:
@@ -764,9 +1224,9 @@ def delete_client(client_id: int, current_user: dict = Depends(get_current_user)
 
 @router.patch("/{client_id}/restore")
 def restore_client(client_id: int, current_user: dict = Depends(get_current_user)):
-    """Восстановление клиента из корзины. Только ADMIN."""
-    if current_user["role"] != "ADMIN":
-        raise HTTPException(status_code=403, detail="Только Админ может восстанавливать клиентов")
+    """Восстановление клиента из корзины. Только ADMIN или ROP."""
+    if current_user["role"] not in [ADMIN, ROP]:
+        raise HTTPException(status_code=403, detail="Только Админ или РОП может восстанавливать клиентов")
 
     connection = get_connection()
     try:
@@ -821,10 +1281,14 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
             # Проверяем, что клиент существует и не удалён
             cursor.execute(
                 """
-                SELECT id
+                SELECT
+                    id,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
                 FROM clients
                 WHERE id = %s
-                  AND is_deleted = 0
+                AND is_deleted = 0
                 """,
                 (client_id,)
             )
@@ -832,6 +1296,12 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
 
             if not client:
                 raise HTTPException(status_code=404, detail="Клиент не найден")
+            
+            if not can_open_client_details(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра заявок этого клиента"
+                )
 
             cursor.execute(
                 """

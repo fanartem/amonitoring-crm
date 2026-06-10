@@ -10,7 +10,19 @@ from app.database import get_connection
 from app.security import get_current_user
 from app.schemas import AttachmentUpdate
 
+from app.permissions import (
+    ADMIN,
+    ROP,
+    MANAGER,
+    TECHNICIAN,
+    SENIOR_TECHNICIAN,
+    can_view_attachment,
+    can_delete_attachment,
+)
+
 router = APIRouter(prefix="/attachments", tags=["Attachments"])
+
+ATTACHMENT_DELETE_TIME_LIMIT_SECONDS = 120
 
 UPLOADS_ROOT = Path("uploads")
 ALLOWED_ENTITY_TYPES = ["CLIENT", "REQUEST"]
@@ -82,29 +94,6 @@ def check_entity_exists(cursor, entity_type: str, entity_id: int):
         if not entity:
             raise HTTPException(status_code=404, detail="Заявка не найдена")
 
-
-def can_manage_attachment(attachment: dict, current_user: dict) -> bool:
-    if current_user["role"] in ["ADMIN", "MANAGER"]:
-        return True
-
-    if attachment.get("uploaded_by") and int(attachment["uploaded_by"]) == int(current_user["id"]):
-        return True
-
-    return False
-
-def is_attachment_restricted_user(current_user: dict) -> bool:
-    return current_user.get("role") in ["TECHNICIAN", "SENIOR_TECHNICIAN"]
-
-
-def can_view_attachment(attachment: dict, current_user: dict) -> bool:
-    if not is_attachment_restricted_user(current_user):
-        return True
-
-    return (
-        attachment.get("uploaded_by") is not None
-        and int(attachment["uploaded_by"]) == int(current_user["id"])
-    )
-
 @router.get("/entity/{entity_type}/{entity_id}")
 def get_attachments(
     entity_type: str,
@@ -127,10 +116,6 @@ def get_attachments(
 
             values = [entity_type, entity_id]
 
-            if is_attachment_restricted_user(current_user):
-                conditions.append("a.uploaded_by = %s")
-                values.append(current_user["id"])
-
             where_clause = " AND ".join(conditions)
 
             cursor.execute(
@@ -147,6 +132,7 @@ def get_attachments(
                     a.file_size,
                     a.uploaded_by,
                     u.name AS uploaded_by_name,
+                    u.role AS uploaded_by_role,
                     a.uploaded_at,
                     a.is_deleted,
                     a.deleted_at,
@@ -161,10 +147,15 @@ def get_attachments(
 
             rows = cursor.fetchall()
 
+            visible_rows = []
+
             for row in rows:
                 row["is_deleted"] = bool(row["is_deleted"])
 
-            return rows
+                if can_view_attachment(row, current_user):
+                    visible_rows.append(row)
+
+            return visible_rows
 
     finally:
         connection.close()
@@ -272,15 +263,17 @@ def download_attachment(
             cursor.execute(
                 """
                 SELECT
-                    id,
-                    original_filename,
-                    display_name,
-                    file_path,
-                    content_type,
-                    uploaded_by,
-                    is_deleted
-                FROM attachments
-                WHERE id = %s
+                    a.id,
+                    a.original_filename,
+                    a.display_name,
+                    a.file_path,
+                    a.content_type,
+                    a.uploaded_by,
+                    u.role AS uploaded_by_role,
+                    a.is_deleted
+                FROM attachments a
+                LEFT JOIN users u ON a.uploaded_by = u.id
+                WHERE a.id = %s
                 """,
                 (attachment_id,)
             )
@@ -330,7 +323,11 @@ def update_attachment(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, uploaded_by, is_deleted
+                SELECT
+                    id,
+                    uploaded_by,
+                    uploaded_at,
+                    is_deleted
                 FROM attachments
                 WHERE id = %s
                 """,
@@ -342,11 +339,34 @@ def update_attachment(
             if not attachment or attachment["is_deleted"]:
                 raise HTTPException(status_code=404, detail="Файл не найден")
 
-            if not can_manage_attachment(attachment, current_user):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Недостаточно прав для переименования файла"
+            can_manage = current_user["role"] in [ADMIN, ROP, MANAGER]
+
+            if not can_manage:
+                is_owner = (
+                    attachment.get("uploaded_by") is not None
+                    and int(attachment["uploaded_by"]) == int(current_user["id"])
                 )
+
+                if not is_owner:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Можно переименовывать только свои файлы"
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT TIMESTAMPDIFF(SECOND, %s, NOW()) AS age_seconds
+                    """,
+                    (attachment["uploaded_at"],)
+                )
+                age = cursor.fetchone()
+                age_seconds = int(age.get("age_seconds") or 0)
+
+                if age_seconds > ATTACHMENT_DELETE_TIME_LIMIT_SECONDS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Переименовать свой файл можно только в течение 2 минут после загрузки"
+                    )
 
             cursor.execute(
                 """
@@ -385,7 +405,11 @@ def delete_attachment(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, uploaded_by, is_deleted
+                SELECT
+                    id,
+                    uploaded_by,
+                    uploaded_at,
+                    is_deleted
                 FROM attachments
                 WHERE id = %s
                 """,
@@ -397,10 +421,21 @@ def delete_attachment(
             if not attachment or attachment["is_deleted"]:
                 raise HTTPException(status_code=404, detail="Файл не найден")
 
-            if not can_manage_attachment(attachment, current_user):
+            cursor.execute(
+                """
+                SELECT TIMESTAMPDIFF(SECOND, %s, NOW()) AS age_seconds
+                """,
+                (attachment["uploaded_at"],)
+            )
+            age = cursor.fetchone()
+            age_seconds = int(age.get("age_seconds") or 0)
+
+            within_time_limit = age_seconds <= ATTACHMENT_DELETE_TIME_LIMIT_SECONDS
+
+            if not can_delete_attachment(attachment, current_user, within_time_limit):
                 raise HTTPException(
                     status_code=403,
-                    detail="Недостаточно прав для удаления файла"
+                    detail="Удалить файл можно только если он ваш и загружен менее 2 минут назад"
                 )
 
             cursor.execute(

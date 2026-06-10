@@ -467,14 +467,23 @@ export default function CreateRequestModal({
 	const getClientLabel = client => {
 		if (!client) return ''
 
-		const mainName = client.company_name || client.name || `Клиент #${client.id}`
+		const mainName =
+			client.company_name || client.name || `Клиент #${client.id}`
 		const representative =
 			client.company_name && client.name ? ` — ${client.name}` : ''
 		const parent = client.source_parent_client_name
 			? ` / родитель: ${client.source_parent_client_name}`
 			: ''
 
-		return `${mainName}${representative}${parent}`
+		const status = client.status || 'ACTIVE'
+		const statusText =
+			status !== 'ACTIVE' ? ` / статус: ${getClientStatusLabel(status)}` : ''
+
+		const responsible = client.responsible_manager_name
+			? ` / ответственный: ${client.responsible_manager_name}`
+			: ''
+
+		return `${mainName}${representative}${parent}${statusText}${responsible}`
 	}
 
 	const getClientSearchText = client => {
@@ -500,6 +509,14 @@ export default function CreateRequestModal({
 			client.name ||
 			`Клиент #${client.id}`
 		)
+	}
+
+	const getClientStatusLabel = status => {
+		if (status === 'ACTIVE') return 'Активный'
+		if (status === 'DEBTOR') return 'Должник'
+		if (status === 'BLOCKED') return 'Заблокирован'
+
+		return status || 'Активный'
 	}
 
 	const handleParentClientSelect = parentClient => {
@@ -775,6 +792,13 @@ export default function CreateRequestModal({
 		if (!formData.phone.trim()) required.push('phone')
 		if (!formData.city.trim()) required.push('city')
 		if (!formData.platform.trim()) required.push('platform')
+
+		if (clientRequestBlocked) {
+			setError(
+				'Клиент заблокирован. Создание заявки для заблокированного клиента запрещено.',
+			)
+			return false
+		}
 
 		if (
 			clientKind === 'new' &&
@@ -1156,6 +1180,25 @@ export default function CreateRequestModal({
 	const isExisting = clientKind === 'existing'
 	const isClientLocked = isEditMode || (isExisting && !isEditMode)
 
+	const selectedExistingClient = clientsList.find(
+		client => String(client.id) === String(formData.client_id),
+	)
+
+	const selectedExistingClientStatus =
+		selectedExistingClient?.status || 'ACTIVE'
+
+	const isSelectedClientDebtor =
+		clientKind === 'existing' &&
+		!isEditMode &&
+		selectedExistingClientStatus === 'DEBTOR'
+
+	const isSelectedClientBlocked =
+		clientKind === 'existing' &&
+		!isEditMode &&
+		selectedExistingClientStatus === 'BLOCKED'
+
+	const clientRequestBlocked = isSelectedClientBlocked
+
 	const fieldClass = fieldName => {
 		return missingFields.includes(fieldName)
 			? 'request-modal-input request-field-error'
@@ -1506,10 +1549,11 @@ export default function CreateRequestModal({
 								)}
 
 								{isExisting && !isEditMode && (
-									<label className='request-modal-field request-modal-full'>
+									<div className='request-modal-field request-modal-full'>
 										<span className='request-modal-label required'>
 											Выберите клиента
 										</span>
+
 										<SearchableSelect
 											value={formData.client_id}
 											options={clientsList}
@@ -1521,7 +1565,32 @@ export default function CreateRequestModal({
 											error={missingFields.includes('client_id')}
 											emptyText='Клиент не найден'
 										/>
-									</label>
+
+										{isSelectedClientDebtor && (
+											<div className='request-client-status-warning debtor'>
+												<div className='request-client-status-warning-title'>
+													Клиент в статусе “Должник”
+												</div>
+												<div className='request-client-status-warning-text'>
+													Заявку создать можно, но перед выполнением работ
+													проверьте оплату или согласуйте выполнение с
+													ответственным менеджером.
+												</div>
+											</div>
+										)}
+
+										{isSelectedClientBlocked && (
+											<div className='request-client-status-warning blocked'>
+												<div className='request-client-status-warning-title'>
+													Клиент заблокирован
+												</div>
+												<div className='request-client-status-warning-text'>
+													Создание заявки для этого клиента запрещено. Сначала
+													измените статус клиента на “Активный” или “Должник”.
+												</div>
+											</div>
+										)}
+									</div>
 								)}
 
 								<div className='request-modal-grid'>
@@ -1648,22 +1717,24 @@ export default function CreateRequestModal({
 									<div className='request-modal-label required'>Тип работ</div>
 
 									<div className='request-radio-list'>
-										{['Установка', 'Снятие', 'Диагностика', 'Перепрошивка'].map(type => (
-											<label
-												key={type}
-												className={`request-radio-pill ${formData.work_type === type ? 'active' : ''}`}
-											>
-												<input
-													type='radio'
-													name='work_type'
-													value={type}
-													checked={formData.work_type === type}
-													onChange={handleChange}
-													disabled={isEditMode}
-												/>
-												{type}
-											</label>
-										))}
+										{['Установка', 'Снятие', 'Диагностика', 'Перепрошивка'].map(
+											type => (
+												<label
+													key={type}
+													className={`request-radio-pill ${formData.work_type === type ? 'active' : ''}`}
+												>
+													<input
+														type='radio'
+														name='work_type'
+														value={type}
+														checked={formData.work_type === type}
+														onChange={handleChange}
+														disabled={isEditMode}
+													/>
+													{type}
+												</label>
+											),
+										)}
 									</div>
 								</div>
 
@@ -2531,7 +2602,7 @@ export default function CreateRequestModal({
 						className='request-submit-btn'
 						type='submit'
 						form='request-form'
-						disabled={loading}
+						disabled={loading || clientRequestBlocked}
 					>
 						{loading
 							? 'Сохранение...'

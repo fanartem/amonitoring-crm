@@ -49,6 +49,9 @@ export default function Clients() {
 	const [technicians, setTechnicians] = useState([])
 	const [vehicleEquipmentMap, setVehicleEquipmentMap] = useState({})
 
+	const [responsibleManagers, setResponsibleManagers] = useState([])
+	const [clientActionLoading, setClientActionLoading] = useState(false)
+
 	const [isCreateModalOpen, setCreateModalOpen] = useState(false)
 	const [editClientData, setEditClientData] = useState(null)
 
@@ -64,6 +67,51 @@ export default function Clients() {
 
 	const canViewRequestPrice =
 		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
+
+	const canCreateClient = ['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'].includes(
+		userRole,
+	)
+
+	const canDeleteClient = ['ADMIN', 'ROP'].includes(userRole)
+
+	const canOpenClientDetails = client => Boolean(client?.can_open_details)
+
+	const canEditClient = client => Boolean(client?.can_edit)
+
+	const canChangeClientStatus = client => Boolean(client?.can_change_status)
+
+	const canReassignClient = client => Boolean(client?.can_reassign)
+
+	const getClientStatusLabel = status => {
+		if (status === 'ACTIVE') return 'Активный'
+		if (status === 'DEBTOR') return 'Должник'
+		if (status === 'BLOCKED') return 'Заблокирован'
+		return status || '—'
+	}
+
+	const getClientResponsibleLabel = client => {
+		return client?.responsible_manager_name || 'Не назначен'
+	}
+
+	const renderClientBadges = client => {
+		if (!client) return null
+
+		const status = client.status || 'ACTIVE'
+
+		return (
+			<div className='client-card-badges'>
+				<span
+					className={`client-status-badge client-status-${String(status).toLowerCase()}`}
+				>
+					Статус: {getClientStatusLabel(status)}
+				</span>
+
+				<span className='client-responsible-badge'>
+					Ответственный: {getClientResponsibleLabel(client)}
+				</span>
+			</div>
+		)
+	}
 
 	// Состояние для навигации из строки поиска
 	const [pendingOpenClientId, setPendingOpenClientId] = useState(null)
@@ -83,7 +131,14 @@ export default function Clients() {
 	useEffect(() => {
 		fetchClients()
 		fetchClientGroups()
-		fetchTechnicians()
+
+		if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
+			fetchTechnicians()
+		}
+
+		if (['ADMIN', 'ROP'].includes(userRole)) {
+			fetchResponsibleManagers()
+		}
 	}, [])
 
 	useEffect(() => {
@@ -289,10 +344,59 @@ export default function Clients() {
 	const refreshClientsData = () => {
 		fetchClients()
 		fetchClientGroups()
+	}
 
-		if (selectedClient) {
-			handleClientClick(selectedClient)
-		}
+	const updateClientLocally = updatedClient => {
+		setSelectedClient(prev => {
+			if (!prev || Number(prev.id) !== Number(updatedClient.id)) return prev
+
+			return {
+				...prev,
+				...updatedClient,
+			}
+		})
+
+		setClients(prev =>
+			prev.map(client =>
+				Number(client.id) === Number(updatedClient.id)
+					? {
+							...client,
+							...updatedClient,
+						}
+					: client,
+			),
+		)
+
+		const updateClientInTree = items =>
+			(items || []).map(client => {
+				const nextClient =
+					Number(client.id) === Number(updatedClient.id)
+						? {
+								...client,
+								...updatedClient,
+							}
+						: client
+
+				return {
+					...nextClient,
+					children: updateClientInTree(nextClient.children || []),
+				}
+			})
+
+		setClientGroups(prev =>
+			prev.map(group => ({
+				...group,
+				parent_client:
+					group.parent_client &&
+					Number(group.parent_client.id) === Number(updatedClient.id)
+						? {
+								...group.parent_client,
+								...updatedClient,
+							}
+						: group.parent_client,
+				clients: updateClientInTree(group.clients || []),
+			})),
+		)
 	}
 
 	const fetchTechnicians = async () => {
@@ -304,6 +408,24 @@ export default function Clients() {
 			if (res.ok) setTechnicians(await res.json())
 		} catch (err) {
 			console.error(err)
+		}
+	}
+
+	const fetchResponsibleManagers = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/users/responsible-managers`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось загрузить ответственных')
+			}
+
+			const data = await res.json()
+			setResponsibleManagers(Array.isArray(data) ? data : [])
+		} catch (err) {
+			console.error('Ошибка загрузки ответственных менеджеров:', err)
 		}
 	}
 
@@ -397,6 +519,11 @@ export default function Clients() {
 	}
 
 	const handleClientClick = async client => {
+		if (!canOpenClientDetails(client)) {
+			alert('У вас нет доступа к деталям этого клиента')
+			return
+		}
+
 		setSelectedClient(client)
 		setClientVehicles([])
 		setVehiclesPage(1)
@@ -580,8 +707,8 @@ export default function Clients() {
 					setSelectedClient(null)
 				}
 			} else {
-				const errData = await res.text()
-				throw new Error(errData)
+				const errData = await res.json().catch(() => null)
+				throw new Error(errData?.detail || 'Ошибка при удалении клиента')
 			}
 		} catch (err) {
 			alert(`Ошибка при удалении: ${err.message}`)
@@ -593,6 +720,118 @@ export default function Clients() {
 		setActiveDropdown(null)
 		setEditClientData(client)
 		setCreateModalOpen(true)
+	}
+
+	const handleClientStatusChange = async nextStatus => {
+		if (!selectedClient) return
+
+		const oldStatus = selectedClient.status || 'ACTIVE'
+
+		if (nextStatus === oldStatus) return
+
+		const confirmText =
+			nextStatus === 'BLOCKED'
+				? 'Заблокировать клиента? После этого создавать заявки для него будет нельзя.'
+				: nextStatus === 'DEBTOR'
+					? 'Перевести клиента в статус должника? Заявки создавать можно, но будет предупреждение.'
+					: 'Перевести клиента в статус активного?'
+
+		if (!window.confirm(confirmText)) return
+
+		setClientActionLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/clients/${selectedClient.id}/status`,
+				{
+					method: 'PATCH',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						status: nextStatus,
+					}),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Не удалось изменить статус клиента')
+			}
+
+			const updatedClient = {
+				...selectedClient,
+				status: nextStatus,
+			}
+
+			updateClientLocally(updatedClient)
+			fetchClients()
+			fetchClientGroups()
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setClientActionLoading(false)
+		}
+	}
+
+	const handleClientResponsibleChange = async value => {
+		if (!selectedClient) return
+
+		const nextResponsibleId = value ? Number(value) : null
+		const currentResponsibleId = selectedClient.responsible_manager_id
+			? Number(selectedClient.responsible_manager_id)
+			: null
+
+		if (nextResponsibleId === currentResponsibleId) return
+
+		const responsible = responsibleManagers.find(
+			user => Number(user.id) === Number(nextResponsibleId),
+		)
+
+		const responsibleName = responsible
+			? `${responsible.name} (${responsible.role})`
+			: 'без ответственного'
+
+		const confirmText =
+			`Назначить ответственного: ${responsibleName}?\n\n` +
+			'Если у клиента есть подклиенты, они тоже будут переведены под этого ответственного.'
+
+		if (!window.confirm(confirmText)) return
+
+		setClientActionLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/clients/${selectedClient.id}/responsible`,
+				{
+					method: 'PATCH',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						responsible_manager_id: nextResponsibleId,
+						apply_to_subclients: true,
+					}),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Не удалось изменить ответственного')
+			}
+
+			const updatedClient = {
+				...selectedClient,
+				responsible_manager_id: nextResponsibleId,
+				responsible_manager_name: responsible?.name || null,
+			}
+
+			updateClientLocally(updatedClient)
+			fetchClients()
+			fetchClientGroups()
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setClientActionLoading(false)
+		}
 	}
 
 	const toggleDropdown = (e, clientId) => {
@@ -662,7 +901,9 @@ export default function Clients() {
 
 	const roleLabels = {
 		ADMIN: 'Админ',
+		ROP: 'РОП',
 		MANAGER: 'Менеджер',
+		TECH_SUPPORT: 'Тех. поддержка',
 		SENIOR_TECHNICIAN: 'Старший',
 		TECHNICIAN: 'Монтажник',
 		ACCOUNTANT: 'Бухгалтер',
@@ -671,7 +912,9 @@ export default function Clients() {
 
 	const roleClasses = {
 		ADMIN: 'role-admin',
+		ROP: 'role-rop',
 		MANAGER: 'role-manager',
+		TECH_SUPPORT: 'role-support',
 		SENIOR_TECHNICIAN: 'role-senior',
 		TECHNICIAN: 'role-tech',
 		ACCOUNTANT: 'role-accountant',
@@ -874,6 +1117,8 @@ export default function Clients() {
 									{client.phone ? ` · ${client.phone}` : ''}
 									{client.email ? ` · ${client.email}` : ''}
 								</div>
+
+								{renderClientBadges(client)}
 							</div>
 						</div>
 
@@ -893,17 +1138,19 @@ export default function Clients() {
 								</span>
 							)}
 
-							<button
-								className='btn-details'
-								onClick={e => {
-									e.stopPropagation()
-									handleClientClick(client)
-								}}
-							>
-								Детали
-							</button>
+							{canOpenClientDetails(client) && (
+								<button
+									className='btn-details'
+									onClick={e => {
+										e.stopPropagation()
+										handleClientClick(client)
+									}}
+								>
+									Детали
+								</button>
+							)}
 
-							{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+							{(canEditClient(client) || canDeleteClient) && (
 								<div
 									className='client-tree-actions'
 									onClick={e => e.stopPropagation()}
@@ -918,14 +1165,16 @@ export default function Clients() {
 
 									{activeDropdown === client.id && (
 										<div className='client-tree-dropdown'>
-											<div
-												className='client-tree-dropdown-item'
-												onClick={e => handleEditClientClick(e, client)}
-											>
-												Редактировать
-											</div>
+											{canEditClient(client) && (
+												<div
+													className='client-tree-dropdown-item'
+													onClick={e => handleEditClientClick(e, client)}
+												>
+													Редактировать
+												</div>
+											)}
 
-											{userRole === 'ADMIN' && (
+											{canDeleteClient && (
 												<div
 													className='client-tree-dropdown-item danger'
 													onClick={e =>
@@ -1013,7 +1262,7 @@ export default function Clients() {
 							</span>
 						</div>
 
-						{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+						{(canEditClient(client) || canDeleteClient) && (
 							<div
 								className='card-actions-wrapper'
 								style={{
@@ -1052,21 +1301,25 @@ export default function Clients() {
 											zIndex: 100,
 										}}
 									>
-										<div
-											className='dropdown-item'
-											style={{
-												padding: '8px 15px',
-												cursor: 'pointer',
-												fontSize: '14px',
-												borderBottom: '1px solid #f5f5f5',
-												color: '#333',
-											}}
-											onClick={e => handleEditClientClick(e, client)}
-										>
-											Редактировать
-										</div>
+										{canEditClient(client) && (
+											<div
+												className='dropdown-item'
+												style={{
+													padding: '8px 15px',
+													cursor: 'pointer',
+													fontSize: '14px',
+													borderBottom: canDeleteClient
+														? '1px solid #f5f5f5'
+														: 'none',
+													color: '#333',
+												}}
+												onClick={e => handleEditClientClick(e, client)}
+											>
+												Редактировать
+											</div>
+										)}
 
-										{userRole === 'ADMIN' && (
+										{canDeleteClient && (
 											<div
 												className='dropdown-item'
 												style={{
@@ -1100,6 +1353,8 @@ export default function Clients() {
 					<div className='client-card-info'>
 						{client.phone} {client.email ? ` · ${client.email}` : ''}
 					</div>
+
+					{renderClientBadges(client)}
 
 					<div
 						className='client-card-footer'
@@ -1144,15 +1399,17 @@ export default function Clients() {
 							)}
 						</div>
 
-						<button
-							className='btn-details'
-							onClick={e => {
-								e.stopPropagation()
-								handleClientClick(client)
-							}}
-						>
-							Детали
-						</button>
+						{canOpenClientDetails(client) && (
+							<button
+								className='btn-details'
+								onClick={e => {
+									e.stopPropagation()
+									handleClientClick(client)
+								}}
+							>
+								Детали
+							</button>
+						)}
 					</div>
 				</div>
 
@@ -1191,7 +1448,7 @@ export default function Clients() {
 							<span className='subtitle-text'>
 								Клиенты из заявок и созданные вручную
 							</span>
-							{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+							{canCreateClient && (
 								<button
 									className='btn-green'
 									onClick={() => {
@@ -1283,21 +1540,25 @@ export default function Clients() {
 																</>
 															)}
 														</div>
+														
+														{group.parent_client &&
+															renderClientBadges(group.parent_client)}
 													</div>
 												</div>
 
 												<div className='client-group-actions'>
-													{group.parent_client && (
-														<button
-															className='btn-details'
-															onClick={e => {
-																e.stopPropagation()
-																handleClientClick(group.parent_client)
-															}}
-														>
-															Детали
-														</button>
-													)}
+													{group.parent_client &&
+														canOpenClientDetails(group.parent_client) && (
+															<button
+																className='btn-details'
+																onClick={e => {
+																	e.stopPropagation()
+																	handleClientClick(group.parent_client)
+																}}
+															>
+																Детали
+															</button>
+														)}
 
 													{group.is_import_group && (
 														<span className='client-group-badge'>
@@ -1366,7 +1627,68 @@ export default function Clients() {
 							<span className='info-val'>{selectedClient.email || '—'}</span>
 						</div>
 
-						{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+						<div className='info-row'>
+							<span className='info-key'>Статус клиента</span>
+
+							{canChangeClientStatus(selectedClient) ? (
+								<div className='client-status-control'>
+									<span
+										className={`client-status-dot client-status-dot-${String(selectedClient.status || 'ACTIVE').toLowerCase()}`}
+									/>
+
+									<select
+										className='client-inline-select client-status-select'
+										value={selectedClient.status || 'ACTIVE'}
+										onChange={e => handleClientStatusChange(e.target.value)}
+										disabled={clientActionLoading}
+									>
+										<option value='ACTIVE'>Активный</option>
+										<option value='DEBTOR'>Должник</option>
+										<option value='BLOCKED'>Заблокирован</option>
+									</select>
+								</div>
+							) : (
+								<span
+									className={`info-val client-status-detail client-status-${String(selectedClient.status || 'ACTIVE').toLowerCase()}`}
+								>
+									{getClientStatusLabel(selectedClient.status || 'ACTIVE')}
+								</span>
+							)}
+						</div>
+
+						<div className='info-row'>
+							<span className='info-key'>Ответственный</span>
+
+							{canReassignClient(selectedClient) ? (
+								<select
+									className='client-inline-select'
+									value={selectedClient.responsible_manager_id || ''}
+									onChange={e => handleClientResponsibleChange(e.target.value)}
+									disabled={clientActionLoading}
+								>
+									<option value=''>Не назначен</option>
+
+									{responsibleManagers.map(user => (
+										<option key={user.id} value={user.id}>
+											{user.name} ·{' '}
+											{user.role === 'MANAGER'
+												? 'Менеджер'
+												: user.role === 'ROP'
+													? 'РОП'
+													: user.role === 'ADMIN'
+														? 'Админ'
+														: user.role}
+										</option>
+									))}
+								</select>
+							) : (
+								<span className='info-val'>
+									{selectedClient.responsible_manager_name || 'Не назначен'}
+								</span>
+							)}
+						</div>
+
+						{canEditClient(selectedClient) && (
 							<div className='client-edit-btn-wrapper'>
 								<button
 									className='btn-edit-request'
@@ -1478,7 +1800,7 @@ export default function Clients() {
 													</div>
 												</div>
 
-												{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+												{canEditClient(selectedClient) && (
 													<button
 														className='btn-details vehicle-edit-btn'
 														onClick={() => setEditingVehicle(v)}
@@ -1689,36 +2011,38 @@ export default function Clients() {
 										</div>
 									)}
 
-									<div className='card-item'>
-										<span className='card-label'>Оплата</span>
-										<div
-											style={{
-												display: 'flex',
-												flexDirection: 'row',
-												gap: '8px',
-												alignItems: 'center',
-												marginTop: '2px',
-											}}
-										>
+									{canViewRequestPrice && (
+										<div className='card-item'>
+											<span className='card-label'>Оплата</span>
 											<div
-												className={`status-badge ${Boolean(req.is_paid) ? 'status-progress' : 'status-new'}`}
-												style={{ padding: '2px 10px', fontSize: '11px' }}
+												style={{
+													display: 'flex',
+													flexDirection: 'row',
+													gap: '8px',
+													alignItems: 'center',
+													marginTop: '2px',
+												}}
 											>
-												{Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}
-											</div>
-											{Boolean(req.is_paid) && req.paid_at && (
-												<span
-													style={{
-														fontSize: '11px',
-														color: '#888',
-														fontWeight: '500',
-													}}
+												<div
+													className={`status-badge ${Boolean(req.is_paid) ? 'status-progress' : 'status-new'}`}
+													style={{ padding: '2px 10px', fontSize: '11px' }}
 												>
-													{formatDate(req.paid_at).split(' ')[0]}
-												</span>
-											)}
+													{Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}
+												</div>
+												{Boolean(req.is_paid) && req.paid_at && (
+													<span
+														style={{
+															fontSize: '11px',
+															color: '#888',
+															fontWeight: '500',
+														}}
+													>
+														{formatDate(req.paid_at).split(' ')[0]}
+													</span>
+												)}
+											</div>
 										</div>
-									</div>
+									)}
 								</div>
 
 								<div

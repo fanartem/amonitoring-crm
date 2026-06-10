@@ -82,6 +82,25 @@ export default function RequestDetailModal({
 
 	const userRole = getUserRole()
 
+	const canViewRequestPrice =
+		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
+
+	const canPayRequest = ['ADMIN', 'ROP', 'ACCOUNTANT'].includes(userRole)
+
+	const canAssignTechnician = ['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(
+		userRole,
+	)
+
+	const canDeleteRequest =
+		Boolean(request?.can_delete) ||
+		Boolean(request?.can_delete_own_with_time_limit)
+
+	const canEditRequest = Boolean(request?.can_edit)
+
+	const canChangeRequestStatus = Boolean(request?.can_change_status)
+
+	const canManageEquipment = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
+
 	useEffect(() => {
 		const handleKeyDown = e => {
 			if (e.key === 'Escape') onClose()
@@ -95,9 +114,12 @@ export default function RequestDetailModal({
 			setActiveTab(initialTab)
 			fetchRequestDetails()
 			fetchComments()
-			fetchTechnicians()
+
+			if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
+				fetchTechnicians()
+			}
 		}
-	}, [isOpen, requestId, initialTab])
+	}, [isOpen, requestId, initialTab, userRole])
 
 	useEffect(() => {
 		if (request) {
@@ -105,13 +127,22 @@ export default function RequestDetailModal({
 		}
 	}, [request])
 
+	useEffect(() => {
+		if (userRole === 'TECH_SUPPORT' && activeTab === 'equipment') {
+			setActiveTab('info')
+		}
+	}, [userRole, activeTab])
+
 	const fetchRequestDetails = async () => {
 		setLoading(true)
 		try {
 			const res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
 				headers: getAuthHeaders(),
 			})
-			if (!res.ok) throw new Error('Не удалось загрузить данные заявки')
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось загрузить данные заявки')
+			}
 
 			const data = await res.json()
 			setRequest(data.request)
@@ -162,7 +193,10 @@ export default function RequestDetailModal({
 				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ status: newStatus }),
 			})
-			if (!res.ok) throw new Error('Не удалось обновить статус')
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось обновить статус')
+			}
 			setRequest({ ...request, status: newStatus })
 			fetchRequestDetails()
 			onUpdated()
@@ -179,7 +213,10 @@ export default function RequestDetailModal({
 				headers: getJsonAuthHeaders(),
 				body: JSON.stringify({ is_paid: newIsPaid }),
 			})
-			if (!res.ok) throw new Error('Не удалось обновить статус оплаты')
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось обновить статус оплаты')
+			}
 			setRequest({ ...request, is_paid: newIsPaid })
 			fetchRequestDetails()
 			onUpdated()
@@ -214,7 +251,12 @@ export default function RequestDetailModal({
 				body: JSON.stringify({ technician_id: techId }),
 			})
 
-			if (!res.ok) throw new Error('Ошибка при назначении/снятии сотрудника')
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(
+					data?.detail || 'Ошибка при назначении/снятии сотрудника',
+				)
+			}
 
 			if (!techId) alert('Монтажник успешно снят с заявки!')
 			else
@@ -245,8 +287,8 @@ export default function RequestDetailModal({
 				headers: getAuthHeaders(),
 			})
 			if (!res.ok) {
-				const errData = await res.text()
-				throw new Error(errData || 'Ошибка при удалении заявки')
+				const errData = await res.json().catch(() => null)
+				throw new Error(errData?.detail || 'Ошибка при удалении заявки')
 			}
 			alert('Заявка удалена!')
 			onUpdated()
@@ -420,12 +462,14 @@ export default function RequestDetailModal({
 					>
 						История
 					</button>
-					<button
-						className={`custom-tab ${activeTab === 'equipment' ? 'active' : ''}`}
-						onClick={() => setActiveTab('equipment')}
-					>
-						Оборудование
-					</button>
+					{userRole !== 'TECH_SUPPORT' && (
+						<button
+							className={`custom-tab ${activeTab === 'equipment' ? 'active' : ''}`}
+							onClick={() => setActiveTab('equipment')}
+						>
+							Оборудование
+						</button>
+					)}
 				</div>
 
 				<div className='custom-body'>
@@ -438,24 +482,22 @@ export default function RequestDetailModal({
 							<>
 								{activeTab === 'info' && (
 									<div className='tab-content'>
-										{userRole !== 'TECHNICIAN' &&
-											userRole !== 'SENIOR_TECHNICIAN' &&
-											onEditClick && (
-												<div
-													style={{
-														display: 'flex',
-														justifyContent: 'flex-end',
-														marginBottom: '15px',
-													}}
+										{canEditRequest && onEditClick && (
+											<div
+												style={{
+													display: 'flex',
+													justifyContent: 'flex-end',
+													marginBottom: '15px',
+												}}
+											>
+												<button
+													className='btn-edit-request'
+													onClick={() => onEditClick(request)}
 												>
-													<button
-														className='btn-edit-request'
-														onClick={() => onEditClick(request)}
-													>
-														✎ Изменить заявку
-													</button>
-												</div>
-											)}
+													✎ Изменить заявку
+												</button>
+											</div>
+										)}
 
 										<div className='info-card'>
 											<div className='info-card-title'>Клиент</div>
@@ -506,6 +548,32 @@ export default function RequestDetailModal({
 													{request.email || request.client?.email || '—'}
 												</span>
 											</div>
+											{request.client_status && (
+												<div className='info-row'>
+													<span className='info-key'>Статус клиента</span>
+													<span
+														className={`info-val client-status-detail client-status-${String(request.client_status).toLowerCase()}`}
+													>
+														{request.client_status === 'ACTIVE'
+															? 'Активный'
+															: request.client_status === 'DEBTOR'
+																? 'Должник'
+																: request.client_status === 'BLOCKED'
+																	? 'Заблокированный'
+																	: request.client_status}
+													</span>
+												</div>
+											)}
+											{request.responsible_manager_name && (
+												<div className='info-row'>
+													<span className='info-key'>
+														Ответственный за клиента
+													</span>
+													<span className='info-val'>
+														{request.responsible_manager_name}
+													</span>
+												</div>
+											)}
 										</div>
 
 										<div className='info-card'>
@@ -573,7 +641,7 @@ export default function RequestDetailModal({
 																	</span>
 																</div>
 
-																<div className='info-row'>
+																<div className='info-row vin-value'>
 																	<span className='info-key'>VIN-код</span>
 																	<span className='info-val'>
 																		{vehicle.vin || '—'}
@@ -599,13 +667,11 @@ export default function RequestDetailModal({
 																						{sensor.name || 'Датчик'}
 																					</span>
 
-																					{userRole !== 'TECHNICIAN' &&
-																						userRole !==
-																							'SENIOR_TECHNICIAN' && (
-																							<span className='request-extra-sensor-price'>
-																								{formatMoney(sensor.price)}
-																							</span>
-																						)}
+																					{canViewRequestPrice && (
+																						<span className='request-extra-sensor-price'>
+																							{formatMoney(sensor.price)}
+																						</span>
+																					)}
 																				</div>
 																			))}
 																		</div>
@@ -664,36 +730,38 @@ export default function RequestDetailModal({
 												</span>
 											</div>
 
-											<div className='info-row'>
-												<span className='info-key'>Статус оплаты</span>
-												<span
-													className='info-val'
-													style={{
-														display: 'flex',
-														flexDirection: 'row',
-														gap: '10px',
-														alignItems: 'center',
-													}}
-												>
+											{canViewRequestPrice && (
+												<div className='info-row'>
+													<span className='info-key'>Статус оплаты</span>
 													<span
-														className={`status-badge ${Boolean(request.is_paid) ? 'status-progress' : 'status-new'}`}
+														className='info-val'
 														style={{
-															padding: '2px 8px',
-															fontSize: '11px',
-															display: 'inline-block',
+															display: 'flex',
+															flexDirection: 'row',
+															gap: '10px',
+															alignItems: 'center',
 														}}
 													>
-														{Boolean(request.is_paid)
-															? 'Оплачено'
-															: 'Ожидает оплаты'}
-													</span>
-													{Boolean(request.is_paid) && request.paid_at && (
-														<span style={{ fontSize: '12px', color: '#888' }}>
-															(Дата: {formatDate(request.paid_at)})
+														<span
+															className={`status-badge ${Boolean(request.is_paid) ? 'status-progress' : 'status-new'}`}
+															style={{
+																padding: '2px 8px',
+																fontSize: '11px',
+																display: 'inline-block',
+															}}
+														>
+															{Boolean(request.is_paid)
+																? 'Оплачено'
+																: 'Ожидает оплаты'}
 														</span>
-													)}
-												</span>
-											</div>
+														{Boolean(request.is_paid) && request.paid_at && (
+															<span style={{ fontSize: '12px', color: '#888' }}>
+																(Дата: {formatDate(request.paid_at)})
+															</span>
+														)}
+													</span>
+												</div>
+											)}
 										</div>
 
 										<div className='info-card'>
@@ -712,67 +780,66 @@ export default function RequestDetailModal({
 											</div>
 										</div>
 
-										{userRole !== 'TECHNICIAN' &&
-											userRole !== 'SENIOR_TECHNICIAN' && (
-												<div className='info-card'>
-													<div className='request-price-detail-header'>
-														<div className='info-card-title'>
-															Стоимость заявки
-														</div>
-
-														<div className='request-price-detail-total'>
-															{formatMoney(request.total_price)}
-														</div>
+										{canViewRequestPrice && (
+											<div className='info-card'>
+												<div className='request-price-detail-header'>
+													<div className='info-card-title'>
+														Стоимость заявки
 													</div>
 
-													{request.price_lines &&
-													request.price_lines.length > 0 ? (
-														<div className='request-price-detail-list'>
-															{request.price_lines.map((line, index) => {
-																const sourceLabel = getPriceSourceLabel(
-																	line.source,
-																)
+													<div className='request-price-detail-total'>
+														{formatMoney(request.total_price)}
+													</div>
+												</div>
 
-																return (
-																	<div
-																		key={line.id || line.line_key || index}
-																		className='request-price-detail-row'
-																	>
-																		<div className='request-price-detail-main'>
-																			<div className='request-price-detail-label'>
-																				{line.label || 'Строка расчёта'}
-																			</div>
+												{request.price_lines &&
+												request.price_lines.length > 0 ? (
+													<div className='request-price-detail-list'>
+														{request.price_lines.map((line, index) => {
+															const sourceLabel = getPriceSourceLabel(
+																line.source,
+															)
 
-																			<div className='request-price-detail-meta'>
-																				{Number(
-																					line.quantity || 0,
-																				).toLocaleString('ru-RU')}{' '}
-																				{line.unit || 'шт'} ×{' '}
-																				{formatMoney(line.unit_price)}
-																				{sourceLabel && (
-																					<span
-																						className={`request-price-detail-source ${line.source}`}
-																					>
-																						{sourceLabel}
-																					</span>
-																				)}
-																			</div>
+															return (
+																<div
+																	key={line.id || line.line_key || index}
+																	className='request-price-detail-row'
+																>
+																	<div className='request-price-detail-main'>
+																		<div className='request-price-detail-label'>
+																			{line.label || 'Строка расчёта'}
 																		</div>
 
-																		<div className='request-price-detail-line-total'>
-																			{formatMoney(line.total_price)}
+																		<div className='request-price-detail-meta'>
+																			{Number(
+																				line.quantity || 0,
+																			).toLocaleString('ru-RU')}{' '}
+																			{line.unit || 'шт'} ×{' '}
+																			{formatMoney(line.unit_price)}
+																			{sourceLabel && (
+																				<span
+																					className={`request-price-detail-source ${line.source}`}
+																				>
+																					{sourceLabel}
+																				</span>
+																			)}
 																		</div>
 																	</div>
-																)
-															})}
-														</div>
-													) : (
-														<div className='request-price-detail-empty'>
-															Детализация стоимости не сохранена
-														</div>
-													)}
-												</div>
-											)}
+
+																	<div className='request-price-detail-line-total'>
+																		{formatMoney(line.total_price)}
+																	</div>
+																</div>
+															)
+														})}
+													</div>
+												) : (
+													<div className='request-price-detail-empty'>
+														Детализация стоимости не сохранена
+													</div>
+												)}
+											</div>
+										)}
 									</div>
 								)}
 
@@ -842,7 +909,7 @@ export default function RequestDetailModal({
 									</div>
 								)}
 
-								{activeTab === 'equipment' && (
+								{activeTab === 'equipment' && userRole !== 'TECH_SUPPORT' && (
 									<div className='tab-content'>
 										<RequestEquipmentPanel
 											requestId={requestId}
@@ -881,8 +948,7 @@ export default function RequestDetailModal({
 									flexWrap: 'wrap',
 								}}
 							>
-								{userRole !== 'TECHNICIAN' &&
-								userRole !== 'SENIOR_TECHNICIAN' ? (
+								{canChangeRequestStatus ? (
 									<div className='footer-group'>
 										<span style={{ fontSize: '13px' }}>Статус:</span>
 										<select
@@ -914,34 +980,35 @@ export default function RequestDetailModal({
 									</div>
 								)}
 
-								{userRole === 'ADMIN' || userRole === 'ACCOUNTANT' ? (
-									<div className='footer-group'>
-										<span style={{ fontSize: '13px' }}>Оплата:</span>
-										<select
-											className='footer-select'
-											style={{ padding: '4px 8px', fontSize: '13px' }}
-											value={request.is_paid ? 'true' : 'false'}
-											onChange={handlePaymentChange}
-										>
-											<option value='false'>Ожидает оплаты</option>
-											<option value='true'>Оплачено</option>
-										</select>
-									</div>
-								) : (
-									<div className='footer-group'>
-										<span style={{ fontSize: '13px' }}>
-											Оплата:{' '}
-											<strong>
-												{Boolean(request.is_paid)
-													? 'Оплачено'
-													: 'Ожидает оплаты'}
-											</strong>
-										</span>
-									</div>
-								)}
+								{canViewRequestPrice &&
+									(canPayRequest ? (
+										<div className='footer-group'>
+											<span style={{ fontSize: '13px' }}>Оплата:</span>
+											<select
+												className='footer-select'
+												style={{ padding: '4px 8px', fontSize: '13px' }}
+												value={request.is_paid ? 'true' : 'false'}
+												onChange={handlePaymentChange}
+											>
+												<option value='false'>Ожидает оплаты</option>
+												<option value='true'>Оплачено</option>
+											</select>
+										</div>
+									) : (
+										<div className='footer-group'>
+											<span style={{ fontSize: '13px' }}>
+												Оплата:{' '}
+												<strong>
+													{Boolean(request.is_paid)
+														? 'Оплачено'
+														: 'Ожидает оплаты'}
+												</strong>
+											</span>
+										</div>
+									))}
 							</div>
 
-							{userRole === 'ADMIN' && (
+							{canDeleteRequest && (
 								<button
 									onClick={handleDeleteRequest}
 									style={{
@@ -967,7 +1034,7 @@ export default function RequestDetailModal({
 								width: '100%',
 							}}
 						>
-							{(userRole === 'ADMIN' || userRole === 'SENIOR_TECHNICIAN') &&
+							{canAssignTechnician &&
 							request.status !== 'COMPLETED' &&
 							request.status !== 'CANCELLED' ? (
 								<div className='footer-group'>

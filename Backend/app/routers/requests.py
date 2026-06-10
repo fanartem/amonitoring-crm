@@ -2,6 +2,29 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_connection
 from app.schemas import RequestCreate, RequestUpdate, AssignRequest, CommentCreate
 from app.security import get_current_user
+
+from app.permissions import (
+    ADMIN,
+    ROP,
+    MANAGER,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+    SENIOR_TECHNICIAN,
+    TECHNICIAN,
+    can_create_request,
+    can_edit_all_requests,
+    can_change_request_status,
+    can_delete_any_request,
+    can_delete_own_request_with_time_limit,
+    can_view_price_fields,
+    can_create_request_for_client,
+    is_client_owned_by_user,
+    is_technician,
+    is_senior_technician,
+    is_manager,
+    is_tech_support,
+)
+
 from datetime import datetime
 from app.notification_service import (
     notify_new_request,
@@ -13,29 +36,7 @@ from app.notification_service import (
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
-CITY_RESTRICTED_ROLES = ["TECHNICIAN", "SENIOR_TECHNICIAN"]
-
-PRICE_RESTRICTED_ROLES = ["TECHNICIAN", "SENIOR_TECHNICIAN"]
-
-
-def is_price_restricted_user(current_user: dict) -> bool:
-    return current_user.get("role") in PRICE_RESTRICTED_ROLES
-
-
-def hide_request_prices(requests: list[dict]) -> list[dict]:
-    for req in requests:
-        req["total_price"] = None
-        req["is_paid"] = None
-        req["paid_at"] = None
-
-        if "price_lines" in req:
-            req["price_lines"] = []
-
-    return requests
-
-def is_city_restricted_user(current_user: dict) -> bool:
-    return current_user.get("role") in CITY_RESTRICTED_ROLES
-
+REQUEST_DELETE_TIME_LIMIT_SECONDS = 120
 
 def get_current_user_city(cursor, current_user: dict):
     """
@@ -65,6 +66,100 @@ def normalize_city(city):
     if city is None:
         return None
     return str(city).strip().lower()
+
+def hide_request_prices(requests: list[dict]) -> list[dict]:
+    for req in requests:
+        req["total_price"] = None
+        req["is_paid"] = None
+        req["paid_at"] = None
+
+        if "price_lines" in req:
+            req["price_lines"] = []
+
+    return requests
+
+
+def attach_request_permissions(request: dict, current_user: dict) -> dict:
+    role = current_user.get("role")
+    user_id = int(current_user["id"])
+
+    created_by = request.get("created_by")
+    responsible_manager_id = request.get("responsible_manager_id")
+
+    is_creator = created_by is not None and int(created_by) == user_id
+    is_responsible_manager = (
+        responsible_manager_id is not None
+        and int(responsible_manager_id) == user_id
+    )
+
+    request["can_edit"] = (
+        can_edit_all_requests(current_user)
+        or (role == MANAGER and (is_creator or is_responsible_manager))
+    )
+
+    request["can_change_status"] = can_change_request_status(current_user)
+
+    request["can_delete"] = can_delete_any_request(current_user)
+
+    if can_delete_own_request_with_time_limit(current_user) and is_creator:
+        request["can_delete_own_with_time_limit"] = True
+    else:
+        request["can_delete_own_with_time_limit"] = False
+
+    request["can_view_prices"] = can_view_price_fields(current_user)
+
+    return request
+
+
+def attach_requests_permissions(requests: list[dict], current_user: dict) -> list[dict]:
+    for request in requests:
+        attach_request_permissions(request, current_user)
+
+    return requests
+
+
+def user_can_access_request(request: dict, current_user: dict) -> bool:
+    role = current_user.get("role")
+    user_id = int(current_user["id"])
+
+    if role in [ADMIN, ROP, ACCOUNTANT]:
+        return True
+
+    if role == SENIOR_TECHNICIAN:
+        return True
+
+    if role == TECH_SUPPORT:
+        return (
+            request.get("created_by") is not None
+            and int(request["created_by"]) == user_id
+        )
+
+    if role == MANAGER:
+        created_by = request.get("created_by")
+        responsible_manager_id = request.get("responsible_manager_id")
+
+        return (
+            created_by is not None and int(created_by) == user_id
+        ) or (
+            responsible_manager_id is not None
+            and int(responsible_manager_id) == user_id
+        )
+
+    if role == TECHNICIAN:
+        if not request.get("is_paid"):
+            return False
+
+        if normalize_city(request.get("city")) != normalize_city(get_current_user_city_value(current_user)):
+            return False
+
+        assigned_to = request.get("assigned_to")
+        return assigned_to is None or int(assigned_to) == user_id
+
+    return False
+
+
+def get_current_user_city_value(current_user: dict):
+    return current_user.get("city")
 
 def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
     """
@@ -164,10 +259,10 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
     requests = шапка заявки
     request_vehicles = автомобили внутри заявки + параметры установки
     """
-    if current_user["role"] not in ["ADMIN", "MANAGER"]:
+    if not can_create_request(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Только Менеджер или Админ могут создавать заявки"
+            detail="Недостаточно прав для создания заявки"
         )
 
     if not data.vehicles:
@@ -192,7 +287,12 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
             # Проверяем клиента
             cursor.execute(
                 """
-                SELECT id, is_deleted
+                SELECT
+                    id,
+                    status,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -207,6 +307,18 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                 raise HTTPException(
                     status_code=400,
                     detail="Нельзя создать заявку для клиента из корзины"
+                )
+            
+            if client["status"] == "BLOCKED":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Нельзя создать заявку для заблокированного клиента"
+                )
+
+            if not can_create_request_for_client(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для создания заявки по этому клиенту"
                 )
 
             # Проверяем все автомобили до создания заявки
@@ -513,10 +625,6 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
 
 @router.get("")
 def get_requests(status: str = Query(None), current_user: dict = Depends(get_current_user)):
-    """
-    Список заявок.
-    TECHNICIAN / SENIOR_TECHNICIAN видят только заявки своего города.
-    """
     connection = get_connection()
 
     try:
@@ -528,14 +636,40 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 conditions.append("r.status = %s")
                 values.append(status)
 
-            if is_city_restricted_user(current_user):
+            role = current_user["role"]
+
+            if role == MANAGER:
+                conditions.append(
+                    """
+                    (
+                        r.created_by = %s
+                        OR c.responsible_manager_id = %s
+                    )
+                    """
+                )
+                values.extend([current_user["id"], current_user["id"]])
+
+            elif role == TECH_SUPPORT:
+                conditions.append("r.created_by = %s")
+                values.append(current_user["id"])
+
+            elif role == TECHNICIAN:
                 user_city = get_current_user_city(cursor, current_user)
 
                 if not user_city:
                     return []
 
+                conditions.append("r.is_paid = 1")
                 conditions.append("r.city = %s")
                 values.append(user_city)
+                conditions.append("(r.assigned_to IS NULL OR r.assigned_to = %s)")
+                values.append(current_user["id"])
+
+            elif role in [SENIOR_TECHNICIAN, ADMIN, ROP, ACCOUNTANT]:
+                pass
+
+            else:
+                return []
 
             where_clause = " AND ".join(conditions)
 
@@ -564,10 +698,16 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     c.name AS client_name,
                     c.company_name,
                     c.phone,
-                    c.type AS client_type
+                    c.type AS client_type,
+                    c.status AS client_status,
+                    c.responsible_manager_id,
+
+                    responsible.name AS responsible_manager_name
+
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 LEFT JOIN users creator ON r.created_by = creator.id
+                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
                 WHERE {where_clause}
                 ORDER BY r.created_at DESC
                 """,
@@ -576,8 +716,9 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
 
             requests = cursor.fetchall()
             requests = attach_vehicles_to_requests(cursor, requests)
+            requests = attach_requests_permissions(requests, current_user)
 
-            if is_price_restricted_user(current_user):
+            if not can_view_price_fields(current_user):
                 requests = hide_request_prices(requests)
 
             return requests
@@ -588,10 +729,10 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
 @router.get("/deleted")
 def get_deleted_requests(current_user: dict = Depends(get_current_user)):
     """Список удалённых заявок. Только ADMIN."""
-    if current_user["role"] != "ADMIN":
+    if current_user["role"] not in [ADMIN, ROP]:
         raise HTTPException(
             status_code=403,
-            detail="Только Админ может просматривать корзину заявок"
+            detail="Только Админ или РОП может просматривать корзину заявок"
         )
 
     connection = get_connection()
@@ -619,6 +760,10 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                     r.deleted_by,
                     r.created_by,
 
+                    c.status AS client_status,
+                    c.responsible_manager_id,
+                    responsible.name AS responsible_manager_name,
+
                     creator.name AS created_by_name,
                     creator.role AS created_by_role,
 
@@ -632,6 +777,7 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                 LEFT JOIN clients c ON r.client_id = c.id
                 LEFT JOIN users u ON r.deleted_by = u.id
                 LEFT JOIN users creator ON r.created_by = creator.id
+                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
                 WHERE r.is_deleted = 1
                 ORDER BY r.deleted_at DESC
                 """
@@ -654,9 +800,16 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id
-                FROM requests
-                WHERE id = %s AND is_deleted = 0
+                SELECT
+                    r.id,
+                    r.city,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+                    c.responsible_manager_id
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s AND r.is_deleted = 0
                 """,
                 (data.request_id,)
             )
@@ -664,6 +817,12 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
 
             if not request:
                 raise HTTPException(status_code=404, detail="Заявка не найдена или удалена")
+            
+            if not user_can_access_request(request, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для комментирования этой заявки"
+                )
             
             cursor.execute(
                 "INSERT INTO request_comments (request_id, user_id, message) VALUES (%s, %s, %s)",
@@ -685,30 +844,28 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
         "CANCELLED": []
     }
 
-    if current_user["role"] == "TECHNICIAN":
-        raise HTTPException(
-            status_code=403,
-            detail="Обычный монтажник может только просматривать заявки"
-        )
-
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT
-                    id,
-                    client_id,
-                    work_type,
-                    visit_type,
-                    address,
-                    city,
-                    platform,
-                    scheduled_at,
-                    status,
-                    assigned_to,
-                    is_paid
-                FROM requests
-                WHERE id = %s AND is_deleted = 0
+                    r.id,
+                    r.client_id,
+                    r.work_type,
+                    r.visit_type,
+                    r.address,
+                    r.city,
+                    r.platform,
+                    r.scheduled_at,
+                    r.status,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+
+                    c.responsible_manager_id
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s AND r.is_deleted = 0
                 """,
                 (request_id,)
             )
@@ -716,6 +873,32 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
             if not req:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            if not user_can_access_request(req, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для редактирования этой заявки"
+                )
+
+            can_edit_this_request = (
+                can_edit_all_requests(current_user)
+                or (
+                    current_user["role"] == MANAGER
+                    and (
+                        (req.get("created_by") is not None and int(req["created_by"]) == int(current_user["id"]))
+                        or (
+                            req.get("responsible_manager_id") is not None
+                            and int(req["responsible_manager_id"]) == int(current_user["id"])
+                        )
+                    )
+                )
+            )
+
+            if not can_edit_this_request and data.status is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для редактирования этой заявки"
+                )
 
             update_fields = []
             update_values = []
@@ -751,10 +934,10 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
             
             # platform
             if data.platform is not None:
-                if current_user["role"] not in ["ADMIN", "MANAGER"]:
+                if not can_edit_this_request:
                     raise HTTPException(
                         status_code=403,
-                        detail="Только Менеджер или Админ могут менять платформу мониторинга"
+                        detail="Недостаточно прав для редактирования этой заявки"
                     )
 
                 new_platform = data.platform.strip()
@@ -769,10 +952,10 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
             # visit_type
             if data.visit_type is not None and data.visit_type != req["visit_type"]:
-                if current_user["role"] not in ["ADMIN", "MANAGER"]:
+                if not can_edit_this_request:
                     raise HTTPException(
                         status_code=403,
-                        detail="Только Менеджер или Админ могут менять тип визита"
+                        detail="Недостаточно прав для редактирования этой заявки"
                     )
 
                 if data.visit_type not in ["IN_OFFICE", "ON_SITE"]:
@@ -782,20 +965,20 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
             # address
             if data.address is not None and data.address != req["address"]:
-                if current_user["role"] not in ["ADMIN", "MANAGER"]:
+                if not can_edit_this_request:
                     raise HTTPException(
                         status_code=403,
-                        detail="Только Менеджер или Админ могут менять адрес"
+                        detail="Недостаточно прав для редактирования этой заявки"
                     )
 
                 add_request_update("address", data.address, "ADDRESS_CHANGED")
 
             # city
             if data.city is not None and data.city != req["city"]:
-                if current_user["role"] not in ["ADMIN", "MANAGER"]:
+                if not can_edit_this_request:
                     raise HTTPException(
                         status_code=403,
-                        detail="Только Менеджер или Админ могут менять город"
+                        detail="Недостаточно прав для редактирования этой заявки"
                     )
 
                 add_request_update("city", data.city, "CITY_CHANGED")
@@ -805,20 +988,20 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                 new_scheduled_at = data.scheduled_at.replace(tzinfo=None)
 
                 if req["scheduled_at"] != new_scheduled_at:
-                    if current_user["role"] not in ["ADMIN", "MANAGER"]:
+                    if not can_edit_this_request:
                         raise HTTPException(
                             status_code=403,
-                            detail="Только Менеджер или Админ могут менять дату заявки"
+                            detail="Недостаточно прав для редактирования этой заявки"
                         )
 
                     add_request_update("scheduled_at", new_scheduled_at, "SCHEDULED_AT_CHANGED")
 
             # payment
             if data.is_paid is not None:
-                if current_user["role"] not in ["ADMIN", "ACCOUNTANT"]:
+                if current_user["role"] not in [ADMIN, ROP, ACCOUNTANT]:
                     raise HTTPException(
                         status_code=403,
-                        detail="Только Бухгалтер или Админ могут менять оплату"
+                        detail="Недостаточно прав на изменение оплаты заявки"
                     )
 
                 old_paid = bool(req["is_paid"])
@@ -844,7 +1027,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
             # status
             if data.status is not None and data.status != req["status"]:
-                if current_user["role"] not in ["ADMIN", "MANAGER", "SENIOR_TECHNICIAN"]:
+                if not can_change_request_status(current_user):
                     raise HTTPException(
                         status_code=403,
                         detail="Недостаточно прав для изменения статуса"
@@ -853,7 +1036,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                 if data.status not in ["NEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"]:
                     raise HTTPException(status_code=400, detail="Некорректный статус заявки")
 
-                if current_user["role"] not in ["ADMIN", "MANAGER"]:
+                if current_user["role"] not in [ADMIN, ROP]:
                     allowed = ALLOWED_TRANSITIONS.get(req["status"], [])
 
                     if data.status not in allowed:
@@ -903,16 +1086,18 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
 @router.delete("/{request_id}")
 def delete_request(request_id: int, current_user: dict = Depends(get_current_user)):
-    """Soft delete заявки. Только ADMIN."""
-    if current_user["role"] != "ADMIN":
-        raise HTTPException(status_code=403, detail="Только Админ может удалять заявки")
-
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, status, is_deleted
+                SELECT
+                    id,
+                    status,
+                    created_by,
+                    created_at,
+                    is_deleted
                 FROM requests
                 WHERE id = %s
                 """,
@@ -925,6 +1110,53 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
 
             if request["is_deleted"]:
                 raise HTTPException(status_code=400, detail="Заявка уже удалена")
+
+            can_delete = False
+
+            if can_delete_any_request(current_user):
+                can_delete = True
+
+            elif can_delete_own_request_with_time_limit(current_user):
+                is_creator = (
+                    request.get("created_by") is not None
+                    and int(request["created_by"]) == int(current_user["id"])
+                )
+
+                if not is_creator:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Можно удалить только свою заявку"
+                    )
+
+                if request["status"] != "NEW":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Удалить можно только новую заявку"
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT TIMESTAMPDIFF(SECOND, %s, NOW()) AS age_seconds
+                    """,
+                    (request["created_at"],)
+                )
+                age = cursor.fetchone()
+
+                age_seconds = int(age.get("age_seconds") or 0)
+
+                if age_seconds > REQUEST_DELETE_TIME_LIMIT_SECONDS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Удалить свою заявку можно только в течение 2 минут после создания"
+                    )
+
+                can_delete = True
+
+            if not can_delete:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для удаления заявки"
+                )
 
             cursor.execute(
                 """
@@ -960,6 +1192,7 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
             }
 
     except HTTPException:
+        connection.rollback()
         raise
     except Exception as e:
         connection.rollback()
@@ -969,9 +1202,9 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
 
 @router.patch("/{request_id}/restore")
 def restore_request(request_id: int, current_user: dict = Depends(get_current_user)):
-    """Восстановление заявки из корзины. Только ADMIN."""
-    if current_user["role"] != "ADMIN":
-        raise HTTPException(status_code=403, detail="Только Админ может восстанавливать заявки")
+    """Восстановление заявки из корзины. Только ADMIN или ROP."""
+    if current_user["role"] not in [ADMIN, ROP]:
+        raise HTTPException(status_code=403, detail="Только Админ или РОП может восстанавливать заявки")
 
     connection = get_connection()
     try:
@@ -1036,8 +1269,8 @@ def restore_request(request_id: int, current_user: dict = Depends(get_current_us
 @router.post("/{request_id}/assign")
 def assign_request(request_id: int, data: AssignRequest, current_user: dict = Depends(get_current_user)):
     # Только Админ и Старший монтажник могут назначать/снимать монтажника
-    if current_user["role"] not in ["ADMIN", "SENIOR_TECHNICIAN"]:
-        raise HTTPException(status_code=403, detail="Только Старший монтажник или Админ могут назначать заявки")
+    if current_user["role"] not in [ADMIN, ROP, SENIOR_TECHNICIAN]:
+        raise HTTPException(status_code=403, detail="Только Старший монтажник, РОП или Админ могут назначать заявки")
     
     connection = get_connection()
     try:
@@ -1110,10 +1343,10 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
             )
             tech = cursor.fetchone()
 
-            if not tech or tech["role"] not in ["TECHNICIAN", "SENIOR_TECHNICIAN", "ADMIN", "WAREHOUSE_MANAGER"]:
+            if not tech or tech["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN]:
                 raise HTTPException(
                     status_code=400,
-                    detail="Нельзя назначить на заявку менеджера или бухгалтера"
+                    detail="Назначить можно только монтажника или старшего монтажника"
                 )
 
             # Назначать нового монтажника можно только на NEW
@@ -1219,7 +1452,7 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                         detail="Обычный монтажник может завершить только свою заявку"
                     )
 
-            elif role not in ["ADMIN", "MANAGER", "SENIOR_TECHNICIAN"]:
+            elif role not in [ADMIN, ROP, SENIOR_TECHNICIAN]:
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для завершения заявки"
@@ -1304,6 +1537,9 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     r.paid_at,
                     r.total_price,
                     r.created_by,
+                    c.status AS client_status,
+                    c.responsible_manager_id,
+                    responsible.name AS responsible_manager_name,
 
                     creator.name AS created_by_name,
                     creator.role AS created_by_role,
@@ -1316,6 +1552,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 LEFT JOIN users creator ON r.created_by = creator.id
+                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
                 WHERE r.id = %s AND r.is_deleted = 0
                 """,
                 (request_id,)
@@ -1324,8 +1561,15 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
 
             if not request_data:
                 raise HTTPException(status_code=404, detail="Request not found")
+            
+            if not user_can_access_request(request_data, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра этой заявки"
+                )
 
             request_data = attach_vehicles_to_requests(cursor, [request_data])[0]
+            attach_request_permissions(request_data, current_user)
 
             cursor.execute(
                 """
@@ -1360,7 +1604,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
             )
             history = cursor.fetchall()
 
-            if is_price_restricted_user(current_user):
+            if not can_view_price_fields(current_user):
                 request_data["total_price"] = None
                 request_data["is_paid"] = None
                 request_data["paid_at"] = None
@@ -1409,6 +1653,32 @@ def get_comments(request_id: int, current_user: dict = Depends(get_current_user)
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    r.id,
+                    r.city,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+                    c.responsible_manager_id
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s AND r.is_deleted = 0
+                """,
+                (request_id,)
+            )
+            request = cursor.fetchone()
+
+            if not request:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            if not user_can_access_request(request, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра комментариев этой заявки"
+                )
+            
             sql = """
             SELECT rc.id, u.name AS author, rc.message, rc.created_at
             FROM request_comments rc
@@ -1428,9 +1698,10 @@ def accept_request(
 ):
     """
     Самостоятельное принятие заявки монтажником.
-    TECHNICIAN может принять только свободную заявку своего города.
+    TECHNICIAN может принять только оплаченную свободную заявку своего города.
+    SENIOR_TECHNICIAN может принять свободную заявку без ограничения по городу.
     """
-    if current_user["role"] not in ["TECHNICIAN", "SENIOR_TECHNICIAN"]:
+    if current_user["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN]:
         raise HTTPException(
             status_code=403,
             detail="Самостоятельно принять заявку могут только монтажники"
@@ -1439,7 +1710,6 @@ def accept_request(
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            # Берём актуальный город пользователя из БД
             cursor.execute(
                 """
                 SELECT id, role, city
@@ -1453,16 +1723,15 @@ def accept_request(
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
 
-            if not user["city"]:
+            if current_user["role"] == TECHNICIAN and not user["city"]:
                 raise HTTPException(
                     status_code=400,
                     detail="У пользователя не указан город"
                 )
 
-            # Проверяем заявку
             cursor.execute(
                 """
-                SELECT id, city, status, assigned_to, is_deleted
+                SELECT id, city, status, assigned_to, is_paid, is_deleted
                 FROM requests
                 WHERE id = %s
                 """,
@@ -1479,7 +1748,13 @@ def accept_request(
                     detail="Нельзя принять удалённую заявку"
                 )
 
-            if request["city"] != user["city"]:
+            if current_user["role"] == TECHNICIAN and not request["is_paid"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Обычный монтажник может принять только оплаченную заявку"
+                )
+
+            if current_user["role"] == TECHNICIAN and request["city"] != user["city"]:
                 raise HTTPException(
                     status_code=403,
                     detail="Нельзя принять заявку другого города"
@@ -1497,7 +1772,6 @@ def accept_request(
                     detail="Можно принять только новую заявку"
                 )
 
-            # Назначаем заявку на себя
             cursor.execute(
                 """
                 UPDATE requests
@@ -1516,7 +1790,6 @@ def accept_request(
                     detail="Заявку уже успели принять или изменить"
                 )
 
-            # История
             cursor.execute(
                 """
                 INSERT INTO request_history (
@@ -1536,7 +1809,7 @@ def accept_request(
                     f"assigned_to={current_user['id']}, status=IN_PROGRESS"
                 )
             )
-            
+
             notify_request_self_accepted(
                 cursor=cursor,
                 request_id=request_id,

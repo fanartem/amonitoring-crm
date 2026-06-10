@@ -4,8 +4,26 @@ from app.security import get_current_admin, get_current_user
 
 router = APIRouter(prefix="/admin", tags=["Admin Panel"])
 
+ADMIN_PANEL_ROLES = {"ADMIN", "ROP"}
+
+ALLOWED_ROLES = {
+    "ADMIN",
+    "ROP",
+    "MANAGER",
+    "TECH_SUPPORT",
+    "SENIOR_TECHNICIAN",
+    "TECHNICIAN",
+    "ACCOUNTANT",
+    "WAREHOUSE_MANAGER",
+}
+
+def ensure_admin_panel_access(current_user: dict):
+    if current_user.get("role") not in ADMIN_PANEL_ROLES:
+        raise HTTPException(status_code=403, detail="No permission")
+
 @router.get("/pending-users")
-def get_pending_users(admin: dict = Depends(get_current_admin)):
+def get_pending_users(current_user: dict = Depends(get_current_user)):
+    ensure_admin_panel_access(current_user)
     """Список пользователей, ожидающих подтверждения"""
     connection = get_connection()
     try:
@@ -20,7 +38,8 @@ def get_pending_users(admin: dict = Depends(get_current_admin)):
         connection.close()
 
 @router.post("/approve-user/{user_id}")
-def approve_user(user_id: int, admin: dict = Depends(get_current_admin)):
+def approve_user(user_id: int, current_user: dict = Depends(get_current_user)):
+    ensure_admin_panel_access(current_user)
     """Одобрение пользователя администратором"""
     connection = get_connection()
     try:
@@ -38,7 +57,8 @@ def approve_user(user_id: int, admin: dict = Depends(get_current_admin)):
         connection.close()
 
 @router.delete("/reject-user/{user_id}")
-def reject_user(user_id: int, admin: dict = Depends(get_current_admin)):
+def reject_user(user_id: int, current_user: dict = Depends(get_current_user)):
+    ensure_admin_panel_access(current_user)
     """Отклонение и удаление пользователя администратором"""
     connection = get_connection()
     try:
@@ -56,8 +76,9 @@ def reject_user(user_id: int, admin: dict = Depends(get_current_admin)):
         connection.close()
 
 @router.delete("/users/{user_id}")
-def delete_user(user_id: int, current_user: dict = Depends(get_current_admin)):
-    """Удаление пользователя (только ADMIN)"""
+def delete_user(user_id: int, current_user: dict = Depends(get_current_user)):
+    """Удаление пользователя (ADMIN / ROP)"""
+    ensure_admin_panel_access(current_user)
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -107,14 +128,14 @@ def update_user(
                 if key not in allowed_fields:
                     raise HTTPException(status_code=400, detail=f"Invalid field: {key}")
 
-            is_admin = current_user["role"] == "ADMIN"
+            is_admin_panel_user = current_user["role"] in ADMIN_PANEL_ROLES
             is_self = current_user["id"] == user_id
 
-            if not (is_admin or is_self):
+            if not (is_admin_panel_user or is_self):
                 raise HTTPException(status_code=403, detail="No permission")
 
             # Обычный пользователь может менять только свои разрешённые поля
-            if not is_admin:
+            if not is_admin_panel_user:
                 forbidden_self_fields = {"email", "name", "role", "city"}
                 requested_forbidden_fields = forbidden_self_fields.intersection(data.keys())
 
@@ -125,7 +146,7 @@ def update_user(
                     )
 
             # Защита Main Admin от изменения не-админом
-            if user["email"] == "admin@amonitoring.kz" and not is_admin:
+            if user["email"] == "admin@amonitoring.kz" and current_user["email"] != "admin@amonitoring.kz":
                 raise HTTPException(
                     status_code=403,
                     detail="Нельзя изменять главного администратора"
@@ -134,6 +155,16 @@ def update_user(
             # динамическое обновление
             updates = []
             values = []
+
+            if "role" in data:
+                if data["role"] not in ALLOWED_ROLES:
+                    raise HTTPException(status_code=400, detail="Invalid role")
+
+                if data["role"] == "TECHNICIAN" and not data.get("city"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Для монтажника необходимо указать город"
+                    )
 
             if "email" in data:
                 updates.append("email = %s")
@@ -152,7 +183,7 @@ def update_user(
                 updates.append("hashed_password = %s")
                 values.append(hash_password(data["password"]))
 
-            if is_admin and "role" in data:
+            if is_admin_panel_user and "role" in data:
                 updates.append("role = %s")
                 values.append(data["role"])
 

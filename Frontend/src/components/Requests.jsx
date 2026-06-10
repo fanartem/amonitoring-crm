@@ -72,6 +72,9 @@ export default function Requests() {
 		date_to: '',
 	})
 
+	const [requestSuccessNotice, setRequestSuccessNotice] = useState('')
+	const [isRequestSuccessNoticeLeaving, setIsRequestSuccessNoticeLeaving] = useState(false)
+
 	const userRole = getUserRole()
 	const currentUserId = getCurrentUserId()
 	const location = useLocation()
@@ -81,9 +84,22 @@ export default function Requests() {
 
 	useEffect(() => {
 		fetchRequests()
-		fetchTechnicians()
 		fetchCities()
+
+		if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
+			fetchTechnicians()
+		}
 	}, [])
+
+	const canCreateRequest = ['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'].includes(
+		userRole,
+	)
+
+	const canViewEquipmentButton = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(
+		userRole,
+	)
+
+	const canPayRequests = ['ADMIN', 'ROP', 'ACCOUNTANT'].includes(userRole)
 
 	useEffect(() => {
 		const openRequestId = location.state?.openRequestId
@@ -277,7 +293,9 @@ export default function Requests() {
 
 	const roleLabels = {
 		ADMIN: 'Админ',
+		ROP: 'РОП',
 		MANAGER: 'Менеджер',
+		TECH_SUPPORT: 'Тех. поддержка',
 		SENIOR_TECHNICIAN: 'Старший',
 		TECHNICIAN: 'Монтажник',
 		ACCOUNTANT: 'Бухгалтер',
@@ -286,7 +304,9 @@ export default function Requests() {
 
 	const roleClasses = {
 		ADMIN: 'role-admin',
+		ROP: 'role-rop',
 		MANAGER: 'role-manager',
+		TECH_SUPPORT: 'role-support',
 		SENIOR_TECHNICIAN: 'role-senior',
 		TECHNICIAN: 'role-tech',
 		ACCOUNTANT: 'role-accountant',
@@ -396,7 +416,7 @@ export default function Requests() {
 		if (req.status !== 'IN_PROGRESS') return false
 		if (!req.assigned_to) return false
 
-		if (userRole === 'SENIOR_TECHNICIAN') {
+		if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
 			return true
 		}
 
@@ -457,8 +477,8 @@ export default function Requests() {
 				alert('Заявка удалена!')
 				fetchRequests()
 			} else {
-				const errData = await res.text()
-				throw new Error(errData || 'Ошибка при удалении заявки')
+				const errData = await res.json().catch(() => null)
+				throw new Error(errData?.detail || 'Ошибка при удалении заявки')
 			}
 		} catch (err) {
 			alert(err.message)
@@ -509,11 +529,19 @@ export default function Requests() {
 				['Клиент', getClientDisplayName(req)],
 				['Компания', req.company_name || '—'],
 				['Телефон', req.phone || '—'],
-				['Статус оплаты', Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'],
-				['Стоимость заявки', formatMoney(req.total_price)],
 				[],
 				['Автомобили в заявке', ''],
 			]
+
+			if (canViewRequestPrice) {
+				rows.push(
+					[
+						'Статус оплаты',
+						Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты',
+					],
+					['Стоимость заявки', formatMoney(req.total_price)],
+				)
+			}
 
 			if (vehicles.length === 0) {
 				rows.push(['Авто', 'Не указаны'])
@@ -555,6 +583,20 @@ export default function Requests() {
 		setSelectedRequestId(null)
 		setEditRequestData(reqData)
 		setCreateModalOpen(true)
+	}
+
+	const showRequestSuccessNotice = message => {
+		setRequestSuccessNotice(message)
+		setIsRequestSuccessNoticeLeaving(false)
+
+		setTimeout(() => {
+			setIsRequestSuccessNoticeLeaving(true)
+		}, 6500)
+
+		setTimeout(() => {
+			setRequestSuccessNotice('')
+			setIsRequestSuccessNoticeLeaving(false)
+		}, 7000)
 	}
 
 	return (
@@ -653,6 +695,17 @@ export default function Requests() {
 					Сбросить
 				</button>
 			</div>
+
+			{requestSuccessNotice && (
+				<div
+					className={`request-success-notice ${
+						isRequestSuccessNoticeLeaving ? 'leaving' : ''
+					}`}
+				>
+					{requestSuccessNotice}
+				</div>
+			)}
+
 			<div className='requests-list'>
 				{filteredRequests.map(req => (
 					<div
@@ -694,6 +747,18 @@ export default function Requests() {
 								>
 									{getWorkTypeLabel(req.work_type)}
 								</span>
+
+								{req.client_status && req.client_status !== 'ACTIVE' && (
+									<span
+										className={`client-status-mini client-status-${req.client_status.toLowerCase()}`}
+									>
+										{req.client_status === 'DEBTOR'
+											? 'Должник'
+											: req.client_status === 'BLOCKED'
+												? 'Заблокирован'
+												: req.client_status}
+									</span>
+								)}
 							</div>
 
 							<div className='card-item'>
@@ -722,6 +787,15 @@ export default function Requests() {
 									</span>
 								</div>
 							</div>
+
+							{req.responsible_manager_name && (
+								<div className='card-item request-creator-card-item'>
+									<span className='card-label'>Ответственный за клиента </span>
+									<span className='request-creator-name'>
+										{req.responsible_manager_name}
+									</span>
+								</div>
+							)}
 
 							{req.assigned_to && (
 								<div className='card-item' style={{ marginTop: '5px' }}>
@@ -908,7 +982,7 @@ export default function Requests() {
 										</svg>{' '}
 										Открыть
 									</div>
-									{userRole !== 'TECHNICIAN' && (
+									{Boolean(req.can_edit) && (
 										<div
 											className='dropdown-item'
 											onClick={e => handleMenuEdit(e, req)}
@@ -938,7 +1012,8 @@ export default function Requests() {
 										</svg>{' '}
 										История изменений
 									</div>
-									{userRole === 'ADMIN' && (
+									{(Boolean(req.can_delete) ||
+										Boolean(req.can_delete_own_with_time_limit)) && (
 										<>
 											<div className='dropdown-divider'></div>
 											<div
@@ -967,7 +1042,7 @@ export default function Requests() {
 								gap: '10px' /* Ровный отступ между всеми кнопками */,
 							}}
 						>
-							{(userRole === 'WAREHOUSE_MANAGER' || userRole === 'ADMIN') && (
+							{canViewEquipmentButton && (
 								<button
 									className='btn-green'
 									onClick={e => {
@@ -980,7 +1055,7 @@ export default function Requests() {
 								</button>
 							)}
 
-							{userRole === 'ACCOUNTANT' && !req.is_paid && (
+							{canPayRequests && !req.is_paid && (
 								<button
 									className='btn-green'
 									onClick={e => handlePayRequest(e, req.id)}
@@ -1014,7 +1089,7 @@ export default function Requests() {
 				))}
 			</div>
 
-			{(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+			{canCreateRequest && (
 				<div className='create-btn-container'>
 					<button
 						className='btn-create-floating'
@@ -1036,6 +1111,15 @@ export default function Requests() {
 					setCreateModalOpen(false)
 					setEditRequestData(null)
 					fetchRequests()
+
+					if (
+						!editRequestData &&
+						['MANAGER', 'TECH_SUPPORT'].includes(userRole)
+					) {
+						showRequestSuccessNotice(
+							'Заявка создана. У вас есть 2 минуты, чтобы проверить её и при необходимости удалить.',
+						)
+					}
 				}}
 			/>
 			<RequestDetailModal

@@ -178,7 +178,9 @@ export default function Employees() {
 	// Словари для бейджиков
 	const roleLabels = {
 		ADMIN: 'Администратор',
+		ROP: 'РОП',
 		MANAGER: 'Менеджер',
+		TECH_SUPPORT: 'Тех. поддержка',
 		SENIOR_TECHNICIAN: 'Старший монтажник',
 		TECHNICIAN: 'Монтажник',
 		ACCOUNTANT: 'Бухгалтер',
@@ -187,7 +189,9 @@ export default function Employees() {
 
 	const roleClasses = {
 		ADMIN: 'role-admin',
+		ROP: 'role-rop',
 		MANAGER: 'role-manager',
+		TECH_SUPPORT: 'role-support',
 		SENIOR_TECHNICIAN: 'role-senior',
 		TECHNICIAN: 'role-tech',
 		ACCOUNTANT: 'role-accountant',

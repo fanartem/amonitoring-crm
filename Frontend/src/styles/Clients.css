@@ -807,6 +807,119 @@
 	animation: clientSearchHighlight 2.8s ease-out forwards;
 }
 
+.client-card-badges,
+.client-tree-row-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.client-status-badge,
+.client-responsible-badge {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	border-radius: 999px;
+	padding: 4px 9px;
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.client-status-active {
+	background: #ecfdf3;
+	color: #2f7d20;
+}
+
+.client-status-debtor {
+	background: #fff7ed;
+	color: #c2410c;
+}
+
+.client-status-blocked {
+	background: #fee2e2;
+	color: #b91c1c;
+}
+
+.client-responsible-badge {
+	background: #eef2ff;
+	color: #3730a3;
+}
+
+.client-inline-select {
+	min-width: 220px;
+	max-width: 100%;
+	justify-self: end;
+	padding: 7px 10px;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	background: #ffffff;
+	color: #1f2937;
+	font-size: 13px;
+	font-weight: 700;
+	outline: none;
+	cursor: pointer;
+}
+
+.client-inline-select:focus {
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.client-inline-select:disabled {
+	opacity: 0.65;
+	cursor: not-allowed;
+}
+
+.client-status-control {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	justify-self: end;
+	max-width: 100%;
+}
+
+.client-status-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex: 0 0 10px;
+}
+
+.client-status-dot-active {
+	background: #2f7d20;
+}
+
+.client-status-dot-debtor {
+	background: #c2410c;
+}
+
+.client-status-dot-blocked {
+	background: #b91c1c;
+}
+
+.client-status-select {
+	background: #ffffff;
+	color: #1f2937;
+	border-color: #d1d5db;
+}
+
+.client-status-select option {
+	background: #ffffff;
+	color: #1f2937;
+}
+
+.client-group-header .client-card-badges {
+	margin-top: 8px;
+}
+
+.client-group-header .client-status-badge,
+.client-group-header .client-responsible-badge {
+	font-size: 11px;
+	padding: 4px 9px;
+}
+
 @keyframes clientSearchHighlight {
 	0% {
 		background: #fffde7;
@@ -827,6 +940,21 @@
 }
 
 @media (max-width: 640px) {
+  .client-inline-select {
+		width: 100%;
+		min-width: 0;
+		justify-self: stretch;
+	}
+
+  .client-status-control {
+		width: 100%;
+		justify-self: stretch;
+	}
+
+	.client-status-control .client-inline-select {
+		width: 100%;
+	}
+
   .vehicle-card {
     flex-direction: column;
   }

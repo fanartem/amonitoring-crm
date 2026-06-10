@@ -29,6 +29,26 @@ const getErrorMessage = async res => {
 	return text || 'Ошибка сохранения клиента'
 }
 
+const getUserRole = () => {
+	try {
+		const token = localStorage.getItem('access_token')
+		if (!token) return null
+
+		const base64Url = token.split('.')[1]
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+		const jsonPayload = decodeURIComponent(
+			atob(base64)
+				.split('')
+				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+				.join(''),
+		)
+
+		return JSON.parse(jsonPayload).role
+	} catch {
+		return null
+	}
+}
+
 function SearchableSelect({
 	value,
 	options,
@@ -186,6 +206,9 @@ export default function CreateClientModal({
 		phone: '',
 		email: '',
 
+		status: 'ACTIVE',
+		responsible_manager_id: '',
+
 		is_subclient: false,
 		parent_client_id: '',
 		parent_source_name: '',
@@ -194,6 +217,13 @@ export default function CreateClientModal({
 	const [error, setError] = useState('')
 	const [loading, setLoading] = useState(false)
 	const [clientsList, setClientsList] = useState([])
+
+	const [responsibleManagers, setResponsibleManagers] = useState([])
+
+	const userRole = getUserRole()
+
+	const canSetClientStatus = ['ADMIN', 'ROP', 'ACCOUNTANT'].includes(userRole)
+	const canSetResponsibleManager = ['ADMIN', 'ROP'].includes(userRole)
 
 	const fetchClients = async () => {
 		try {
@@ -212,10 +242,32 @@ export default function CreateClientModal({
 		}
 	}
 
+	const fetchResponsibleManagers = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/users/responsible-managers`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось загрузить ответственных')
+			}
+
+			const data = await res.json()
+			setResponsibleManagers(Array.isArray(data) ? data : [])
+		} catch (err) {
+			console.error('Ошибка загрузки ответственных менеджеров:', err)
+		}
+	}
+
 	useEffect(() => {
 		if (!isOpen) return
 
 		fetchClients()
+
+		if (canSetResponsibleManager) {
+			fetchResponsibleManagers()
+		}
 
 		if (isEditMode) {
 			setFormData({
@@ -224,6 +276,9 @@ export default function CreateClientModal({
 				company_name: editClient.company_name || '',
 				phone: editClient.phone || '',
 				email: editClient.email || '',
+
+				status: editClient.status || 'ACTIVE',
+				responsible_manager_id: editClient.responsible_manager_id || '',
 
 				is_subclient: Boolean(editClient.source_parent_client_name),
 				parent_client_id: '',
@@ -236,11 +291,18 @@ export default function CreateClientModal({
 				company_name: '',
 				phone: '',
 				email: '',
+
+				status: 'ACTIVE',
+				responsible_manager_id: '',
+
+				is_subclient: false,
+				parent_client_id: '',
+				parent_source_name: '',
 			})
 		}
 
 		setError('')
-	}, [isOpen, editClient, isEditMode])
+	}, [isOpen, editClient, isEditMode, canSetResponsibleManager])
 
 	if (!isOpen) return null
 
@@ -292,6 +354,22 @@ export default function CreateClientModal({
 		)
 	}
 
+	const getClientStatusLabel = status => {
+		if (status === 'ACTIVE') return 'Активный'
+		if (status === 'DEBTOR') return 'Должник'
+		if (status === 'BLOCKED') return 'Заблокирован'
+
+		return status || 'Активный'
+	}
+
+	const getResponsibleRoleLabel = role => {
+		if (role === 'MANAGER') return 'Менеджер'
+		if (role === 'ROP') return 'РОП'
+		if (role === 'ADMIN') return 'Админ'
+
+		return role || ''
+	}
+
 	const handleParentClientSelect = parentClient => {
 		setFormData(prev => ({
 			...prev,
@@ -307,6 +385,13 @@ export default function CreateClientModal({
 			company_name: '',
 			phone: '',
 			email: '',
+
+			status: 'ACTIVE',
+			responsible_manager_id: '',
+
+			is_subclient: false,
+			parent_client_id: '',
+			parent_source_name: '',
 		})
 		setError('')
 	}
@@ -360,6 +445,12 @@ export default function CreateClientModal({
 						: formData.company_name.trim() || null,
 				phone: formData.phone.trim(),
 				email: formData.email.trim() || null,
+
+				status: canSetClientStatus ? formData.status : undefined,
+				responsible_manager_id:
+					canSetResponsibleManager && formData.responsible_manager_id
+						? Number(formData.responsible_manager_id)
+						: undefined,
 
 				source_system: formData.is_subclient ? 'CRM' : null,
 				source_client_name: sourceClientName,
@@ -549,6 +640,70 @@ export default function CreateClientModal({
 								</label>
 							</div>
 						</div>
+						{(canSetClientStatus || canSetResponsibleManager) && (
+							<div className='create-client-card'>
+								<div className='create-client-section-title'>
+									Статус и ответственный
+								</div>
+
+								<div className='create-client-grid'>
+									{canSetClientStatus && (
+										<label className='create-client-field'>
+											<span className='create-client-label'>
+												Статус клиента
+											</span>
+
+											<select
+												name='status'
+												value={formData.status}
+												onChange={handleChange}
+												className='create-client-input'
+											>
+												<option value='ACTIVE'>
+													{getClientStatusLabel('ACTIVE')}
+												</option>
+												<option value='DEBTOR'>
+													{getClientStatusLabel('DEBTOR')}
+												</option>
+												<option value='BLOCKED'>
+													{getClientStatusLabel('BLOCKED')}
+												</option>
+											</select>
+										</label>
+									)}
+
+									{canSetResponsibleManager && (
+										<label className='create-client-field'>
+											<span className='create-client-label'>
+												Ответственный менеджер
+											</span>
+
+											<select
+												name='responsible_manager_id'
+												value={formData.responsible_manager_id}
+												onChange={handleChange}
+												className='create-client-input'
+											>
+												<option value=''>Не назначен</option>
+
+												{responsibleManagers.map(user => (
+													<option key={user.id} value={user.id}>
+														{user.name} · {getResponsibleRoleLabel(user.role)}
+													</option>
+												))}
+											</select>
+										</label>
+									)}
+								</div>
+
+								{formData.is_subclient && canSetResponsibleManager && (
+									<div className='create-client-note'>
+										Если выбран родительский клиент, ответственный обычно должен
+										совпадать с ответственным родителя.
+									</div>
+								)}
+							</div>
+						)}
 					</form>
 				</div>
 

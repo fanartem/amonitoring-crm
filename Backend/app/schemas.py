@@ -47,6 +47,9 @@ class ClientCreate(BaseModel):
     phone: str
     email: str | None = None
 
+    status: str | None = None
+    responsible_manager_id: int | None = None
+
     source_system: str | None = None
     source_client_name: str | None = None
     source_parent_client_name: str | None = None
@@ -59,10 +62,20 @@ class ClientUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
 
+    status: Optional[str] = None
+    responsible_manager_id: Optional[int] = None
+
     source_system: Optional[str] = None
     source_client_name: Optional[str] = None
     source_parent_client_name: Optional[str] = None
     source_inn: Optional[str] = None
+
+class ClientStatusUpdate(BaseModel):
+    status: str
+
+class ClientResponsibleUpdate(BaseModel):
+    responsible_manager_id: int | None = None
+    apply_to_subclients: bool = True
 
 class VehicleCreate(BaseModel):
     client_id: int

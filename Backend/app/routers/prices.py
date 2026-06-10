@@ -7,28 +7,58 @@ from app.schemas import (
     ClientPriceOverrideUpdate,
     CalculateRequestPrice,
 )
+from app.permissions import (
+    ADMIN,
+    ROP,
+    MANAGER,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+    can_view_prices,
+    can_manage_base_prices,
+    can_manage_any_client_prices,
+    can_manage_own_client_prices,
+    is_client_owned_by_user,
+)
 
 router = APIRouter(prefix="/prices", tags=["Prices"])
 
-
-PRICE_READ_ROLES = ["ADMIN", "MANAGER", "ACCOUNTANT"]
-PRICE_MANAGE_ROLES = ["ADMIN", "MANAGER"]
-
-
 def require_price_read(current_user: dict):
-    if current_user["role"] not in PRICE_READ_ROLES:
+    if not can_view_prices(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра цен"
         )
 
 
-def require_price_manage(current_user: dict):
-    if current_user["role"] not in PRICE_MANAGE_ROLES:
+def require_base_price_manage(current_user: dict):
+    if not can_manage_base_prices(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Недостаточно прав для управления ценами"
+            detail="Недостаточно прав для управления базовыми ценами"
         )
+
+
+def can_access_client_prices(client: dict, current_user: dict) -> bool:
+    if can_manage_any_client_prices(current_user):
+        return True
+
+    if current_user["role"] in [TECH_SUPPORT, ACCOUNTANT]:
+        return True
+
+    if can_manage_own_client_prices(current_user):
+        return is_client_owned_by_user(client, current_user)
+
+    return False
+
+
+def can_update_client_prices(client: dict, current_user: dict) -> bool:
+    if can_manage_any_client_prices(current_user):
+        return True
+
+    if can_manage_own_client_prices(current_user):
+        return is_client_owned_by_user(client, current_user)
+
+    return False
 
 def money(value) -> float:
     if value is None:
@@ -197,7 +227,7 @@ def create_price_item(
     Создать новую базовую цену.
     Доступ: ADMIN, MANAGER.
     """
-    require_price_manage(current_user)
+    require_base_price_manage(current_user)
 
     code = data.code.strip().upper()
     name = data.name.strip()
@@ -283,7 +313,7 @@ def update_price_item(
     Редактировать базовую цену.
     Доступ: ADMIN, MANAGER.
     """
-    require_price_manage(current_user)
+    require_base_price_manage(current_user)
 
     update_data = data.dict(exclude_unset=True)
 
@@ -421,7 +451,7 @@ def deactivate_price_item(
     Физически не удаляем, чтобы не ломать будущие расчёты и историю.
     Доступ: ADMIN, MANAGER.
     """
-    require_price_manage(current_user)
+    require_base_price_manage(current_user)
 
     connection = get_connection()
 
@@ -478,7 +508,7 @@ def restore_price_item(
     Включить ранее отключённую базовую цену.
     Доступ: ADMIN, MANAGER.
     """
-    require_price_manage(current_user)
+    require_base_price_manage(current_user)
 
     connection = get_connection()
 
@@ -544,7 +574,11 @@ def get_client_prices(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, is_deleted
+                SELECT
+                    id,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -559,6 +593,12 @@ def get_client_prices(
                 raise HTTPException(
                     status_code=400,
                     detail="Клиент находится в корзине"
+                )
+            
+            if not can_access_client_prices(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра индивидуальных цен этого клиента"
                 )
 
             cursor.execute(
@@ -610,7 +650,7 @@ def update_client_prices(
     Если нет — создаст.
     Доступ: ADMIN, MANAGER.
     """
-    require_price_manage(current_user)
+    require_base_price_manage(current_user)
 
     connection = get_connection()
 
@@ -618,7 +658,11 @@ def update_client_prices(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, is_deleted
+                SELECT
+                    id,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -633,6 +677,12 @@ def update_client_prices(
                 raise HTTPException(
                     status_code=400,
                     detail="Нельзя менять цены клиента из корзины"
+                )
+            
+            if not can_update_client_prices(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для изменения индивидуальных цен этого клиента"
                 )
 
             for item in data.prices:
@@ -705,12 +755,41 @@ def delete_client_price_override(
     После удаления будет использоваться базовая цена.
     Доступ: ADMIN, MANAGER.
     """
-    require_price_manage(current_user)
+    require_base_price_manage(current_user)
 
     connection = get_connection()
 
     try:
         with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
+                FROM clients
+                WHERE id = %s
+                """,
+                (client_id,)
+            )
+            client = cursor.fetchone()
+
+            if not client:
+                raise HTTPException(status_code=404, detail="Клиент не найден")
+
+            if client["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Клиент находится в корзине"
+                )
+
+            if not can_update_client_prices(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для сброса индивидуальной цены этого клиента"
+                )
+
             cursor.execute(
                 """
                 DELETE FROM client_price_overrides
@@ -768,7 +847,11 @@ def calculate_request_price(
             if data.client_id:
                 cursor.execute(
                     """
-                    SELECT id, is_deleted
+                    SELECT
+                        id,
+                        created_by,
+                        responsible_manager_id,
+                        is_deleted
                     FROM clients
                     WHERE id = %s
                     """,
@@ -783,6 +866,12 @@ def calculate_request_price(
                     raise HTTPException(
                         status_code=400,
                         detail="Клиент находится в корзине"
+                    )
+                
+                if not can_access_client_prices(client, current_user):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для расчёта цен этого клиента"
                     )
 
             # Транспортные расходы

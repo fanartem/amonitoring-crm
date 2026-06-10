@@ -79,8 +79,8 @@ export default function Entrance() {
 			return
 		}
 
-		if (['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(role) && !city) {
-			setError('Для монтажников необходимо обязательно указать город!')
+		if (role === 'TECHNICIAN' && !city) {
+			setError('Для обычного монтажника необходимо обязательно указать город!')
 			return
 		}
 
@@ -88,7 +88,6 @@ export default function Entrance() {
 			const response = await fetch(`${API_BASE_URL}/auth/register`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				// НОВОЕ: Отправляем город на бэкенд
 				body: JSON.stringify({
 					name,
 					email,
@@ -282,7 +281,7 @@ export default function Entrance() {
 					<div className='login-field'>
 						<label className='login-label'>
 							Город{' '}
-							{['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(role) && (
+							{role === 'TECHNICIAN' && (
 								<span style={{ color: '#e53e3e' }}>*</span>
 							)}
 						</label>
@@ -310,10 +309,19 @@ export default function Entrance() {
 							className='login-input'
 							style={{ cursor: 'pointer' }}
 							value={role}
-							onChange={e => setRole(e.target.value)}
+							onChange={e => {
+								const nextRole = e.target.value
+								setRole(nextRole)
+
+								if (nextRole !== 'TECHNICIAN') {
+									setCity('')
+								}
+							}}
 						>
 							<option value=''>— выберите роль —</option>
 							<option value='MANAGER'>Менеджер</option>
+							<option value='ROP'>РОП</option>
+							<option value='TECH_SUPPORT'>Тех. поддержка</option>
 							<option value='ACCOUNTANT'>Бухгалтер</option>
 							<option value='SENIOR_TECHNICIAN'>Старший монтажник</option>
 							<option value='TECHNICIAN'>Монтажник</option>

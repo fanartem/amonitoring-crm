@@ -58,12 +58,39 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 	const [editingId, setEditingId] = useState(null)
 	const [editingName, setEditingName] = useState('')
 
+	const [successNotice, setSuccessNotice] = useState('')
+	const [isSuccessNoticeLeaving, setIsSuccessNoticeLeaving] = useState(false)
+
 	const normalizedEntityType = String(entityType || '').toUpperCase()
 
 	const userRole = getUserRole()
 
-	const isAttachmentRestrictedUser =
-		userRole === 'TECHNICIAN' || userRole === 'SENIOR_TECHNICIAN'
+	const isTechnician = userRole === 'TECHNICIAN'
+	const isSeniorTechnician = userRole === 'SENIOR_TECHNICIAN'
+
+	const getAttachmentsDescription = () => {
+		if (isTechnician) {
+			return 'Вы видите только файлы, загруженные вами.'
+		}
+
+		if (isSeniorTechnician) {
+			return 'Вы видите файлы, загруженные монтажниками и старшими монтажниками.'
+		}
+
+		return 'Документы, фото, чеки и другие файлы по этому объекту.'
+	}
+
+	const getEmptyText = () => {
+		if (isTechnician) {
+			return 'У вас пока нет загруженных файлов по этому объекту.'
+		}
+
+		if (isSeniorTechnician) {
+			return 'Пока нет файлов, загруженных монтажниками или старшими монтажниками.'
+		}
+
+		return 'Файлы пока не прикреплены'
+	}
 
 	useEffect(() => {
 		if (!normalizedEntityType || !entityId) return
@@ -124,6 +151,16 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 				throw new Error(data?.detail || 'Не удалось загрузить файл')
 			}
 
+			if (
+				['MANAGER', 'TECH_SUPPORT', 'SENIOR_TECHNICIAN', 'TECHNICIAN'].includes(
+					userRole,
+				)
+			) {
+				showSuccessNotice(
+					'Файл загружен. У вас есть 2 минуты, чтобы проверить файл. Потом нельзя будет удалить.',
+				)
+			}
+
 			await fetchAttachments()
 		} catch (err) {
 			setError(err.message)
@@ -131,6 +168,20 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 			setUploading(false)
 			e.target.value = ''
 		}
+	}
+
+	const showSuccessNotice = message => {
+		setSuccessNotice(message)
+		setIsSuccessNoticeLeaving(false)
+
+		setTimeout(() => {
+			setIsSuccessNoticeLeaving(true)
+		}, 6500)
+
+		setTimeout(() => {
+			setSuccessNotice('')
+			setIsSuccessNoticeLeaving(false)
+		}, 7000)
 	}
 
 	const startEdit = attachment => {
@@ -247,11 +298,7 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 			<div className='attachments-panel-header'>
 				<div>
 					<h3>Прикрепленные файлы</h3>
-					<p>
-						{isAttachmentRestrictedUser
-							? 'Вы видите только файлы, загруженные вами.'
-							: 'Документы, фото, чеки и другие файлы по этому объекту.'}
-					</p>
+					<p>{getAttachmentsDescription()}</p>
 				</div>
 
 				<div>
@@ -276,14 +323,20 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 			{error && <div className='attachments-error'>{error}</div>}
 
+			{successNotice && (
+				<div
+					className={`attachments-success-notice ${
+						isSuccessNoticeLeaving ? 'leaving' : ''
+					}`}
+				>
+					{successNotice}
+				</div>
+			)}
+
 			{loading ? (
 				<div className='attachments-empty'>Загрузка файлов...</div>
 			) : attachments.length === 0 ? (
-				<div className='attachments-empty'>
-					{isAttachmentRestrictedUser
-						? 'У вас пока нет загруженных файлов по этому объекту.'
-						: 'Файлы пока не прикреплены'}
-				</div>
+				<div className='attachments-empty'>{getEmptyText()}</div>
 			) : (
 				<div className='attachments-list'>
 					{attachments.map(file => (

@@ -6,9 +6,14 @@ export default function Sidebar() {
 
 	const userDataStr = localStorage.getItem('user_data')
 	const user = userDataStr ? JSON.parse(userDataStr) : null
-	const isAdmin = user?.role?.toUpperCase() === 'ADMIN'
-	const isManager = user?.role?.toUpperCase() === 'MANAGER'
-	const isWarehouseManager = user?.role?.toUpperCase() === 'WAREHOUSE_MANAGER'
+	const userRole = user?.role?.toUpperCase()
+
+	const isAdmin = userRole === 'ADMIN'
+	const isRop = userRole === 'ROP'
+	const isManager = userRole === 'MANAGER'
+	const isTechSupport = userRole === 'TECH_SUPPORT'
+	const isTechnician = userRole === 'TECHNICIAN'
+	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
 
 	const handleLogout = () => {
 		localStorage.removeItem('access_token')
@@ -16,13 +21,24 @@ export default function Sidebar() {
 		window.location.href = '/requests'
 	}
 
-	const canViewPrices = ['ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(
-		user?.role?.toUpperCase(),
-	)
+	const canViewClients = !['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(userRole)
+
+	const canViewPrices = [
+		'ADMIN',
+		'ROP',
+		'MANAGER',
+		'TECH_SUPPORT',
+		'ACCOUNTANT',
+	].includes(userRole)
+
+	const canViewEmployees = ['ADMIN', 'ROP'].includes(userRole)
+	const canViewApprovals = ['ADMIN', 'ROP'].includes(userRole)
+	const canViewWarehouse = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
+	const canViewTrash = ['ADMIN', 'ROP'].includes(userRole)
 
 	// Закрытие сайдбара при клике вне его (для мобилок)
 	useEffect(() => {
-		const handleOutsideClick = (e) => {
+		const handleOutsideClick = e => {
 			if (window.innerWidth <= 768 && !e.target.closest('.sidebar')) {
 				setIsOpen(false)
 			}
@@ -31,7 +47,7 @@ export default function Sidebar() {
 		return () => document.removeEventListener('click', handleOutsideClick)
 	}, [])
 
-	const toggleSidebar = (e) => {
+	const toggleSidebar = e => {
 		e.stopPropagation()
 		setIsOpen(!isOpen)
 	}
@@ -47,7 +63,7 @@ export default function Sidebar() {
 		<nav className={`sidebar ${isOpen ? 'active' : ''}`}>
 			{/* Кнопка Бургера для мобильных устройств */}
 			<button className='menu-btn' onClick={toggleSidebar}>
-				<i>&#9776;</i> <span className='link-text'>Меню</span> 
+				<i>&#9776;</i> <span className='link-text'>Меню</span>
 			</button>
 
 			<div className='sidebar-top'>
@@ -60,14 +76,16 @@ export default function Sidebar() {
 					<span className='link-text'>Заявки</span>
 				</NavLink>
 
-				<NavLink
-					to='/clients'
-					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-					onClick={handleMenuClick}
-				>
-					<i className='fa-solid fa-users'></i>
-					<span className='link-text'>Клиенты</span>
-				</NavLink>
+				{canViewClients && (
+					<NavLink
+						to='/clients'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
+					>
+						<i className='fa-solid fa-users'></i>
+						<span className='link-text'>Клиенты</span>
+					</NavLink>
+				)}
 
 				{canViewPrices && (
 					<NavLink
@@ -80,16 +98,18 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				<NavLink
-					to='/employees'
-					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-					onClick={handleMenuClick}
-				>
-					<i className='fa-solid fa-user-tie'></i>
-					<span className='link-text'>Сотрудники</span>
-				</NavLink>
+				{canViewEmployees && (
+					<NavLink
+						to='/employees'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
+					>
+						<i className='fa-solid fa-user-tie'></i>
+						<span className='link-text'>Сотрудники</span>
+					</NavLink>
+				)}
 
-				{isAdmin && (
+				{canViewApprovals && (
 					<NavLink
 						to='/approvals'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -100,7 +120,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{(isWarehouseManager || isAdmin) && (
+				{canViewWarehouse && (
 					<NavLink
 						to='/warehouse'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -111,7 +131,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{isAdmin && (
+				{canViewTrash && (
 					<NavLink
 						to='/trash'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -133,7 +153,11 @@ export default function Sidebar() {
 					<span className='link-text'>Настройки</span>
 				</NavLink>
 
-				<div className='nav-item' onClick={handleLogout} style={{ cursor: 'pointer' }}>
+				<div
+					className='nav-item'
+					onClick={handleLogout}
+					style={{ cursor: 'pointer' }}
+				>
 					<i className='fa-solid fa-right-from-bracket'></i>
 					<span className='link-text'>Выход</span>
 				</div>

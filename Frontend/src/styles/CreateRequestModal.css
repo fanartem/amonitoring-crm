@@ -815,6 +815,37 @@
 	background: #ffffff;
 }
 
+.request-client-status-warning {
+	margin-top: 10px;
+  margin-bottom: 10px;
+	padding: 11px 13px;
+	border-radius: 12px;
+	border: 1px solid transparent;
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.request-client-status-warning-title {
+	font-weight: 800;
+	margin-bottom: 3px;
+}
+
+.request-client-status-warning-text {
+	font-weight: 500;
+}
+
+.request-client-status-warning.debtor {
+	background: #fff7ed;
+	border-color: #fed7aa;
+	color: #c2410c;
+}
+
+.request-client-status-warning.blocked {
+	background: #fee2e2;
+	border-color: #fecaca;
+	color: #b91c1c;
+}
+
 @media (max-width: 1150px) {
   .request-modal-main-layout {
     grid-template-columns: 1fr;

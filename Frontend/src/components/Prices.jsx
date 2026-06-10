@@ -71,8 +71,17 @@ export default function Prices() {
 	const [clientPriceValue, setClientPriceValue] = useState('')
 
 	const userRole = getUserRole()
-	const canReadPrices = ['ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(userRole)
-	const canManagePrices = ['ADMIN', 'MANAGER'].includes(userRole)
+
+	const canReadPrices = [
+		'ADMIN',
+		'ROP',
+		'MANAGER',
+		'TECH_SUPPORT',
+		'ACCOUNTANT',
+	].includes(userRole)
+
+	const canManageBasePrices = ['ADMIN', 'ROP'].includes(userRole)
+	const canManageClientPrices = ['ADMIN', 'ROP', 'MANAGER'].includes(userRole)
 
 	useEffect(() => {
 		if (!canReadPrices) return
@@ -144,6 +153,7 @@ export default function Prices() {
 			const data = await res.json()
 			setClientPrices(Array.isArray(data) ? data : [])
 		} catch (err) {
+			setClientPrices([])
 			setError(err.message)
 		} finally {
 			setClientPricesLoading(false)
@@ -265,7 +275,7 @@ export default function Prices() {
 	}
 
 	const handleToggleBasePrice = async price => {
-		if (!canManagePrices) return
+		if (!canManageBasePrices) return
 
 		const isActive = Boolean(price.is_active)
 		const confirmText = isActive
@@ -410,6 +420,11 @@ export default function Prices() {
 		)
 	}
 
+	const visibleClientsForPrices =
+		userRole === 'MANAGER'
+			? clients.filter(client => client.can_edit || client.can_create_request)
+			: clients
+
 	return (
 		<div className='prices-page'>
 			<div className='prices-header'>
@@ -418,7 +433,7 @@ export default function Prices() {
 					<p>Справочник базовых и индивидуальных цен клиентов.</p>
 				</div>
 
-				{canManagePrices && (
+				{canManageBasePrices && (
 					<button className='prices-primary-btn' onClick={openCreateModal}>
 						+ Добавить цену
 					</button>
@@ -489,7 +504,7 @@ export default function Prices() {
 														</td>
 														<td>
 															<div className='prices-actions'>
-																{canManagePrices ? (
+																{canManageBasePrices ? (
 																	<>
 																		<button
 																			className='prices-edit-btn'
@@ -551,7 +566,7 @@ export default function Prices() {
 						>
 							<option value=''>— выберите клиента —</option>
 
-							{clients.map(client => (
+							{visibleClientsForPrices.map(client => (
 								<option key={client.id} value={client.id}>
 									{getClientDisplayName(client)}
 								</option>
@@ -618,7 +633,7 @@ export default function Prices() {
 
 											<td>
 												<div className='prices-actions'>
-													{canManagePrices ? (
+													{canManageClientPrices ? (
 														editingClientPriceId === item.price_item_id ? (
 															<>
 																<button

@@ -35,17 +35,19 @@ export default function Settings() {
 
 	const userRole = getUserRole()
 	const isAdmin = userRole === 'ADMIN'
+	const isRop = userRole === 'ROP'
 	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
 
 	const canViewWarehouseNotifications = isAdmin || isWarehouseManager
+	const canManageCities = isAdmin || isRop
 
 	useEffect(() => {
 		fetchNotificationSettings()
 
-		if (isAdmin) {
+		if (canManageCities) {
 			fetchCities()
 		}
-	}, [isAdmin])
+	}, [canManageCities])
 
 	const fetchNotificationSettings = async () => {
 		setNotificationLoading(true)
@@ -325,7 +327,7 @@ export default function Settings() {
 				)}
 			</div>
 
-			{isAdmin && (
+			{canManageCities && (
 				<div className='settings-card'>
 					<div className='settings-card-header'>
 						<div>
