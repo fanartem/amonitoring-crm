@@ -1478,7 +1478,7 @@ export default function Clients() {
 						<div
 							style={{ padding: '40px', textAlign: 'center', color: '#888' }}
 						>
-							Нет клиентов
+							Загрузка клиентов...
 						</div>
 					) : (
 						<>
@@ -1540,7 +1540,7 @@ export default function Clients() {
 																</>
 															)}
 														</div>
-														
+
 														{group.parent_client &&
 															renderClientBadges(group.parent_client)}
 													</div>
