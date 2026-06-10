@@ -7,10 +7,10 @@ router = APIRouter(prefix="/cities", tags=["Cities"])
 
 
 def require_admin(current_user: dict):
-    if current_user["role"] != "ADMIN":
+    if current_user["role"] not in {"ADMIN", "ROP"}:
         raise HTTPException(
             status_code=403,
-            detail="Только Админ может управлять городами"
+            detail="Только Админ и РОП могут управлять городами"
         )
 
 
