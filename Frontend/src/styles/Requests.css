@@ -1051,4 +1051,17 @@
   .footer-group {
     justify-content: space-between;
   }
+
+  .role-actions-wrapper {
+    position: static !important;
+    width: 100%;
+    flex-wrap: wrap;
+    flex: 1 1 calc(50% - 4px);
+  }
+
+  .btn-complete-request {
+    width: 100%;
+    min-width: 20px;
+    max-width: 120px;
+  }
 }
