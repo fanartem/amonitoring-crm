@@ -70,8 +70,6 @@ def normalize_city(city):
 def hide_request_prices(requests: list[dict]) -> list[dict]:
     for req in requests:
         req["total_price"] = None
-        req["is_paid"] = None
-        req["paid_at"] = None
 
         if "price_lines" in req:
             req["price_lines"] = []
@@ -118,48 +116,50 @@ def attach_requests_permissions(requests: list[dict], current_user: dict) -> lis
     return requests
 
 
-def user_can_access_request(request: dict, current_user: dict) -> bool:
-    role = current_user.get("role")
-    user_id = int(current_user["id"])
+def user_can_access_request(
+    request: dict,
+    current_user: dict,
+    user_city: str | None = None
+) -> bool:
+        role = current_user.get("role")
+        user_id = int(current_user["id"])
 
-    if role in [ADMIN, ROP, ACCOUNTANT]:
-        return True
+        if role in [ADMIN, ROP, ACCOUNTANT]:
+            return True
 
-    if role == SENIOR_TECHNICIAN:
-        return True
+        if role == SENIOR_TECHNICIAN:
+            return True
 
-    if role == TECH_SUPPORT:
-        return (
-            request.get("created_by") is not None
-            and int(request["created_by"]) == user_id
-        )
+        if role == TECH_SUPPORT:
+            return (
+                request.get("created_by") is not None
+                and int(request["created_by"]) == user_id
+            )
 
-    if role == MANAGER:
-        created_by = request.get("created_by")
-        responsible_manager_id = request.get("responsible_manager_id")
+        if role == MANAGER:
+            created_by = request.get("created_by")
+            responsible_manager_id = request.get("responsible_manager_id")
 
-        return (
-            created_by is not None and int(created_by) == user_id
-        ) or (
-            responsible_manager_id is not None
-            and int(responsible_manager_id) == user_id
-        )
+            return (
+                created_by is not None and int(created_by) == user_id
+            ) or (
+                responsible_manager_id is not None
+                and int(responsible_manager_id) == user_id
+            )
 
-    if role == TECHNICIAN:
-        if not request.get("is_paid"):
-            return False
+        if role == TECHNICIAN:
+            if not request.get("is_paid"):
+                return False
 
-        if normalize_city(request.get("city")) != normalize_city(get_current_user_city_value(current_user)):
-            return False
+            technician_city = user_city or current_user.get("city")
 
-        assigned_to = request.get("assigned_to")
-        return assigned_to is None or int(assigned_to) == user_id
+            if normalize_city(request.get("city")) != normalize_city(technician_city):
+                return False
 
-    return False
+            assigned_to = request.get("assigned_to")
+            return assigned_to is None or int(assigned_to) == user_id
 
-
-def get_current_user_city_value(current_user: dict):
-    return current_user.get("city")
+        return False
 
 def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
     """
@@ -791,7 +791,7 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
 
 @router.post("/comments")
 def create_comment(data: CommentCreate, current_user: dict = Depends(get_current_user)):
-    # Если хочешь, чтобы монтажники не могли оставлять комментарии, раскомментируй эту проверку:
+    # чтобы монтажники не могли оставлять комментарии, раскомментируй эту проверку:
     # if current_user["role"] == "TECHNICIAN":
     #     raise HTTPException(status_code=403, detail="Обычный монтажник не может оставлять комментарии")
     
@@ -818,7 +818,12 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
             if not request:
                 raise HTTPException(status_code=404, detail="Заявка не найдена или удалена")
             
-            if not user_can_access_request(request, current_user):
+            user_city = None
+
+            if current_user["role"] == TECHNICIAN:
+                user_city = get_current_user_city(cursor, current_user)
+
+            if not user_can_access_request(request, current_user, user_city):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для комментирования этой заявки"
@@ -1562,7 +1567,12 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
             if not request_data:
                 raise HTTPException(status_code=404, detail="Request not found")
             
-            if not user_can_access_request(request_data, current_user):
+            user_city = None
+
+            if current_user["role"] == TECHNICIAN:
+                user_city = get_current_user_city(cursor, current_user)
+
+            if not user_can_access_request(request_data, current_user, user_city):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для просмотра этой заявки"
@@ -1606,8 +1616,6 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
 
             if not can_view_price_fields(current_user):
                 request_data["total_price"] = None
-                request_data["is_paid"] = None
-                request_data["paid_at"] = None
                 price_lines = []
             else:
                 cursor.execute(
@@ -1673,7 +1681,12 @@ def get_comments(request_id: int, current_user: dict = Depends(get_current_user)
             if not request:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
 
-            if not user_can_access_request(request, current_user):
+            user_city = None
+
+            if current_user["role"] == TECHNICIAN:
+                user_city = get_current_user_city(cursor, current_user)
+
+            if not user_can_access_request(request, current_user, user_city):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для просмотра комментариев этой заявки"
