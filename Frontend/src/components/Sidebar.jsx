@@ -31,7 +31,6 @@ export default function Sidebar() {
 		'ACCOUNTANT',
 	].includes(userRole)
 
-	const canViewEmployees = ['ADMIN', 'ROP'].includes(userRole)
 	const canViewApprovals = ['ADMIN', 'ROP'].includes(userRole)
 	const canViewWarehouse = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
 	const canViewTrash = ['ADMIN', 'ROP'].includes(userRole)
@@ -98,16 +97,14 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewEmployees && (
-					<NavLink
-						to='/employees'
-						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-						onClick={handleMenuClick}
-					>
-						<i className='fa-solid fa-user-tie'></i>
-						<span className='link-text'>Сотрудники</span>
-					</NavLink>
-				)}
+				<NavLink
+					to='/employees'
+					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					onClick={handleMenuClick}
+				>
+					<i className='fa-solid fa-user-tie'></i>
+					<span className='link-text'>Сотрудники</span>
+				</NavLink>
 
 				{canViewApprovals && (
 					<NavLink
