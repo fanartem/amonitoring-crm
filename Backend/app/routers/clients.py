@@ -602,8 +602,8 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
 @router.get("/deleted")
 def get_deleted_clients(current_user: dict = Depends(get_current_user)):
     """Список удалённых клиентов. Только ADMIN."""
-    if current_user["role"] != "ADMIN":
-        raise HTTPException(status_code=403, detail="Только Админ может просматривать корзину клиентов")
+    if current_user["role"] not in ["ADMIN", "ROP"]:
+        raise HTTPException(status_code=403, detail="Только Админ и РОП могут просматривать корзину клиентов")
 
     connection = get_connection()
     try:
