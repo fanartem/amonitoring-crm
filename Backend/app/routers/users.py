@@ -71,6 +71,7 @@ def get_responsible_managers(current_user: dict = Depends(get_current_user)):
                 FROM users
                 WHERE role IN (%s, %s, %s)
                   AND is_approved = 1
+                  AND id > 1
                 ORDER BY
                     FIELD(role, %s, %s, %s),
                     name ASC
