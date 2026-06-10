@@ -131,10 +131,7 @@ def user_can_access_request(
             return True
 
         if role == TECH_SUPPORT:
-            return (
-                request.get("created_by") is not None
-                and int(request["created_by"]) == user_id
-            )
+            return True
 
         if role == MANAGER:
             created_by = request.get("created_by")
@@ -650,8 +647,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 values.extend([current_user["id"], current_user["id"]])
 
             elif role == TECH_SUPPORT:
-                conditions.append("r.created_by = %s")
-                values.append(current_user["id"])
+                pass
 
             elif role == TECHNICIAN:
                 user_city = get_current_user_city(cursor, current_user)
