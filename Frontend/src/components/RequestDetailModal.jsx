@@ -114,10 +114,7 @@ export default function RequestDetailModal({
 			setActiveTab(initialTab)
 			fetchRequestDetails()
 			fetchComments()
-
-			if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
-				fetchTechnicians()
-			}
+			fetchTechnicians()
 		}
 	}, [isOpen, requestId, initialTab, userRole])
 

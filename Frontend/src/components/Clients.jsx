@@ -136,7 +136,6 @@ export default function Clients() {
 	useEffect(() => {
 		fetchClients({ initial: true })
 		fetchClientGroups({ initial: true })
-
 		fetchTechnicians()
 
 		if (['ADMIN', 'ROP'].includes(userRole)) {
