@@ -128,9 +128,14 @@ export default function Clients() {
 	const clientRefs = useRef({})
 	const groupRefs = useRef({})
 
+	const [autoHighlightedClients, setAutoHighlightedClients] = useState({})
+
+	const clientGroupsSnapshotRef = useRef({})
+	const selectedClientRef = useRef(null)
+
 	useEffect(() => {
-		fetchClients()
-		fetchClientGroups()
+		fetchClients({ initial: true })
+		fetchClientGroups({ initial: true })
 
 		fetchTechnicians()
 
@@ -138,6 +143,28 @@ export default function Clients() {
 			fetchResponsibleManagers()
 		}
 	}, [])
+
+	useEffect(() => {
+		const intervalId = setInterval(() => {
+			if (document.hidden) return
+			if (isCreateModalOpen) return
+			if (editingVehicle) return
+			if (clientActionLoading) return
+
+			fetchClients({ silent: true })
+			fetchClientGroups({ silent: true })
+
+			if (selectedClientRef.current) {
+				fetchClientRequests(selectedClientRef.current.id)
+			}
+		}, 20000)
+
+		return () => clearInterval(intervalId)
+	}, [isCreateModalOpen, editingVehicle, clientActionLoading])
+
+	useEffect(() => {
+		selectedClientRef.current = selectedClient
+	}, [selectedClient])
 
 	useEffect(() => {
 		const handleClickOutside = () => setActiveDropdown(null)
@@ -284,9 +311,73 @@ export default function Clients() {
 		}, 2500)
 	}, [clientVehicles, pendingHighlightVehicleId])
 
-	const fetchClients = async () => {
-		setLoading(true)
-		setError('')
+	const flattenClientsFromGroups = groups => {
+		const result = []
+
+		const walkClient = client => {
+			if (!client) return
+
+			result.push(client)
+			;(client.children || []).forEach(child => walkClient(child))
+		}
+
+		;(groups || []).forEach(group => {
+			if (group.parent_client) {
+				result.push(group.parent_client)
+			}
+
+			;(group.clients || []).forEach(client => walkClient(client))
+		})
+
+		return result
+	}
+
+	const buildClientSnapshot = client => {
+		return JSON.stringify({
+			id: client.id,
+			name: client.name,
+			company_name: client.company_name,
+			phone: client.phone,
+			email: client.email,
+			status: client.status,
+			responsible_manager_id: client.responsible_manager_id,
+			responsible_manager_name: client.responsible_manager_name,
+			request_count: client.request_count,
+			vehicle_count: client.vehicle_count,
+			children_count: client.children_count,
+			can_open_details: client.can_open_details,
+			can_edit: client.can_edit,
+			can_change_status: client.can_change_status,
+			can_reassign: client.can_reassign,
+		})
+	}
+
+	const markClientsHighlighted = changes => {
+		if (!changes || Object.keys(changes).length === 0) return
+
+		setAutoHighlightedClients(prev => ({
+			...prev,
+			...changes,
+		}))
+
+		setTimeout(() => {
+			setAutoHighlightedClients(prev => {
+				const next = { ...prev }
+
+				Object.keys(changes).forEach(id => {
+					delete next[id]
+				})
+
+				return next
+			})
+		}, 3500)
+	}
+
+	const fetchClients = async ({ silent = false } = {}) => {
+		if (!silent) {
+			setLoading(true)
+			setError('')
+		}
 
 		try {
 			const response = await fetch(`${API_BASE_URL}/clients`, {
@@ -300,15 +391,26 @@ export default function Clients() {
 			const data = await response.json()
 			setClients(data.filter(c => !c.is_deleted))
 		} catch (err) {
-			setError(err.message)
+			if (!silent) {
+				setError(err.message)
+			}
+
+			console.error('Ошибка загрузки клиентов:', err)
 		} finally {
-			setLoading(false)
+			if (!silent) {
+				setLoading(false)
+			}
 		}
 	}
 
-	const fetchClientGroups = async () => {
-		setLoading(true)
-		setError('')
+	const fetchClientGroups = async ({
+		silent = false,
+		initial = false,
+	} = {}) => {
+		if (!silent) {
+			setLoading(true)
+			setError('')
+		}
 
 		try {
 			const response = await fetch(`${API_BASE_URL}/clients/grouped`, {
@@ -320,28 +422,94 @@ export default function Clients() {
 			}
 
 			const data = await response.json()
-			setClientGroups(Array.isArray(data) ? data : [])
+			const groups = Array.isArray(data) ? data : []
 
-			const initialExpanded = {}
+			if (silent) {
+				const previousSnapshot = clientGroupsSnapshotRef.current || {}
+				const hasPreviousSnapshot = Object.keys(previousSnapshot).length > 0
 
-			;(Array.isArray(data) ? data : []).forEach(group => {
-				// Обычных клиентов сразу раскрываем, импортные группы — свернуты
-				if (group.group_name === 'Обычные клиенты CRM') {
-					initialExpanded[group.group_name] = true
+				const nextSnapshot = {}
+				const changes = {}
+
+				flattenClientsFromGroups(groups).forEach(client => {
+					const clientId = String(client.id)
+					const snapshot = buildClientSnapshot(client)
+
+					nextSnapshot[clientId] = snapshot
+
+					if (hasPreviousSnapshot) {
+						if (!previousSnapshot[clientId]) {
+							changes[clientId] = 'client-auto-created'
+						} else if (previousSnapshot[clientId] !== snapshot) {
+							changes[clientId] = 'client-auto-updated'
+						}
+					}
+				})
+
+				clientGroupsSnapshotRef.current = nextSnapshot
+				markClientsHighlighted(changes)
+			} else {
+				const nextSnapshot = {}
+
+				flattenClientsFromGroups(groups).forEach(client => {
+					nextSnapshot[String(client.id)] = buildClientSnapshot(client)
+				})
+
+				clientGroupsSnapshotRef.current = nextSnapshot
+			}
+
+			setClientGroups(groups)
+
+			const openedClient = selectedClientRef.current
+
+			if (openedClient) {
+				const freshClient = flattenClientsFromGroups(groups).find(
+					client => Number(client.id) === Number(openedClient.id),
+				)
+
+				if (freshClient) {
+					setSelectedClient(prev =>
+						prev && Number(prev.id) === Number(freshClient.id)
+							? {
+									...prev,
+									...freshClient,
+								}
+							: prev,
+					)
 				}
-			})
+			}
 
-			setExpandedGroups(initialExpanded)
+			if (initial) {
+				const initialExpanded = {}
+
+				groups.forEach(group => {
+					if (group.group_name === 'Обычные клиенты CRM') {
+						initialExpanded[group.group_name] = true
+					}
+				})
+
+				setExpandedGroups(initialExpanded)
+			}
 		} catch (err) {
-			setError(err.message)
+			if (!silent) {
+				setError(err.message)
+			}
+
+			console.error('Ошибка загрузки групп клиентов:', err)
 		} finally {
-			setLoading(false)
+			if (!silent) {
+				setLoading(false)
+			}
 		}
 	}
 
 	const refreshClientsData = () => {
 		fetchClients()
 		fetchClientGroups()
+
+		if (selectedClientRef.current) {
+			fetchClientRequests(selectedClientRef.current.id)
+		}
 	}
 
 	const updateClientLocally = updatedClient => {
@@ -516,6 +684,22 @@ export default function Clients() {
 		return roleLabels[req.created_by_role] || req.created_by_role
 	}
 
+	const fetchClientRequests = async clientId => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/clients/${clientId}/requests`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) {
+				const data = await res.json()
+				setClientRequests(data)
+				fetchEquipmentForClientRequests(data)
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки заявок клиента:', err)
+		}
+	}
+
 	const handleClientClick = async client => {
 		if (!canOpenClientDetails(client)) {
 			alert('У вас нет доступа к деталям этого клиента')
@@ -529,19 +713,7 @@ export default function Clients() {
 		setVehicleEquipmentMap({})
 		setShowVehicles(false)
 
-		try {
-			const res = await fetch(`${API_BASE_URL}/clients/${client.id}/requests`, {
-				headers: getAuthHeaders(),
-			})
-
-			if (res.ok) {
-				const data = await res.json()
-				setClientRequests(data)
-				fetchEquipmentForClientRequests(data)
-			}
-		} catch (err) {
-			console.error('Ошибка загрузки заявок клиента:', err)
-		}
+		fetchClientRequests(client.id)
 	}
 
 	const fetchClientVehicles = async (
@@ -1080,7 +1252,7 @@ export default function Clients() {
 						Number(highlightedClientId) === Number(client.id)
 							? 'client-highlighted'
 							: ''
-					}`}
+					} ${autoHighlightedClients[String(client.id)] || ''}`}
 				>
 					<div className='client-tree-row'>
 						<div className='client-tree-row-left'>
@@ -1212,7 +1384,7 @@ export default function Clients() {
 					Number(highlightedClientId) === Number(client.id)
 						? 'client-highlighted'
 						: ''
-				}`}
+				} ${autoHighlightedClients[String(client.id)] || ''}`}
 			>
 				<div
 					className='client-card'
@@ -1503,6 +1675,12 @@ export default function Clients() {
 												className={`client-group-header ${hasSubclients ? 'clickable' : 'not-clickable'} ${
 													highlightedGroupName === group.group_name
 														? 'client-group-highlighted'
+														: ''
+												} ${
+													group.parent_client
+														? autoHighlightedClients[
+																String(group.parent_client.id)
+															] || ''
 														: ''
 												}`}
 												onClick={() => {
