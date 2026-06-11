@@ -7,10 +7,10 @@ router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
 
 @router.post("")
 def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current_user)):
-    if current_user["role"] not in ["ADMIN", "MANAGER", "TECH_SUPPORT"]:
+    if current_user["role"] not in ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]:
         raise HTTPException(
             status_code=403,
-            detail="Только Менеджер или Админ могут создавать машины"
+            detail="Только Админ, РОП и Менеджер могут создавать машины"
         )
 
     connection = get_connection()
