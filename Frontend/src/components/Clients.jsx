@@ -132,9 +132,7 @@ export default function Clients() {
 		fetchClients()
 		fetchClientGroups()
 
-		if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
-			fetchTechnicians()
-		}
+		fetchTechnicians()
 
 		if (['ADMIN', 'ROP'].includes(userRole)) {
 			fetchResponsibleManagers()

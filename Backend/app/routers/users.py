@@ -2,11 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.database import get_connection
 from app.security import get_current_user
 from app.permissions import (
+    ACCOUNTANT,
     ADMIN,
     ROP,
     SENIOR_TECHNICIAN,
+    TECH_SUPPORT,
     TECHNICIAN,
     MANAGER,
+    WAREHOUSE_MANAGER,
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -17,7 +20,7 @@ def get_technicians(current_user: dict = Depends(get_current_user)):
     Список пользователей, которых можно назначить исполнителем заявки.
     Назначаем только TECHNICIAN и SENIOR_TECHNICIAN.
     """
-    if current_user["role"] not in [ADMIN, ROP, SENIOR_TECHNICIAN, TECHNICIAN]:
+    if current_user["role"] not in [ADMIN, ROP, SENIOR_TECHNICIAN, TECHNICIAN, MANAGER, ACCOUNTANT, WAREHOUSE_MANAGER, TECH_SUPPORT]:
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра списка монтажников"
