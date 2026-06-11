@@ -97,6 +97,15 @@ def can_edit_all_requests(user: dict) -> bool:
     return get_role(user) in [ADMIN, ROP]
 
 
+def can_edit_payment_info(user: dict) -> bool:
+    """
+    Редактировать информацию об оплате (total_price, price_lines, is_paid, paid_at) могут:
+    - ADMIN
+    - ROP
+    - ACCOUNTANT
+    """
+    return get_role(user) in [ADMIN, ROP, ACCOUNTANT]
+
 def can_change_request_status(user: dict) -> bool:
     """
     Менять статусы заявок могут:

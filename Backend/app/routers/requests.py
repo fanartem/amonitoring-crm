@@ -13,6 +13,7 @@ from app.permissions import (
     TECHNICIAN,
     can_create_request,
     can_edit_all_requests,
+    can_edit_payment_info,
     can_change_request_status,
     can_delete_any_request,
     can_delete_own_request_with_time_limit,
@@ -893,6 +894,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         )
                     )
                 )
+                or can_edit_payment_info(current_user)
             )
 
             if not can_edit_this_request and data.status is None:
