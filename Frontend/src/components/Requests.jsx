@@ -85,10 +85,7 @@ export default function Requests() {
 	useEffect(() => {
 		fetchRequests()
 		fetchCities()
-
-		if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
-			fetchTechnicians()
-		}
+		fetchTechnicians()
 	}, [])
 
 	const canCreateRequest = ['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'].includes(
