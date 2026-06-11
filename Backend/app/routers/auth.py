@@ -57,14 +57,14 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
             if not user or not verify_password(form_data.password, user["hashed_password"]):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Incorrect email or password"
+                    detail="Неправильный email или пароль",
                 )
 
             # Проверяем одобрение админом
             if not user["is_approved"]:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Account not approved by admin yet"
+                    detail="Ваш аккаунт все еще не одобрен администратором. Пожалуйста, подождите."
                 )
 
             # Создаем токен (записываем туда ID и Роль)
