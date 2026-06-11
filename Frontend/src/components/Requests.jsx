@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import { useLocation } from 'react-router-dom'
 import '../styles/Requests.css'
@@ -74,6 +74,8 @@ export default function Requests() {
 
 	const [requestSuccessNotice, setRequestSuccessNotice] = useState('')
 	const [isRequestSuccessNoticeLeaving, setIsRequestSuccessNoticeLeaving] = useState(false)
+	const [highlightedRequests, setHighlightedRequests] = useState({})
+	const requestsSnapshotRef = useRef({})
 
 	const userRole = getUserRole()
 	const currentUserId = getCurrentUserId()
@@ -83,10 +85,21 @@ export default function Requests() {
 		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
 
 	useEffect(() => {
-		fetchRequests()
+		fetchRequests({ initial: true })
 		fetchCities()
 		fetchTechnicians()
 	}, [])
+
+	useEffect(() => {
+		const intervalId = setInterval(() => {
+			if (document.hidden) return
+			if (isCreateModalOpen) return
+
+			fetchRequests({ silent: true })
+		}, 10000)
+
+		return () => clearInterval(intervalId)
+	}, [isCreateModalOpen])
 
 	const canCreateRequest = ['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'].includes(
 		userRole,
@@ -116,7 +129,44 @@ export default function Requests() {
 		return () => document.removeEventListener('click', handleClickOutside)
 	}, [])
 
-	const fetchRequests = async () => {
+	const buildRequestSnapshot = req => {
+		return JSON.stringify({
+			id: req.id,
+			status: req.status,
+			city: req.city,
+			visit_type: req.visit_type,
+			address: req.address,
+			assigned_to: req.assigned_to,
+			is_paid: req.is_paid,
+			paid_at: req.paid_at,
+			total_price: req.total_price,
+			responsible_manager_name: req.responsible_manager_name,
+			vehicles: req.vehicles || [],
+		})
+	}
+
+	const markRequestsHighlighted = changes => {
+		if (!changes || Object.keys(changes).length === 0) return
+
+		setHighlightedRequests(prev => ({
+			...prev,
+			...changes,
+		}))
+
+		setTimeout(() => {
+			setHighlightedRequests(prev => {
+				const next = { ...prev }
+
+				Object.keys(changes).forEach(id => {
+					delete next[id]
+				})
+
+				return next
+			})
+		}, 3500)
+	}
+
+	const fetchRequests = async ({ silent = false, initial = false } = {}) => {
 		try {
 			const res = await fetch(`${API_BASE_URL}/requests`, {
 				headers: getAuthHeaders(),
@@ -124,8 +174,33 @@ export default function Requests() {
 
 			if (res.ok) {
 				const data = await res.json()
+				const previousSnapshot = requestsSnapshotRef.current || {}
+				const hasPreviousSnapshot = Object.keys(previousSnapshot).length > 0
+
+				const nextSnapshot = {}
+				const changes = {}
+
+				data.forEach(req => {
+					const requestId = String(req.id)
+					const snapshot = buildRequestSnapshot(req)
+
+					nextSnapshot[requestId] = snapshot
+
+					if (!initial && hasPreviousSnapshot) {
+						if (!previousSnapshot[requestId]) {
+							changes[requestId] = 'just-created'
+						} else if (previousSnapshot[requestId] !== snapshot) {
+							changes[requestId] = 'just-updated'
+						}
+					}
+				})
+
+				requestsSnapshotRef.current = nextSnapshot
 				setRequests(data)
-				setFilteredRequests(data)
+
+				if (silent) {
+					markRequestsHighlighted(changes)
+				}
 			}
 		} catch (err) {
 			console.error('Ошибка загрузки заявок:', err)
@@ -707,7 +782,7 @@ export default function Requests() {
 				{filteredRequests.map(req => (
 					<div
 						key={req.id}
-						className='request-card'
+						className={`request-card ${highlightedRequests[String(req.id)] || ''}`}
 						style={{
 							zIndex: activeDropdown === req.id ? 100 : 1,
 							position: 'relative',
@@ -1028,7 +1103,7 @@ export default function Requests() {
 								</div>
 							)}
 						</div>
-						
+
 						<div
 							className='role-actions-wrapper'
 							style={{

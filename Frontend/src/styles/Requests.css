@@ -962,6 +962,42 @@
 	transform: translateY(-6px);
 }
 
+.request-card.just-created {
+	animation: requestCreatedPulse 3.5s ease-out;
+}
+
+.request-card.just-updated {
+	animation: requestUpdatedPulse 3.5s ease-out;
+}
+
+@keyframes requestCreatedPulse {
+	0% {
+		background: #ecfdf3;
+		border-color: #22c55e;
+		box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.18);
+	}
+
+	100% {
+		background: #fff;
+		border-color: #eaeaea;
+		box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02);
+	}
+}
+
+@keyframes requestUpdatedPulse {
+	0% {
+		background: #fff7ed;
+		border-color: #f97316;
+		box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.14);
+	}
+
+	100% {
+		background: #fff;
+		border-color: #eaeaea;
+		box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02);
+	}
+}
+
 @media (max-width: 640px) {
   .request-vehicle-header {
     flex-direction: column;
