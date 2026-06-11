@@ -73,8 +73,9 @@ def can_view_all_requests(user: dict) -> bool:
     - ADMIN
     - ROP
     - SENIOR_TECHNICIAN
+    - WAREHOUSE_MANAGER
     """
-    return get_role(user) in [ADMIN, ROP, SENIOR_TECHNICIAN]
+    return get_role(user) in [ADMIN, ROP, SENIOR_TECHNICIAN, WAREHOUSE_MANAGER]
 
 
 def can_create_request(user: dict) -> bool:
@@ -105,6 +106,7 @@ def can_edit_payment_info(user: dict) -> bool:
     - ACCOUNTANT
     """
     return get_role(user) in [ADMIN, ROP, ACCOUNTANT]
+
 
 def can_change_request_status(user: dict) -> bool:
     """

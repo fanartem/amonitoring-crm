@@ -11,6 +11,7 @@ from app.permissions import (
     ACCOUNTANT,
     SENIOR_TECHNICIAN,
     TECHNICIAN,
+    WAREHOUSE_MANAGER,
     can_create_request,
     can_edit_all_requests,
     can_edit_payment_info,
@@ -125,7 +126,7 @@ def user_can_access_request(
         role = current_user.get("role")
         user_id = int(current_user["id"])
 
-        if role in [ADMIN, ROP, ACCOUNTANT]:
+        if role in [ADMIN, ROP, ACCOUNTANT, WAREHOUSE_MANAGER]:
             return True
 
         if role == SENIOR_TECHNICIAN:
@@ -647,7 +648,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 )
                 values.extend([current_user["id"], current_user["id"]])
 
-            elif role == TECH_SUPPORT:
+            elif role in [TECH_SUPPORT, WAREHOUSE_MANAGER]:
                 pass
 
             elif role == TECHNICIAN:
