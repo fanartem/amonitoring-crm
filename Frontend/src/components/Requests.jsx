@@ -380,7 +380,7 @@ export default function Requests() {
 
 	const statusLabels = {
 		NEW: 'В ожидании',
-		IN_PROGRESS: 'В процессе установки',
+		IN_PROGRESS: 'Принято в работу',
 		DONE: 'Работы завершены',
 		CANCELLED: 'Отменено',
 		COMPLETED: 'Работы завершены',
@@ -759,7 +759,7 @@ export default function Requests() {
 					>
 						<option value=''>Все статусы</option>
 						<option value='NEW'>В ожидании</option>
-						<option value='IN_PROGRESS'>В процессе установки</option>
+						<option value='IN_PROGRESS'>Принято в работу</option>
 						<option value='COMPLETED'>Работы завершены</option>
 						<option value='CANCELLED'>Отмененные заявки</option>
 					</select>
