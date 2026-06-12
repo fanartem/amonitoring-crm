@@ -803,6 +803,10 @@ export default function Requests() {
 				</button>
 			</div>
 
+			<div className='requests-count'>
+				Кол-во заявок по фильтру: <strong>{filteredRequests.length}</strong>
+			</div>
+
 			{requestSuccessNotice && (
 				<div
 					className={`request-success-notice ${

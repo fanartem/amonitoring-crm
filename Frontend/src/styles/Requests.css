@@ -970,6 +970,25 @@
 	animation: requestUpdatedPulse 3.5s ease-out;
 }
 
+.requests-count {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0 0 20px;
+	padding: 8px 14px;
+	border-radius: 10px;
+	background: #f5f7fa;
+	color: #555;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.requests-count strong {
+	color: #2f6fed;
+	font-size: 16px;
+	font-weight: 700;
+}
+
 @keyframes requestCreatedPulse {
 	0% {
 		background: #ecfdf3;
