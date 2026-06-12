@@ -66,6 +66,7 @@ export default function Requests() {
 		search: '',
 		created_by: '',
 		status: '',
+		payment: '',
 		city: '',
 		format: '',
 		date_from: '',
@@ -336,16 +337,37 @@ export default function Requests() {
 		}
 
 		if (filters.status) result = result.filter(r => r.status === filters.status)
+
+		if (filters.payment === 'PAID') {
+			result = result.filter(r => Boolean(r.is_paid))
+		}
+
+		if (filters.payment === 'UNPAID') {
+			result = result.filter(r => !Boolean(r.is_paid))
+		}
+
 		if (filters.format)
 			result = result.filter(r => r.visit_type === filters.format)
+
 		if (filters.city) result = result.filter(r => r.city === filters.city)
+
 		setFilteredRequests(result)
 	}, [filters, requests])
 
 	const handleFilterChange = e =>
 		setFilters({ ...filters, [e.target.name]: e.target.value })
+
 	const resetFilters = () =>
-		setFilters({ search: '', status: '', city: '', format: '', created_by: '',date_from: '', date_to: '', })
+		setFilters({
+			search: '',
+			created_by: '',
+			status: '',
+			payment: '',
+			city: '',
+			format: '',
+			date_from: '',
+			date_to: '',
+		})
 
 	const statusLabels = {
 		NEW: 'В ожидании',
@@ -731,6 +753,19 @@ export default function Requests() {
 						<option value='IN_PROGRESS'>В процессе установки</option>
 						<option value='COMPLETED'>Работы завершены</option>
 						<option value='CANCELLED'>Отмененные заявки</option>
+					</select>
+				</div>
+				<div className='filter-group'>
+					<label>Оплата</label>
+					<select
+						className='filter-select'
+						name='payment'
+						value={filters.payment}
+						onChange={handleFilterChange}
+					>
+						<option value=''>Все оплаты</option>
+						<option value='PAID'>Оплачено</option>
+						<option value='UNPAID'>Не оплачено</option>
 					</select>
 				</div>
 				<div className='filter-group'>
