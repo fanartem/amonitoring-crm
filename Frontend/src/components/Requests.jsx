@@ -50,6 +50,15 @@ const getCurrentUserId = () => {
 	}
 }
 
+const getTodayDateInputValue = () => {
+	const today = new Date()
+	const year = today.getFullYear()
+	const month = String(today.getMonth() + 1).padStart(2, '0')
+	const day = String(today.getDate()).padStart(2, '0')
+
+	return `${year}-${month}-${day}`
+}
+
 export default function Requests() {
 	const [requests, setRequests] = useState([])
 	const [filteredRequests, setFilteredRequests] = useState([])
@@ -69,7 +78,7 @@ export default function Requests() {
 		payment: '',
 		city: '',
 		format: '',
-		date_from: '',
+		date_from: getTodayDateInputValue(),
 		date_to: '',
 	})
 
