@@ -955,7 +955,7 @@ export default function RequestDetailModal({
 											onChange={handleStatusChange}
 										>
 											<option value='NEW'>В ожидании</option>
-											<option value='IN_PROGRESS'>В процессе установки</option>
+											<option value='IN_PROGRESS'>Принято в работу</option>
 											<option value='COMPLETED'>Работы завершены</option>
 											<option value='CANCELLED'>Отмена заявки</option>
 										</select>
@@ -968,7 +968,7 @@ export default function RequestDetailModal({
 												{request.status === 'NEW'
 													? 'В ожидании'
 													: request.status === 'IN_PROGRESS'
-														? 'В процессе установки'
+														? 'Принято в работу'
 														: request.status === 'COMPLETED'
 															? 'Завершено'
 															: 'Отменено'}
