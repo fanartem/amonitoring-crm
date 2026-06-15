@@ -1017,6 +1017,19 @@
 	}
 }
 
+.filter-input.filter-active,
+.filter-select.filter-active {
+	border: 2px solid #54b338;
+	background-color: #f5f9ff;
+	box-shadow: 0 0 0 3px rgba(47, 237, 110, 0.12);
+}
+
+.filter-input.filter-active:focus,
+.filter-select.filter-active:focus {
+	border-color: #67af71;
+	box-shadow: 0 0 0 4px rgba(47, 237, 79, 0.18);
+}
+
 @media (max-width: 640px) {
   .request-vehicle-header {
     flex-direction: column;

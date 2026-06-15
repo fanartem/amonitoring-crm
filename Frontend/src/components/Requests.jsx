@@ -702,13 +702,25 @@ export default function Requests() {
 		}, 7000)
 	}
 
+	const getFilterClassName = filterName => {
+		const isActive = Boolean(filters[filterName])
+
+		return isActive ? 'filter-input filter-active' : 'filter-input'
+	}
+
+	const getFilterSelectClassName = filterName => {
+		const isActive = Boolean(filters[filterName])
+
+		return isActive ? 'filter-select filter-active' : 'filter-select'
+	}
+
 	return (
 		<div className='requests-page-container'>
 			<div className='filters-bar'>
 				<div className='filter-group filter-main'>
 					<label>Глобальный поиск</label>
 					<input
-						className='filter-input'
+						className={getFilterClassName('search')}
 						type='text'
 						name='search'
 						placeholder='ФИО, Телефон, Гос.номер, VIN, Марка...'
@@ -719,7 +731,7 @@ export default function Requests() {
 				<div className='filter-group filter-creator'>
 					<label>Создатель заявки</label>
 					<input
-						className='filter-input'
+						className={getFilterClassName('created_by')}
 						type='text'
 						name='created_by'
 						placeholder='ФИО...'
@@ -731,7 +743,7 @@ export default function Requests() {
 				<div className='filter-group'>
 					<label>Дата от</label>
 					<input
-						className='filter-input'
+						className={getFilterClassName('date_from')}
 						type='date'
 						name='date_from'
 						value={filters.date_from}
@@ -742,7 +754,7 @@ export default function Requests() {
 				<div className='filter-group'>
 					<label>Дата до</label>
 					<input
-						className='filter-input'
+						className={getFilterClassName('date_to')}
 						type='date'
 						name='date_to'
 						value={filters.date_to}
@@ -752,7 +764,7 @@ export default function Requests() {
 				<div className='filter-group'>
 					<label>Статус</label>
 					<select
-						className='filter-select'
+						className={getFilterSelectClassName('status')}
 						name='status'
 						value={filters.status}
 						onChange={handleFilterChange}
@@ -767,7 +779,7 @@ export default function Requests() {
 				<div className='filter-group'>
 					<label>Оплата</label>
 					<select
-						className='filter-select'
+						className={getFilterSelectClassName('payment')}
 						name='payment'
 						value={filters.payment}
 						onChange={handleFilterChange}
@@ -780,7 +792,7 @@ export default function Requests() {
 				<div className='filter-group'>
 					<label>Город</label>
 					<select
-						className='filter-select'
+						className={getFilterSelectClassName('city')}
 						name='city'
 						value={filters.city}
 						onChange={handleFilterChange}
@@ -797,7 +809,7 @@ export default function Requests() {
 				<div className='filter-group'>
 					<label>Формат работы</label>
 					<select
-						className='filter-select'
+						className={getFilterSelectClassName('format')}
 						name='format'
 						value={filters.format}
 						onChange={handleFilterChange}
