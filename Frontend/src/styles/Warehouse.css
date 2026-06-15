@@ -594,6 +594,142 @@
 	font-weight: 600;
 }
 
+.warehouse-city-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 3px 9px;
+	border-radius: 999px;
+	background: #eef7e8;
+	color: #4f7f1f;
+	font-size: 12px;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.warehouse-transfer-btn {
+	background: #eef2ff;
+	color: #3730a3;
+	border: 1px solid #c7d2fe;
+}
+
+.warehouse-transfer-btn:hover {
+	background: #e0e7ff;
+}
+
+.warehouse-transfer-modal {
+	width: 640px;
+	max-width: 95%;
+	max-height: 90vh;
+	display: flex;
+	flex-direction: column;
+	background: #fcfcfc;
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.warehouse-transfer-body {
+	background: #f7f7f7;
+	padding: 20px;
+}
+
+.warehouse-transfer-item-card {
+	background: #ffffff;
+	border: 1px solid #eeeeee;
+	border-radius: 10px;
+	padding: 14px 16px;
+	margin-bottom: 14px;
+}
+
+.warehouse-transfer-item-title {
+	color: #1f2933;
+	font-size: 15px;
+	font-weight: 800;
+}
+
+.warehouse-transfer-item-meta {
+	margin-top: 5px;
+	color: #6b7280;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.warehouse-field-hint {
+	margin-top: 2px;
+	color: #888;
+	font-size: 12px;
+	line-height: 1.35;
+}
+
+.import-city-controls {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px;
+	margin-bottom: 16px;
+	padding: 14px;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	background: #f8faf7;
+}
+
+.import-preview-columns-wide {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.import-preview-section-title.transfer {
+	background: #eef2ff;
+	color: #3730a3;
+}
+
+.import-preview-stat.transfer {
+	background: #eef2ff;
+	color: #3730a3;
+}
+
+.import-preview-row.transfer {
+	background: #f8faff;
+}
+
+.import-preview-row-reason.neutral {
+	color: #3730a3;
+}
+
+.import-preview-quantity-field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+	font-size: 12px;
+	font-weight: 700;
+	color: #4b5563;
+}
+
+.import-preview-quantity-field input {
+	width: 90px;
+	border: 1px solid #d8d8d8;
+	border-radius: 8px;
+	padding: 6px 8px;
+	font-size: 13px;
+	font-family: inherit;
+	outline: none;
+}
+
+.import-preview-quantity-field input:focus {
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+@media (max-width: 768px) {
+	.import-city-controls {
+		grid-template-columns: 1fr;
+		padding: 12px;
+	}
+
+	.import-preview-columns-wide {
+		grid-template-columns: 1fr;
+	}
+}
+
 @media (max-width: 768px) {
 	.warehouse-tree-row {
 		width: 100%;
@@ -675,6 +811,23 @@
 	.modal-cancel-btn,
 	.warehouse-submit-btn {
 		width: 100%;
+	}
+
+	.warehouse-transfer-modal {
+		width: 96%;
+	}
+
+	.warehouse-transfer-body {
+		padding: 14px;
+	}
+
+	.warehouse-transfer-item-card {
+		padding: 12px;
+	}
+
+	.warehouse-city-badge {
+		white-space: normal;
+		text-align: right;
 	}
 }
 /* ==========================================================================
@@ -854,18 +1007,21 @@
 		content: 'Количество:';
 	}
 	.warehouse-main-table tbody td:nth-of-type(5)::before {
-		content: 'Статус:';
+		content: 'Город:';
 	}
 	.warehouse-main-table tbody td:nth-of-type(6)::before {
-		content: 'Клиент:';
+		content: 'Статус:';
 	}
 	.warehouse-main-table tbody td:nth-of-type(7)::before {
-		content: 'Гос. номер:';
+		content: 'Клиент:';
 	}
 	.warehouse-main-table tbody td:nth-of-type(8)::before {
-		content: 'VIN-код:';
+		content: 'Гос. номер:';
 	}
 	.warehouse-main-table tbody td:nth-of-type(9)::before {
+		content: 'VIN-код:';
+	}
+	.warehouse-main-table tbody td:nth-of-type(10)::before {
 		content: 'Действия:';
 	}
 
@@ -976,39 +1132,34 @@
 		white-space: nowrap !important;
 	}
 
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(1)::before {
+	.warehouse-main-table tbody td:nth-of-type(1)::before {
 		content: 'Наименование:';
 	}
-
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(2)::before {
+	.warehouse-main-table tbody td:nth-of-type(2)::before {
 		content: 'Категория:';
 	}
-
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(3)::before {
+	.warehouse-main-table tbody td:nth-of-type(3)::before {
 		content: 'Идентификатор:';
 	}
-
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(4)::before {
+	.warehouse-main-table tbody td:nth-of-type(4)::before {
 		content: 'Количество:';
 	}
-
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(5)::before {
+	.warehouse-main-table tbody td:nth-of-type(5)::before {
+		content: 'Город:';
+	}
+	.warehouse-main-table tbody td:nth-of-type(6)::before {
 		content: 'Статус:';
 	}
-
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(6)::before {
+	.warehouse-main-table tbody td:nth-of-type(7)::before {
 		content: 'Клиент:';
 	}
-
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(7)::before {
+	.warehouse-main-table tbody td:nth-of-type(8)::before {
 		content: 'Гос. номер:';
 	}
-
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(8)::before {
+	.warehouse-main-table tbody td:nth-of-type(9)::before {
 		content: 'VIN-код:';
 	}
-
-	.warehouse-main-table tbody tr.warehouse-item-row td:nth-of-type(9)::before {
+	.warehouse-main-table tbody td:nth-of-type(10)::before {
 		content: 'Действия:';
 	}
 

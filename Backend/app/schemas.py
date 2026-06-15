@@ -127,6 +127,8 @@ class WarehouseItemCreate(BaseModel):
     is_serialized: bool = True
     quantity: int = 1
 
+    city_id: int
+
     note: str | None = None
 
 class WarehouseItemUpdate(BaseModel):
@@ -142,8 +144,16 @@ class WarehouseItemUpdate(BaseModel):
     is_serialized: bool | None = None
     quantity: int | None = None
 
+    city_id: Optional[int] = None
+
     status: str | None = None
     note: str | None = None
+
+class WarehouseItemTransfer(BaseModel):
+    from_city_id: int
+    to_city_id: int
+    quantity: int = 1
+    reason: Optional[str] = None
 
 class RequestEquipmentAttach(BaseModel):
     request_vehicle_id: int

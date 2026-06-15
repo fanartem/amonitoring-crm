@@ -28,6 +28,7 @@ export default function WarehouseItemModal({
 	onClose,
 	onSaved,
 	editItem,
+	cities = [],
 }) {
 	const isEditMode = !!editItem
 
@@ -41,6 +42,7 @@ export default function WarehouseItemModal({
 		serial_number: '',
 		is_serialized: true,
 		quantity: 1,
+		city_id: '',
 		note: '',
 		status: 'IN_STOCK',
 	})
@@ -66,6 +68,7 @@ export default function WarehouseItemModal({
 				serial_number: editItem.serial_number || '',
 				is_serialized: serialized,
 				quantity: editItem.quantity || 1,
+				city_id: editItem.city_id || '',
 				note: editItem.note || '',
 				status: editItem.status || 'IN_STOCK',
 			})
@@ -80,13 +83,14 @@ export default function WarehouseItemModal({
 				serial_number: '',
 				is_serialized: true,
 				quantity: 1,
+				city_id: cities[0]?.id || '',
 				note: '',
 				status: 'IN_STOCK',
 			})
 		}
 
 		setError('')
-	}, [isOpen, editItem, isEditMode])
+	}, [isOpen, editItem, isEditMode, cities])
 
 	const handleChange = e => {
 		const { name, value, type, checked } = e.target
@@ -125,6 +129,11 @@ export default function WarehouseItemModal({
 			return
 		}
 
+		if (!formData.city_id) {
+			setError('Необходимо выбрать город склада')
+			return
+		}
+
 		if (formData.is_serialized && !formData.identifier_value.trim()) {
 			setError(
 				'Для серийного оборудования нужно указать IMEI, MAC или серийный номер',
@@ -154,6 +163,9 @@ export default function WarehouseItemModal({
 				serial_number: formData.serial_number.trim() || null,
 				is_serialized: formData.is_serialized,
 				quantity: formData.is_serialized ? 1 : parseInt(formData.quantity, 10),
+				...(!isEditMode || formData.is_serialized
+					? { city_id: Number(formData.city_id) }
+					: {}),
 				note: formData.note.trim() || null,
 				...(isEditMode && { status: formData.status }),
 			}
@@ -282,6 +294,39 @@ export default function WarehouseItemModal({
 									</div>
 								</div>
 							</label>
+
+							<div className='warehouse-form-grid warehouse-inner-grid'>
+								<label className='warehouse-field'>
+									<span className='warehouse-label required'>Город склада</span>
+
+									<select
+										className={`warehouse-input ${
+											isEditMode && !formData.is_serialized
+												? 'warehouse-disabled-input'
+												: ''
+										}`}
+										name='city_id'
+										value={formData.city_id}
+										onChange={handleChange}
+										disabled={isEditMode && !formData.is_serialized}
+									>
+										<option value=''>Выберите город</option>
+
+										{cities.map(city => (
+											<option key={city.id} value={city.id}>
+												{city.name}
+											</option>
+										))}
+									</select>
+
+									{isEditMode && !formData.is_serialized && (
+										<span className='warehouse-field-hint'>
+											Для расходников город меняется через перенос количества
+											между городами.
+										</span>
+									)}
+								</label>
+							</div>
 
 							{formData.is_serialized ? (
 								<div className='warehouse-form-grid warehouse-inner-grid'>

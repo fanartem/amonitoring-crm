@@ -1,18 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from io import StringIO
 import csv
+import json
 
 from app.database import get_connection
 from app.security import get_current_user
-from app.schemas import WarehouseItemCreate, WarehouseItemUpdate, RequestEquipmentAttach
-
+from app.schemas import (
+    WarehouseItemCreate,
+    WarehouseItemUpdate,
+    WarehouseItemTransfer,
+    RequestEquipmentAttach,
+)
 
 router = APIRouter(prefix="/warehouse", tags=["Warehouse"])
 
-
 WAREHOUSE_MANAGE_ROLES = ["ADMIN", "WAREHOUSE_MANAGER"]
 WAREHOUSE_READ_ROLES = ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "MANAGER", "SENIOR_TECHNICIAN", "TECHNICIAN"]
-
 
 ALLOWED_CATEGORIES = [
     "GPS_TRACKER",
@@ -57,6 +60,7 @@ def validate_warehouse_item(data: dict):
     identifier_value = data.get("identifier_value")
     is_serialized = data.get("is_serialized", True)
     quantity = data.get("quantity", 1)
+    city_id = data.get("city_id")
 
     if category is not None and category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=400, detail="Некорректная категория оборудования")
@@ -64,8 +68,11 @@ def validate_warehouse_item(data: dict):
     if identifier_type is not None and identifier_type not in ALLOWED_IDENTIFIER_TYPES:
         raise HTTPException(status_code=400, detail="Некорректный тип идентификатора")
 
-    if quantity is not None and quantity < 0:
-        raise HTTPException(status_code=400, detail="Количество не может быть отрицательным")
+    if quantity is not None and quantity <= 0:
+        raise HTTPException(status_code=400, detail="Количество должно быть больше 0")
+    
+    if city_id is None:
+        raise HTTPException(status_code=400, detail="Необходимо выбрать город склада")
 
     if is_serialized:
         if quantity != 1:
@@ -140,6 +147,112 @@ def get_item_group_name(row):
     чаще всего заполняет только 'Наименование'.
     """
     return str(row.get("name") or "Без наименования").strip() or "Без наименования"
+
+def get_city_by_id(cursor, city_id: int):
+    cursor.execute(
+        """
+        SELECT id, name
+        FROM cities
+        WHERE id = %s AND is_active = 1
+        """,
+        (city_id,)
+    )
+    return cursor.fetchone()
+
+
+def require_city(cursor, city_id: int):
+    city = get_city_by_id(cursor, city_id)
+
+    if not city:
+        raise HTTPException(status_code=400, detail="Город не найден или отключён")
+
+    return city
+
+
+def add_warehouse_movement(
+    cursor,
+    warehouse_item_id: int,
+    action: str,
+    current_user: dict,
+    from_city_id: int | None = None,
+    to_city_id: int | None = None,
+    quantity: int | None = None,
+    reason: str | None = None,
+):
+    cursor.execute(
+        """
+        INSERT INTO warehouse_item_movements (
+            warehouse_item_id,
+            action,
+            from_city_id,
+            to_city_id,
+            quantity,
+            reason,
+            created_by
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            warehouse_item_id,
+            action,
+            from_city_id,
+            to_city_id,
+            quantity,
+            reason,
+            current_user["id"],
+        )
+    )
+
+
+def normalize_consumable_key(row: dict):
+    return (
+        str(row.get("category") or "").strip(),
+        normalize_group_key(row.get("name")),
+        normalize_group_key(row.get("manufacturer")),
+        normalize_group_key(row.get("model")),
+    )
+
+
+def find_consumable_in_city(cursor, item: dict, city_id: int):
+    cursor.execute(
+        """
+        SELECT *
+        FROM warehouse_items
+        WHERE is_deleted = 0
+          AND is_serialized = 0
+          AND category = %s
+          AND LOWER(TRIM(name)) = LOWER(TRIM(%s))
+          AND COALESCE(LOWER(TRIM(manufacturer)), '') = COALESCE(LOWER(TRIM(%s)), '')
+          AND COALESCE(LOWER(TRIM(model)), '') = COALESCE(LOWER(TRIM(%s)), '')
+          AND city_id = %s
+        LIMIT 1
+        """,
+        (
+            item.get("category"),
+            item.get("name"),
+            item.get("manufacturer"),
+            item.get("model"),
+            city_id,
+        )
+    )
+
+    return cursor.fetchone()
+
+def find_serialized_by_identifier(cursor, identifier_type: str, identifier_value: str):
+    cursor.execute(
+        """
+        SELECT *
+        FROM warehouse_items
+        WHERE is_deleted = 0
+          AND is_serialized = 1
+          AND identifier_type = %s
+          AND identifier_value = %s
+        LIMIT 1
+        """,
+        (identifier_type, identifier_value)
+    )
+
+    return cursor.fetchone()
 
 @router.get("/template")
 def download_warehouse_template(current_user: dict = Depends(get_current_user)):
@@ -216,16 +329,39 @@ def download_warehouse_template(current_user: dict = Depends(get_current_user)):
 @router.post("/import")
 async def import_warehouse_items(
     file: UploadFile = File(...),
+    from_city_id: int = Form(...),
+    to_city_id: int = Form(...),
+    edited_quantities_json: str | None = Form(None),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Импорт оборудования из CSV.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
+    Импорт оборудования из CSV с учётом городов склада.
+
+    Серийное оборудование:
+    - новое добавляется в to_city_id;
+    - если уже есть в to_city_id — пропускается;
+    - если есть в from_city_id и to_city_id другой — переносится;
+    - если находится не в from_city_id — ошибка.
+
+    Расходники:
+    - если from_city_id == to_city_id — приход/суммирование в этом городе;
+    - если from_city_id != to_city_id — перенос количества из from_city_id в to_city_id.
     """
     require_warehouse_manage(current_user)
 
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Поддерживается только CSV-файл")
+
+    edited_quantities = {}
+
+    if edited_quantities_json:
+        try:
+            edited_quantities = json.loads(edited_quantities_json)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="Некорректный формат edited_quantities_json"
+            )
 
     content = await file.read()
 
@@ -276,13 +412,20 @@ async def import_warehouse_items(
         raise HTTPException(status_code=400, detail="CSV не содержит строк для импорта")
 
     imported_count = 0
+    transferred_count = 0
     skipped_count = 0
+    consumables_updated_count = 0
     errors = []
+
+    file_keys = set()
 
     connection = get_connection()
 
     try:
         with connection.cursor() as cursor:
+            from_city = require_city(cursor, from_city_id)
+            to_city = require_city(cursor, to_city_id)
+
             for index, row in enumerate(rows, start=2):
                 try:
                     category = (row.get("category") or "").strip()
@@ -293,8 +436,14 @@ async def import_warehouse_items(
                     identifier_value = (row.get("identifier_value") or "").strip() or None
                     serial_number = (row.get("serial_number") or "").strip() or None
                     is_serialized = parse_bool(row.get("is_serialized"))
-                    quantity = parse_int(row.get("quantity"), default=1)
+
+                    raw_quantity = parse_int(row.get("quantity"), default=1)
+                    quantity = int(edited_quantities.get(str(index), raw_quantity))
+
                     note = (row.get("note") or "").strip() or None
+
+                    if not name:
+                        raise HTTPException(status_code=400, detail="name обязателен")
 
                     item_data = {
                         "category": category,
@@ -306,71 +455,351 @@ async def import_warehouse_items(
                         "serial_number": serial_number,
                         "is_serialized": is_serialized,
                         "quantity": quantity,
+                        "city_id": to_city_id,
                         "note": note,
                     }
 
-                    if not name:
-                        raise HTTPException(status_code=400, detail="name обязателен")
-
                     validate_warehouse_item(item_data)
 
-                    if identifier_value:
-                        cursor.execute(
-                            """
-                            SELECT id
-                            FROM warehouse_items
-                            WHERE identifier_type = %s
-                            AND identifier_value = %s
-                            """,
-                            (identifier_type, identifier_value)
-                        )
-                        existing = cursor.fetchone()
+                    # -------------------------
+                    # Серийное оборудование
+                    # -------------------------
+                    if is_serialized:
+                        key = f"{identifier_type}:{identifier_value}".lower()
 
-                        if existing:
+                        if key in file_keys:
                             skipped_count += 1
                             errors.append({
                                 "row": index,
-                                "error": "Оборудование с таким идентификатором уже существует",
+                                "error": "Дубликат внутри CSV",
                                 "identifier_type": identifier_type,
                                 "identifier_value": identifier_value,
                             })
                             continue
 
-                    cursor.execute(
-                        """
-                        INSERT INTO warehouse_items (
-                            category,
-                            name,
-                            manufacturer,
-                            model,
+                        file_keys.add(key)
+
+                        existing = find_serialized_by_identifier(
+                            cursor,
                             identifier_type,
                             identifier_value,
-                            serial_number,
-                            is_serialized,
-                            quantity,
-                            status,
-                            note,
-                            created_by
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            category,
-                            name,
-                            manufacturer,
-                            model,
-                            identifier_type,
-                            identifier_value,
-                            serial_number,
-                            is_serialized,
-                            quantity,
-                            "IN_STOCK",
-                            note,
-                            current_user["id"],
+
+                        if existing:
+                            existing_city_id = int(existing["city_id"])
+
+                            if existing_city_id == int(to_city_id):
+                                skipped_count += 1
+                                errors.append({
+                                    "row": index,
+                                    "error": "Оборудование уже есть в выбранном городе",
+                                    "identifier_type": identifier_type,
+                                    "identifier_value": identifier_value,
+                                })
+                                continue
+
+                            if existing_city_id != int(from_city_id):
+                                skipped_count += 1
+                                errors.append({
+                                    "row": index,
+                                    "error": "Оборудование найдено, но находится не в выбранном городе отправления",
+                                    "current_city_id": existing_city_id,
+                                    "from_city_id": from_city_id,
+                                    "to_city_id": to_city_id,
+                                    "identifier_type": identifier_type,
+                                    "identifier_value": identifier_value,
+                                })
+                                continue
+
+                            if existing["status"] != "IN_STOCK":
+                                skipped_count += 1
+                                errors.append({
+                                    "row": index,
+                                    "error": "Оборудование найдено, но его нельзя перенести, так как оно не на складе",
+                                    "status": existing["status"],
+                                    "identifier_type": identifier_type,
+                                    "identifier_value": identifier_value,
+                                })
+                                continue
+
+                            cursor.execute(
+                                """
+                                UPDATE warehouse_items
+                                SET city_id = %s,
+                                    updated_at = NOW()
+                                WHERE id = %s
+                                """,
+                                (to_city_id, existing["id"])
+                            )
+
+                            add_warehouse_movement(
+                                cursor=cursor,
+                                warehouse_item_id=existing["id"],
+                                action="IMPORT_SERIALIZED_TRANSFERRED",
+                                current_user=current_user,
+                                from_city_id=from_city_id,
+                                to_city_id=to_city_id,
+                                quantity=1,
+                                reason=f"Перенос через CSV-импорт: {file.filename}",
+                            )
+
+                            transferred_count += 1
+                            continue
+
+                        cursor.execute(
+                            """
+                            INSERT INTO warehouse_items (
+                                category,
+                                name,
+                                manufacturer,
+                                model,
+                                identifier_type,
+                                identifier_value,
+                                serial_number,
+                                is_serialized,
+                                quantity,
+                                city_id,
+                                status,
+                                note,
+                                created_by
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                category,
+                                name,
+                                manufacturer,
+                                model,
+                                identifier_type,
+                                identifier_value,
+                                serial_number,
+                                True,
+                                1,
+                                to_city_id,
+                                "IN_STOCK",
+                                note,
+                                current_user["id"],
+                            )
                         )
+
+                        item_id = cursor.lastrowid
+
+                        add_warehouse_movement(
+                            cursor=cursor,
+                            warehouse_item_id=item_id,
+                            action="IMPORT_CREATED",
+                            current_user=current_user,
+                            from_city_id=None,
+                            to_city_id=to_city_id,
+                            quantity=1,
+                            reason=f"Создано через CSV-импорт: {file.filename}",
+                        )
+
+                        imported_count += 1
+                        continue
+
+                    # -------------------------
+                    # Расходники
+                    # -------------------------
+                    item_for_search = {
+                        "category": category,
+                        "name": name,
+                        "manufacturer": manufacturer,
+                        "model": model,
+                    }
+
+                    if from_city_id == to_city_id:
+                        target_item = find_consumable_in_city(
+                            cursor,
+                            item_for_search,
+                            to_city_id,
+                        )
+
+                        if target_item:
+                            cursor.execute(
+                                """
+                                UPDATE warehouse_items
+                                SET quantity = quantity + %s,
+                                    updated_at = NOW()
+                                WHERE id = %s
+                                """,
+                                (quantity, target_item["id"])
+                            )
+
+                            target_item_id = target_item["id"]
+                        else:
+                            cursor.execute(
+                                """
+                                INSERT INTO warehouse_items (
+                                    category,
+                                    name,
+                                    manufacturer,
+                                    model,
+                                    identifier_type,
+                                    identifier_value,
+                                    serial_number,
+                                    is_serialized,
+                                    quantity,
+                                    city_id,
+                                    status,
+                                    note,
+                                    created_by
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                """,
+                                (
+                                    category,
+                                    name,
+                                    manufacturer,
+                                    model,
+                                    "NONE",
+                                    None,
+                                    None,
+                                    False,
+                                    quantity,
+                                    to_city_id,
+                                    "IN_STOCK",
+                                    note,
+                                    current_user["id"],
+                                )
+                            )
+
+                            target_item_id = cursor.lastrowid
+
+                        add_warehouse_movement(
+                            cursor=cursor,
+                            warehouse_item_id=target_item_id,
+                            action="IMPORT_CONSUMABLE_ADDED",
+                            current_user=current_user,
+                            from_city_id=None,
+                            to_city_id=to_city_id,
+                            quantity=quantity,
+                            reason=f"Приход расходника через CSV-импорт: {file.filename}",
+                        )
+
+                        consumables_updated_count += 1
+                        continue
+
+                    source_item = find_consumable_in_city(
+                        cursor,
+                        item_for_search,
+                        from_city_id,
                     )
 
-                    imported_count += 1
+                    if not source_item:
+                        skipped_count += 1
+                        errors.append({
+                            "row": index,
+                            "error": "Расходник не найден в городе отправления",
+                            "from_city_id": from_city_id,
+                            "to_city_id": to_city_id,
+                            "name": name,
+                        })
+                        continue
+
+                    available_quantity = int(source_item["quantity"] or 0)
+
+                    if quantity > available_quantity:
+                        skipped_count += 1
+                        errors.append({
+                            "row": index,
+                            "error": f"Недостаточно расходника в городе отправления. Доступно: {available_quantity}",
+                            "from_city_id": from_city_id,
+                            "to_city_id": to_city_id,
+                            "name": name,
+                        })
+                        continue
+
+                    target_item = find_consumable_in_city(
+                        cursor,
+                        item_for_search,
+                        to_city_id,
+                    )
+
+                    if target_item:
+                        cursor.execute(
+                            """
+                            UPDATE warehouse_items
+                            SET quantity = quantity + %s,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (quantity, target_item["id"])
+                        )
+
+                        target_item_id = target_item["id"]
+                    else:
+                        cursor.execute(
+                            """
+                            INSERT INTO warehouse_items (
+                                category,
+                                name,
+                                manufacturer,
+                                model,
+                                identifier_type,
+                                identifier_value,
+                                serial_number,
+                                is_serialized,
+                                quantity,
+                                city_id,
+                                status,
+                                note,
+                                created_by
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                category,
+                                name,
+                                manufacturer,
+                                model,
+                                "NONE",
+                                None,
+                                None,
+                                False,
+                                quantity,
+                                to_city_id,
+                                "IN_STOCK",
+                                note,
+                                current_user["id"],
+                            )
+                        )
+
+                        target_item_id = cursor.lastrowid
+
+                    cursor.execute(
+                        """
+                        UPDATE warehouse_items
+                        SET quantity = quantity - %s,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (quantity, source_item["id"])
+                    )
+
+                    add_warehouse_movement(
+                        cursor=cursor,
+                        warehouse_item_id=source_item["id"],
+                        action="IMPORT_CONSUMABLE_TRANSFERRED_OUT",
+                        current_user=current_user,
+                        from_city_id=from_city_id,
+                        to_city_id=to_city_id,
+                        quantity=quantity,
+                        reason=f"Перенос расходника через CSV-импорт: {file.filename}",
+                    )
+
+                    add_warehouse_movement(
+                        cursor=cursor,
+                        warehouse_item_id=target_item_id,
+                        action="IMPORT_CONSUMABLE_TRANSFERRED_IN",
+                        current_user=current_user,
+                        from_city_id=from_city_id,
+                        to_city_id=to_city_id,
+                        quantity=quantity,
+                        reason=f"Перенос расходника через CSV-импорт: {file.filename}",
+                    )
+
+                    consumables_updated_count += 1
 
                 except HTTPException as e:
                     skipped_count += 1
@@ -389,11 +818,20 @@ async def import_warehouse_items(
 
             return {
                 "message": "Импорт завершён",
+                "from_city_id": from_city_id,
+                "from_city_name": from_city["name"],
+                "to_city_id": to_city_id,
+                "to_city_name": to_city["name"],
                 "imported_count": imported_count,
+                "transferred_count": transferred_count,
+                "consumables_updated_count": consumables_updated_count,
                 "skipped_count": skipped_count,
-                "errors": errors
+                "errors": errors,
             }
 
+    except HTTPException:
+        connection.rollback()
+        raise
     except Exception as e:
         connection.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -405,6 +843,7 @@ def get_warehouse_items_grouped(
     category: str | None = Query(None),
     status: str | None = Query(None),
     search: str | None = Query(None),
+    city_id: int | None = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -432,6 +871,8 @@ def get_warehouse_items_grouped(
                 wi.serial_number,
                 wi.is_serialized,
                 wi.quantity,
+                wi.city_id,
+                city.name AS city_name,
                 wi.status,
                 wi.note,
                 wi.created_at,
@@ -456,6 +897,7 @@ def get_warehouse_items_grouped(
                 
             FROM warehouse_items wi
             LEFT JOIN users u ON wi.created_by = u.id
+            LEFT JOIN cities city ON wi.city_id = city.id
 
             LEFT JOIN (
                 SELECT 
@@ -483,6 +925,10 @@ def get_warehouse_items_grouped(
                 sql += " AND wi.status = %s"
                 values.append(status)
 
+            if city_id:
+                sql += " AND wi.city_id = %s"
+                values.append(city_id)
+
             if search:
                 sql += """
                 AND (
@@ -506,6 +952,7 @@ def get_warehouse_items_grouped(
 
             sql += """
             ORDER BY
+                city.name ASC,
                 wi.category ASC,
                 wi.name ASC,
                 wi.status ASC,
@@ -613,6 +1060,7 @@ def get_warehouse_items(
     category: str | None = Query(None),
     status: str | None = Query(None),
     search: str | None = Query(None),
+    city_id: int | None = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -636,6 +1084,8 @@ def get_warehouse_items(
                 wi.serial_number,
                 wi.is_serialized,
                 wi.quantity,
+                wi.city_id,
+                city.name AS city_name,
                 wi.status,
                 wi.note,
                 wi.created_at,
@@ -661,6 +1111,7 @@ def get_warehouse_items(
                 
             FROM warehouse_items wi
             LEFT JOIN users u ON wi.created_by = u.id
+            LEFT JOIN cities city ON wi.city_id = city.id
 
             LEFT JOIN (
                 SELECT 
@@ -688,6 +1139,10 @@ def get_warehouse_items(
                 sql += " AND wi.status = %s"
                 values.append(status)
 
+            if city_id:
+                sql += " AND wi.city_id = %s"
+                values.append(city_id)
+
             if search:
                 sql += """
                 AND (
@@ -701,7 +1156,7 @@ def get_warehouse_items(
                 like_value = f"%{search}%"
                 values.extend([like_value, like_value, like_value, like_value, like_value])
 
-            sql += " ORDER BY wi.created_at DESC"
+            sql += " ORDER BY city.name ASC, wi.created_at DESC"
 
             cursor.execute(sql, tuple(values))
             return cursor.fetchall()
@@ -725,6 +1180,8 @@ def create_warehouse_item(
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
+            require_city(cursor, data.city_id)
+
             if data.identifier_value:
                 cursor.execute(
                     """
@@ -754,11 +1211,12 @@ def create_warehouse_item(
                 serial_number,
                 is_serialized,
                 quantity,
+                city_id,
                 status,
                 note,
                 created_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
             cursor.execute(sql, (
@@ -771,16 +1229,30 @@ def create_warehouse_item(
                 data.serial_number,
                 data.is_serialized,
                 data.quantity,
+                data.city_id,
                 "IN_STOCK",
                 data.note,
                 current_user["id"],
             ))
 
+            item_id = cursor.lastrowid
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=item_id,
+                action="CREATED",
+                current_user=current_user,
+                from_city_id=None,
+                to_city_id=data.city_id,
+                quantity=data.quantity,
+                reason="Создано вручную"
+            )
+
             connection.commit()
 
             return {
                 "message": "Оборудование добавлено на склад",
-                "item_id": cursor.lastrowid
+                "item_id": item_id
             }
 
     except HTTPException:
@@ -833,6 +1305,15 @@ def update_warehouse_item(
 
             if "status" in update_data and update_data["status"] not in ALLOWED_STATUSES:
                 raise HTTPException(status_code=400, detail="Некорректный статус оборудования")
+            
+            if "city_id" in update_data:
+                if not bool(item["is_serialized"]):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Для расходников используйте перенос количества между городами"
+                    )
+
+                require_city(cursor, update_data["city_id"])
 
             if "identifier_value" in update_data or "identifier_type" in update_data:
                 identifier_type = merged_data.get("identifier_type")
@@ -867,6 +1348,7 @@ def update_warehouse_item(
                 "serial_number",
                 "is_serialized",
                 "quantity",
+                "city_id",
                 "status",
                 "note",
             ]
@@ -890,6 +1372,19 @@ def update_warehouse_item(
             """
 
             cursor.execute(sql, tuple(values))
+
+            if "city_id" in update_data and int(update_data["city_id"]) != int(item["city_id"]):
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="CITY_CHANGED",
+                    current_user=current_user,
+                    from_city_id=item["city_id"],
+                    to_city_id=update_data["city_id"],
+                    quantity=1,
+                    reason="Город изменён через редактирование оборудования"
+                )
+
             connection.commit()
 
             return {
@@ -898,6 +1393,226 @@ def update_warehouse_item(
             }
 
     except HTTPException:
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.post("/items/{item_id}/transfer")
+def transfer_warehouse_item(
+    item_id: int,
+    data: WarehouseItemTransfer,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Перенос оборудования между городами.
+    Серийное оборудование переносится целиком.
+    Расходники переносятся выбранным количеством.
+    """
+    require_warehouse_manage(current_user)
+
+    if data.from_city_id == data.to_city_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Город отправления и город назначения не должны совпадать"
+        )
+
+    if data.quantity <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Количество для переноса должно быть больше 0"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            from_city = require_city(cursor, data.from_city_id)
+            to_city = require_city(cursor, data.to_city_id)
+
+            cursor.execute(
+                """
+                SELECT *
+                FROM warehouse_items
+                WHERE id = %s
+                  AND is_deleted = 0
+                """,
+                (item_id,)
+            )
+            item = cursor.fetchone()
+
+            if not item:
+                raise HTTPException(status_code=404, detail="Оборудование не найдено")
+
+            if item["status"] != "IN_STOCK":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Переносить можно только оборудование со статусом 'На складе'"
+                )
+
+            is_serialized = bool(item["is_serialized"])
+
+            if is_serialized:
+                if int(item["city_id"]) != int(data.from_city_id):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Оборудование находится не в выбранном городе отправления"
+                    )
+
+                if data.quantity != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Для серийного оборудования количество должно быть 1"
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET city_id = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (data.to_city_id, item_id)
+                )
+
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="CITY_TRANSFERRED",
+                    current_user=current_user,
+                    from_city_id=data.from_city_id,
+                    to_city_id=data.to_city_id,
+                    quantity=1,
+                    reason=data.reason,
+                )
+
+                connection.commit()
+
+                return {
+                    "message": "Оборудование перенесено",
+                    "item_id": item_id,
+                    "from_city": from_city["name"],
+                    "to_city": to_city["name"],
+                    "quantity": 1,
+                }
+
+            available_quantity = int(item["quantity"] or 0)
+
+            if int(item["city_id"]) != int(data.from_city_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Расходник находится не в выбранном городе отправления"
+                )
+
+            if data.quantity > available_quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Недостаточно количества для переноса. Доступно: {available_quantity}"
+                )
+
+            target_item = find_consumable_in_city(cursor, item, data.to_city_id)
+
+            if target_item:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = quantity + %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (data.quantity, target_item["id"])
+                )
+
+                target_item_id = target_item["id"]
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO warehouse_items (
+                        category,
+                        name,
+                        manufacturer,
+                        model,
+                        identifier_type,
+                        identifier_value,
+                        serial_number,
+                        is_serialized,
+                        quantity,
+                        city_id,
+                        status,
+                        note,
+                        created_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["category"],
+                        item["name"],
+                        item["manufacturer"],
+                        item["model"],
+                        "NONE",
+                        None,
+                        None,
+                        False,
+                        data.quantity,
+                        data.to_city_id,
+                        "IN_STOCK",
+                        item["note"],
+                        current_user["id"],
+                    )
+                )
+
+                target_item_id = cursor.lastrowid
+
+            new_source_quantity = available_quantity - data.quantity
+
+            cursor.execute(
+                """
+                UPDATE warehouse_items
+                SET quantity = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_source_quantity, item_id)
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=item_id,
+                action="CONSUMABLE_TRANSFERRED_OUT",
+                current_user=current_user,
+                from_city_id=data.from_city_id,
+                to_city_id=data.to_city_id,
+                quantity=data.quantity,
+                reason=data.reason,
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=target_item_id,
+                action="CONSUMABLE_TRANSFERRED_IN",
+                current_user=current_user,
+                from_city_id=data.from_city_id,
+                to_city_id=data.to_city_id,
+                quantity=data.quantity,
+                reason=data.reason,
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Расходник перенесён",
+                "source_item_id": item_id,
+                "target_item_id": target_item_id,
+                "from_city": from_city["name"],
+                "to_city": to_city["name"],
+                "quantity": data.quantity,
+                "source_quantity_left": new_source_quantity,
+            }
+
+    except HTTPException:
+        connection.rollback()
         raise
     except Exception as e:
         connection.rollback()
@@ -990,6 +1705,8 @@ def get_deleted_warehouse_items(current_user: dict = Depends(get_current_user)):
                 wi.serial_number,
                 wi.is_serialized,
                 wi.quantity,
+                wi.city_id,
+                city.name AS city_name,
                 wi.status,
                 wi.note,
                 wi.deleted_at,
@@ -997,6 +1714,7 @@ def get_deleted_warehouse_items(current_user: dict = Depends(get_current_user)):
                 u.name AS deleted_by_name
             FROM warehouse_items wi
             LEFT JOIN users u ON wi.deleted_by = u.id
+            LEFT JOIN cities city ON wi.city_id = city.id
             WHERE wi.is_deleted = 1
             ORDER BY wi.deleted_at DESC
             """
@@ -1096,6 +1814,8 @@ def get_request_equipment(
                     re.request_vehicle_id,
                     re.warehouse_item_id,
                     re.quantity,
+                    wi.city_id,
+                    city.name AS city_name,
                     re.attached_at,
                     re.note,
 
@@ -1121,6 +1841,7 @@ def get_request_equipment(
                 LEFT JOIN request_vehicles rv ON re.request_vehicle_id = rv.id
                 LEFT JOIN vehicles v ON rv.vehicle_id = v.id
                 LEFT JOIN users u ON re.attached_by = u.id
+                LEFT JOIN cities city ON wi.city_id = city.id
                 WHERE re.request_id = %s
                 ORDER BY re.attached_at DESC
                 """,
@@ -1162,6 +1883,8 @@ def detach_equipment_from_request(
                     wi.identifier_value,
                     wi.is_serialized,
                     wi.quantity AS current_quantity,
+                    wi.city_id,
+                    city.name AS city_name,
                     wi.status,
 
                     v.brand,
@@ -1171,6 +1894,7 @@ def detach_equipment_from_request(
                 LEFT JOIN warehouse_items wi ON re.warehouse_item_id = wi.id
                 LEFT JOIN request_vehicles rv ON re.request_vehicle_id = rv.id
                 LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+                LEFT JOIN cities city ON wi.city_id = city.id
                 WHERE re.id = %s
                   AND re.request_id = %s
                 """,
@@ -1331,19 +2055,22 @@ def attach_equipment_to_request_vehicle(
             cursor.execute(
                 """
                 SELECT 
-                    id,
-                    category,
-                    name,
-                    manufacturer,
-                    model,
-                    identifier_type,
-                    identifier_value,
-                    is_serialized,
-                    quantity,
-                    status,
-                    is_deleted
-                FROM warehouse_items
-                WHERE id = %s
+                    wi.id,
+                    wi.category,
+                    wi.name,
+                    wi.manufacturer,
+                    wi.model,
+                    wi.identifier_type,
+                    wi.identifier_value,
+                    wi.is_serialized,
+                    wi.quantity,
+                    wi.city_id,
+                    city.name AS city_name,
+                    wi.status,
+                    wi.is_deleted
+                FROM warehouse_items wi
+                LEFT JOIN cities city ON wi.city_id = city.id
+                WHERE wi.id = %s
                 """,
                 (data.warehouse_item_id,)
             )
@@ -1541,6 +2268,8 @@ def get_request_vehicle_equipment(
                     re.request_vehicle_id,
                     re.warehouse_item_id,
                     re.quantity,
+                    wi.city_id,
+                    city.name AS city_name,
                     re.attached_at,
                     re.note,
 
@@ -1558,6 +2287,7 @@ def get_request_vehicle_equipment(
                 FROM request_equipment re
                 LEFT JOIN warehouse_items wi ON re.warehouse_item_id = wi.id
                 LEFT JOIN users u ON re.attached_by = u.id
+                LEFT JOIN cities city ON wi.city_id = city.id
                 WHERE re.request_vehicle_id = %s
                 ORDER BY re.attached_at DESC
                 """,

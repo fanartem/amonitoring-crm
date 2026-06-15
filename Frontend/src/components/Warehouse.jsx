@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { API_BASE_URL, getAuthHeaders } from '../api'
+import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import { useLocation } from 'react-router-dom'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
@@ -39,8 +39,18 @@ export default function Warehouse() {
 		search: '',
 		category: '',
 		status: '',
+		city_id: '',
 	})
 	const [viewMode, setViewMode] = useState('active') // active | trash
+	const [cities, setCities] = useState([])
+	const [transferItem, setTransferItem] = useState(null)
+	const [transferForm, setTransferForm] = useState({
+		from_city_id: '',
+		to_city_id: '',
+		quantity: 1,
+		reason: '',
+	})
+	const [transferLoading, setTransferLoading] = useState(false)
 
 	const [isModalOpen, setIsModalOpen] = useState(false)
 	const [editItem, setEditItem] = useState(null)
@@ -49,6 +59,10 @@ export default function Warehouse() {
 	const [importPreview, setImportPreview] = useState(null)
 	const [importPreviewOpen, setImportPreviewOpen] = useState(false)
 	const [importConfirmLoading, setImportConfirmLoading] = useState(false)
+
+	const [importFromCityId, setImportFromCityId] = useState('')
+	const [importToCityId, setImportToCityId] = useState('')
+	const [importEditedQuantities, setImportEditedQuantities] = useState({})
 
 	const fileInputRef = useRef(null)
 
@@ -66,6 +80,10 @@ export default function Warehouse() {
 	}, [filters, viewMode])
 
 	useEffect(() => {
+		fetchCities()
+	}, [])
+
+	useEffect(() => {
 		const highlightWarehouseItemId = location.state?.highlightWarehouseItemId
 
 		if (!highlightWarehouseItemId) return
@@ -81,6 +99,7 @@ export default function Warehouse() {
 			search: '',
 			category: '',
 			status: '',
+			city_id: '',
 		})
 	}, [location.state?.searchActionId])
 
@@ -109,6 +128,25 @@ export default function Warehouse() {
 		return () => clearTimeout(timeout)
 	}, [items, pendingHighlightItemId])
 
+	const fetchCities = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/cities`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) {
+				const data = await res.json()
+				setCities(
+					Array.isArray(data)
+						? data.filter(city => city.is_active !== false)
+						: [],
+				)
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки городов:', err)
+		}
+	}
+
 	const fetchItems = async () => {
 		setLoading(true)
 
@@ -118,6 +156,7 @@ export default function Warehouse() {
 			if (filters.category) params.append('category', filters.category)
 			if (filters.status) params.append('status', filters.status)
 			if (filters.search) params.append('search', filters.search)
+			if (filters.city_id) params.append('city_id', filters.city_id)
 
 			const [flatRes, groupedRes] = await Promise.all([
 				fetch(`${API_BASE_URL}/warehouse/items?${params.toString()}`, {
@@ -209,7 +248,7 @@ export default function Warehouse() {
 	const handleFilterChange = e =>
 		setFilters({ ...filters, [e.target.name]: e.target.value })
 	const resetFilters = () =>
-		setFilters({ search: '', category: '', status: '' })
+		setFilters({ search: '', category: '', status: '', city_id: '' })
 
 	const handleDelete = async id => {
 		if (!window.confirm('Переместить оборудование в корзину?')) return
@@ -260,8 +299,18 @@ export default function Warehouse() {
 		if (!file) return
 
 		try {
-			const preview = await buildImportPreview(file)
+			const defaultFromCityId = getDefaultAlmatyCityId()
+			const defaultToCityId = filters.city_id || defaultFromCityId
 
+			const preview = await buildImportPreview(
+				file,
+				defaultFromCityId,
+				defaultToCityId,
+			)
+
+			setImportFromCityId(defaultFromCityId)
+			setImportToCityId(defaultToCityId)
+			setImportEditedQuantities({})
 			setPendingImportFile(file)
 			setImportPreview(preview)
 			setImportPreviewOpen(true)
@@ -275,10 +324,26 @@ export default function Warehouse() {
 	const handleConfirmImport = async () => {
 		if (!pendingImportFile) return
 
+		if (!importFromCityId) {
+			alert('Выберите город отправления')
+			return
+		}
+
+		if (!importToCityId) {
+			alert('Выберите город назначения')
+			return
+		}
+
 		setImportConfirmLoading(true)
 
 		const formData = new FormData()
 		formData.append('file', pendingImportFile)
+		formData.append('from_city_id', importFromCityId)
+		formData.append('to_city_id', importToCityId)
+		formData.append(
+			'edited_quantities_json',
+			JSON.stringify(importEditedQuantities),
+		)
 
 		try {
 			const res = await fetch(`${API_BASE_URL}/warehouse/import`, {
@@ -296,6 +361,9 @@ export default function Warehouse() {
 			setImportPreviewOpen(false)
 			setImportPreview(null)
 			setPendingImportFile(null)
+			setImportFromCityId('')
+			setImportToCityId('')
+			setImportEditedQuantities({})
 
 			setImportResult(buildImportMessage(data))
 			fetchItems()
@@ -310,6 +378,67 @@ export default function Warehouse() {
 		setImportPreviewOpen(false)
 		setImportPreview(null)
 		setPendingImportFile(null)
+		setImportFromCityId('')
+		setImportToCityId('')
+		setImportEditedQuantities({})
+	}
+
+	const rebuildImportPreviewWithCities = async (fromCityId, toCityId) => {
+		if (!pendingImportFile) return
+
+		try {
+			const preview = await buildImportPreview(
+				pendingImportFile,
+				fromCityId,
+				toCityId,
+			)
+			setImportPreview(preview)
+			setImportEditedQuantities({})
+		} catch (err) {
+			alert(`Ошибка проверки CSV: ${err.message}`)
+		}
+	}
+
+	const handleImportFromCityChange = e => {
+		const nextFromCityId = e.target.value
+		setImportFromCityId(nextFromCityId)
+		rebuildImportPreviewWithCities(nextFromCityId, importToCityId)
+	}
+
+	const handleImportToCityChange = e => {
+		const nextToCityId = e.target.value
+		setImportToCityId(nextToCityId)
+		rebuildImportPreviewWithCities(importFromCityId, nextToCityId)
+	}
+
+	const handleImportQuantityChange = (rowNumber, value) => {
+		const quantity = Math.max(1, Number(value || 1))
+
+		setImportEditedQuantities(prev => ({
+			...prev,
+			[String(rowNumber)]: quantity,
+		}))
+
+		setImportPreview(prev => {
+			if (!prev) return prev
+
+			const updateRows = rows =>
+				rows.map(row =>
+					Number(row.rowNumber) === Number(rowNumber)
+						? {
+								...row,
+								quantity: String(quantity),
+							}
+						: row,
+				)
+
+			return {
+				...prev,
+				validRows: updateRows(prev.validRows || []),
+				consumableTransferRows: updateRows(prev.consumableTransferRows || []),
+				consumableAddRows: updateRows(prev.consumableAddRows || []),
+			}
+		})
 	}
 
 	const parseCsvLine = line => {
@@ -416,7 +545,7 @@ export default function Warehouse() {
 		return Array.isArray(data) ? data : []
 	}
 
-	const buildImportPreview = async file => {
+	const buildImportPreview = async (file, fromCityId, toCityId) => {
 		const text = await readFileAsText(file)
 		const cleanedText = text.replace(/^\uFEFF/, '')
 		const lines = cleanedText
@@ -446,6 +575,9 @@ export default function Warehouse() {
 
 		const activeItems = await fetchAllActiveWarehouseItems()
 
+		const fromCityName = getCityName(fromCityId)
+		const toCityName = getCityName(toCityId)
+
 		const existingKeys = new Map()
 
 		activeItems.forEach(item => {
@@ -463,6 +595,9 @@ export default function Warehouse() {
 
 		const validRows = []
 		const duplicateRows = []
+		const transferRows = []
+		const consumableTransferRows = []
+		const consumableAddRows = []
 		const invalidRows = []
 
 		rows.forEach(rowInfo => {
@@ -546,10 +681,40 @@ export default function Warehouse() {
 
 			if (key && existingKeys.has(key)) {
 				const existingItem = existingKeys.get(key)
+				const existingCityId = Number(existingItem.city_id)
+				const fromId = Number(fromCityId)
+				const toId = Number(toCityId)
 
-				duplicateRows.push({
+				if (existingCityId === toId) {
+					duplicateRows.push({
+						...itemPreview,
+						reason: `Уже есть в городе ${existingItem.city_name || getCityName(existingItem.city_id)}`,
+						existing_item: existingItem,
+					})
+					return
+				}
+
+				if (existingCityId === fromId) {
+					if (existingItem.status !== 'IN_STOCK') {
+						invalidRows.push({
+							...itemPreview,
+							reason: `Нельзя перенести: статус ${STATUSES[existingItem.status] || existingItem.status}`,
+							existing_item: existingItem,
+						})
+						return
+					}
+
+					transferRows.push({
+						...itemPreview,
+						reason: `Будет перенесено: ${existingItem.city_name || fromCityName} → ${toCityName}`,
+						existing_item: existingItem,
+					})
+					return
+				}
+
+				invalidRows.push({
 					...itemPreview,
-					reason: 'Уже есть на складе',
+					reason: `Устройство найдено в другом городе: ${existingItem.city_name || getCityName(existingItem.city_id)}. Выберите этот город как “Из города”.`,
 					existing_item: existingItem,
 				})
 				return
@@ -563,6 +728,81 @@ export default function Warehouse() {
 				return
 			}
 
+			if (!isSerialized) {
+				const quantityNumber = Math.max(1, Number(itemPreview.quantity || 1))
+
+				const consumableRow = {
+					...itemPreview,
+					quantity: String(quantityNumber),
+					from_city_id: fromCityId,
+					to_city_id: toCityId,
+				}
+
+				if (Number(fromCityId) === Number(toCityId)) {
+					consumableAddRows.push({
+						...consumableRow,
+						reason: `Будет добавлено/суммировано в городе ${toCityName}`,
+					})
+					return
+				}
+
+				const sourceItem = activeItems.find(item => {
+					if (item.is_serialized) return false
+					if (Number(item.city_id) !== Number(fromCityId)) return false
+
+					const sameCategory =
+						String(item.category || '') === String(category || '')
+					const sameName =
+						String(item.name || '')
+							.trim()
+							.toLowerCase() ===
+						String(name || '')
+							.trim()
+							.toLowerCase()
+					const sameManufacturer =
+						String(item.manufacturer || '')
+							.trim()
+							.toLowerCase() ===
+						String(manufacturer || '')
+							.trim()
+							.toLowerCase()
+					const sameModel =
+						String(item.model || '')
+							.trim()
+							.toLowerCase() ===
+						String(model || '')
+							.trim()
+							.toLowerCase()
+
+					return sameCategory && sameName && sameManufacturer && sameModel
+				})
+
+				if (!sourceItem) {
+					invalidRows.push({
+						...consumableRow,
+						reason: `Расходник не найден в городе отправления: ${fromCityName}`,
+					})
+					return
+				}
+
+				if (quantityNumber > Number(sourceItem.quantity || 0)) {
+					invalidRows.push({
+						...consumableRow,
+						reason: `Недостаточно в городе ${fromCityName}. Доступно: ${sourceItem.quantity || 0}`,
+						existing_item: sourceItem,
+					})
+					return
+				}
+
+				consumableTransferRows.push({
+					...consumableRow,
+					reason: `Будет перенесено: ${fromCityName} → ${toCityName}`,
+					existing_item: sourceItem,
+				})
+
+				return
+			}
+
 			if (key) {
 				fileKeys.set(key, rowInfo.rowNumber)
 			}
@@ -573,8 +813,15 @@ export default function Warehouse() {
 		return {
 			fileName: file.name,
 			totalRows: rows.length,
+			fromCityId,
+			toCityId,
+			fromCityName,
+			toCityName,
 			validRows,
 			duplicateRows,
+			transferRows,
+			consumableTransferRows,
+			consumableAddRows,
 			invalidRows,
 		}
 	}
@@ -582,7 +829,12 @@ export default function Warehouse() {
 	const buildImportMessage = data => {
 		const lines = []
 
-		lines.push(`Добавлено: ${data.imported_count || 0}`)
+		lines.push(`Добавлено новых объектов: ${data.imported_count || 0}`)
+		lines.push(`Перенесено серийных объектов: ${data.transferred_count || 0}`)
+		lines.push(
+			`Обновлено/перенесено расходников: ${data.consumables_updated_count || 0}`,
+		)
+		lines.push(`Пропущено: ${data.skipped_count || 0}`)
 
 		const errors = data.errors || []
 
@@ -690,6 +942,119 @@ export default function Warehouse() {
 		)
 	}
 
+	const getCityName = cityId => {
+		const city = cities.find(item => Number(item.id) === Number(cityId))
+		return city?.name || '—'
+	}
+
+	const getDefaultAlmatyCityId = () => {
+		const almaty = cities.find(city =>
+			String(city.name || '')
+				.toLowerCase()
+				.includes('алматы'),
+		)
+
+		return almaty?.id || cities[0]?.id || ''
+	}
+
+	const openTransferModal = item => {
+		setTransferItem(item)
+		setTransferForm({
+			from_city_id: item.city_id || '',
+			to_city_id: '',
+			quantity: item.is_serialized ? 1 : 1,
+			reason: '',
+		})
+	}
+
+	const closeTransferModal = () => {
+		setTransferItem(null)
+		setTransferForm({
+			from_city_id: '',
+			to_city_id: '',
+			quantity: 1,
+			reason: '',
+		})
+	}
+
+	const handleTransferChange = e => {
+		const { name, value } = e.target
+
+		setTransferForm(prev => ({
+			...prev,
+			[name]: value,
+		}))
+	}
+
+	const handleTransferSubmit = async e => {
+		e.preventDefault()
+
+		if (!transferItem) return
+
+		if (!transferForm.from_city_id) {
+			alert('Выберите город отправления')
+			return
+		}
+
+		if (!transferForm.to_city_id) {
+			alert('Выберите город назначения')
+			return
+		}
+
+		if (Number(transferForm.from_city_id) === Number(transferForm.to_city_id)) {
+			alert('Город отправления и город назначения не должны совпадать')
+			return
+		}
+
+		const quantity = transferItem.is_serialized
+			? 1
+			: Number(transferForm.quantity || 0)
+
+		if (quantity <= 0) {
+			alert('Количество должно быть больше 0')
+			return
+		}
+
+		if (
+			!transferItem.is_serialized &&
+			quantity > Number(transferItem.quantity || 0)
+		) {
+			alert(`Недостаточно количества. Доступно: ${transferItem.quantity || 0}`)
+			return
+		}
+
+		setTransferLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/warehouse/items/${transferItem.id}/transfer`,
+				{
+					method: 'POST',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						from_city_id: Number(transferForm.from_city_id),
+						to_city_id: Number(transferForm.to_city_id),
+						quantity,
+						reason: transferForm.reason.trim() || null,
+					}),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Ошибка переноса')
+			}
+
+			closeTransferModal()
+			fetchItems()
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setTransferLoading(false)
+		}
+	}
+
 	const renderWarehouseItemRow = item => {
 		return (
 			<tr
@@ -759,6 +1124,14 @@ export default function Warehouse() {
 
 				<td style={{ padding: '12px 15px' }}>
 					<div className='cell-value'>
+						<span className='warehouse-city-badge'>
+							{item.city_name || getCityName(item.city_id)}
+						</span>
+					</div>
+				</td>
+
+				<td style={{ padding: '12px 15px' }}>
+					<div className='cell-value'>
 						<span
 							style={{
 								background: STATUS_COLORS[item.status] || '#888',
@@ -804,6 +1177,14 @@ export default function Warehouse() {
 					<div className='cell-value warehouse-cell-actions'>
 						{viewMode === 'active' ? (
 							<div className='warehouse-actions'>
+								<button
+									className='warehouse-action-btn warehouse-transfer-btn'
+									onClick={() => openTransferModal(item)}
+									title='Перенести в другой город'
+								>
+									↔
+								</button>
+
 								<button
 									className='warehouse-action-btn warehouse-edit-btn'
 									onClick={() => openEdit(item)}
@@ -964,6 +1345,23 @@ export default function Warehouse() {
 						))}
 					</select>
 				</div>
+				<div className='filter-group'>
+					<label>Город склада</label>
+					<select
+						className='filter-select'
+						name='city_id'
+						value={filters.city_id}
+						onChange={handleFilterChange}
+					>
+						<option value=''>Все города</option>
+
+						{cities.map(city => (
+							<option key={city.id} value={city.id}>
+								{city.name}
+							</option>
+						))}
+					</select>
+				</div>
 				<button
 					className='btn-reset warehouse-btn-reset'
 					onClick={resetFilters}
@@ -1002,6 +1400,7 @@ export default function Warehouse() {
 							<th style={{ padding: '12px 15px' }}>Категория</th>
 							<th style={{ padding: '12px 15px' }}>Идентификатор</th>
 							<th style={{ padding: '12px 15px' }}>Кол-во</th>
+							<th style={{ padding: '12px 15px' }}>Город</th>
 							<th style={{ padding: '12px 15px' }}>Статус</th>
 							<th style={{ padding: '12px 15px' }}>Клиент</th>
 							<th style={{ padding: '12px 15px' }}>Гос. номер</th>
@@ -1015,7 +1414,7 @@ export default function Warehouse() {
 						{loading ? (
 							<tr className='warehouse-no-data-row'>
 								<td
-									colSpan='9'
+									colSpan='10'
 									style={{ padding: '20px', textAlign: 'center' }}
 								>
 									Загрузка...
@@ -1024,7 +1423,7 @@ export default function Warehouse() {
 						) : viewMode === 'active' && groupedItems.length === 0 ? (
 							<tr className='warehouse-no-data-row'>
 								<td
-									colSpan='9'
+									colSpan='10'
 									style={{
 										padding: '20px',
 										textAlign: 'center',
@@ -1037,7 +1436,7 @@ export default function Warehouse() {
 						) : viewMode === 'trash' && items.length === 0 ? (
 							<tr className='warehouse-no-data-row'>
 								<td
-									colSpan='9'
+									colSpan='10'
 									style={{
 										padding: '20px',
 										textAlign: 'center',
@@ -1061,7 +1460,7 @@ export default function Warehouse() {
 								return (
 									<React.Fragment key={categoryGroup.category}>
 										<tr className='warehouse-category-row'>
-											<td colSpan='9'>
+											<td colSpan='10'>
 												<button
 													type='button'
 													className='warehouse-tree-row warehouse-category-toggle'
@@ -1100,7 +1499,7 @@ export default function Warehouse() {
 												return (
 													<React.Fragment key={groupKey}>
 														<tr className='warehouse-item-group-row'>
-															<td colSpan='9'>
+															<td colSpan='10'>
 																<button
 																	type='button'
 																	className='warehouse-tree-row warehouse-item-group-toggle'
@@ -1147,6 +1546,7 @@ export default function Warehouse() {
 			<WarehouseItemModal
 				isOpen={isModalOpen}
 				editItem={editItem}
+				cities={cities}
 				onClose={() => {
 					setIsModalOpen(false)
 					setEditItem(null)
@@ -1184,10 +1584,18 @@ export default function Warehouse() {
 
 								<div className='import-preview-stats'>
 									<div className='import-preview-stat success'>
-										К импорту: {importPreview.validRows.length}
+										Новые: {importPreview.validRows.length}
+									</div>
+									<div className='import-preview-stat transfer'>
+										Перенос серийных: {importPreview.transferRows.length}
+									</div>
+									<div className='import-preview-stat success'>
+										Расходники:{' '}
+										{(importPreview.consumableTransferRows?.length || 0) +
+											(importPreview.consumableAddRows?.length || 0)}
 									</div>
 									<div className='import-preview-stat warning'>
-										Уже существуют: {importPreview.duplicateRows.length}
+										Дубликаты: {importPreview.duplicateRows.length}
 									</div>
 									<div className='import-preview-stat danger'>
 										Ошибки: {importPreview.invalidRows.length}
@@ -1195,15 +1603,49 @@ export default function Warehouse() {
 								</div>
 							</div>
 
-							<div className='import-preview-columns'>
+							<div className='import-city-controls'>
+								<label className='warehouse-field'>
+									<span className='warehouse-label required'>Из города</span>
+									<select
+										className='warehouse-input'
+										value={importFromCityId}
+										onChange={handleImportFromCityChange}
+									>
+										<option value=''>Выберите город</option>
+										{cities.map(city => (
+											<option key={city.id} value={city.id}>
+												{city.name}
+											</option>
+										))}
+									</select>
+								</label>
+
+								<label className='warehouse-field'>
+									<span className='warehouse-label required'>В город</span>
+									<select
+										className='warehouse-input'
+										value={importToCityId}
+										onChange={handleImportToCityChange}
+									>
+										<option value=''>Выберите город</option>
+										{cities.map(city => (
+											<option key={city.id} value={city.id}>
+												{city.name}
+											</option>
+										))}
+									</select>
+								</label>
+							</div>
+
+							<div className='import-preview-columns import-preview-columns-wide'>
 								<div className='import-preview-section'>
 									<div className='import-preview-section-title success'>
-										Будут импортированы
+										Новые объекты
 									</div>
 
 									{importPreview.validRows.length === 0 ? (
 										<div className='import-preview-empty'>
-											Нет строк для импорта
+											Нет новых объектов
 										</div>
 									) : (
 										<div className='import-preview-list'>
@@ -1215,35 +1657,112 @@ export default function Warehouse() {
 													<div className='import-preview-row-subtitle'>
 														{row.identifier_type}: {row.identifier_value || '—'}
 														{row.model ? ` · ${row.model}` : ''}
+														{' · '}в город {importPreview.toCityName}
 													</div>
 												</div>
 											))}
+										</div>
+									)}
+								</div>
 
-											{importPreview.validRows.length > 50 && (
-												<div className='import-preview-more'>
-													Показаны первые 50 строк из{' '}
-													{importPreview.validRows.length}
+								<div className='import-preview-section'>
+									<div className='import-preview-section-title transfer'>
+										Перенос серийных
+									</div>
+
+									{(importPreview.transferRows || []).length === 0 ? (
+										<div className='import-preview-empty'>
+											Нет серийных для переноса
+										</div>
+									) : (
+										<div className='import-preview-list'>
+											{importPreview.transferRows.slice(0, 50).map(row => (
+												<div
+													key={row.rowNumber}
+													className='import-preview-row transfer'
+												>
+													<div className='import-preview-row-title'>
+														Строка {row.rowNumber}: {row.name}
+													</div>
+													<div className='import-preview-row-subtitle'>
+														{row.identifier_type}: {row.identifier_value || '—'}
+													</div>
+													<div className='import-preview-row-reason neutral'>
+														{row.reason}
+													</div>
 												</div>
-											)}
+											))}
+										</div>
+									)}
+								</div>
+
+								<div className='import-preview-section'>
+									<div className='import-preview-section-title success'>
+										Расходники
+									</div>
+
+									{[
+										...(importPreview.consumableTransferRows || []),
+										...(importPreview.consumableAddRows || []),
+									].length === 0 ? (
+										<div className='import-preview-empty'>Нет расходников</div>
+									) : (
+										<div className='import-preview-list'>
+											{[
+												...(importPreview.consumableTransferRows || []),
+												...(importPreview.consumableAddRows || []),
+											]
+												.slice(0, 50)
+												.map(row => (
+													<div
+														key={row.rowNumber}
+														className='import-preview-row'
+													>
+														<div className='import-preview-row-title'>
+															Строка {row.rowNumber}: {row.name}
+														</div>
+
+														<div className='import-preview-row-subtitle'>
+															{row.reason}
+														</div>
+
+														<label className='import-preview-quantity-field'>
+															<span>Кол-во:</span>
+															<input
+																type='number'
+																min='1'
+																value={row.quantity}
+																onChange={e =>
+																	handleImportQuantityChange(
+																		row.rowNumber,
+																		e.target.value,
+																	)
+																}
+															/>
+														</label>
+													</div>
+												))}
 										</div>
 									)}
 								</div>
 
 								<div className='import-preview-section'>
 									<div className='import-preview-section-title warning'>
-										Не будут импортированы
+										Дубликаты / ошибки
 									</div>
 
-									{importPreview.duplicateRows.length === 0 &&
-									importPreview.invalidRows.length === 0 ? (
+									{[
+										...(importPreview.duplicateRows || []),
+										...(importPreview.invalidRows || []),
+									].length === 0 ? (
 										<div className='import-preview-empty'>
 											Проблем не найдено
 										</div>
 									) : (
 										<div className='import-preview-list'>
 											{[
-												...importPreview.duplicateRows,
-												...importPreview.invalidRows,
+												...(importPreview.duplicateRows || []),
+												...(importPreview.invalidRows || []),
 											]
 												.slice(0, 50)
 												.map(row => (
@@ -1264,14 +1783,6 @@ export default function Warehouse() {
 														</div>
 													</div>
 												))}
-
-											{importPreview.duplicateRows.length +
-												importPreview.invalidRows.length >
-												50 && (
-												<div className='import-preview-more'>
-													Показаны первые 50 проблемных строк
-												</div>
-											)}
 										</div>
 									)}
 								</div>
@@ -1299,14 +1810,153 @@ export default function Warehouse() {
 								type='button'
 								onClick={handleConfirmImport}
 								disabled={
-									importConfirmLoading || importPreview.validRows.length === 0
+									importConfirmLoading ||
+									!importFromCityId ||
+									!importToCityId ||
+									(importPreview.validRows.length === 0 &&
+										(importPreview.transferRows || []).length === 0 &&
+										(importPreview.consumableTransferRows || []).length === 0 &&
+										(importPreview.consumableAddRows || []).length === 0)
 								}
 							>
 								{importConfirmLoading
 									? 'Импорт...'
-									: `Подтвердить импорт (${importPreview.validRows.length})`}
+									: 'Подтвердить импорт / перенос'}
 							</button>
 						</div>
+					</div>
+				</div>
+			)}
+
+			{transferItem && (
+				<div className='modal-overlay open' onClick={closeTransferModal}>
+					<div
+						className='modal-window warehouse-transfer-modal'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>Перенос оборудования</span>
+							<button
+								className='modal-close'
+								type='button'
+								onClick={closeTransferModal}
+							>
+								&times;
+							</button>
+						</div>
+
+						<form onSubmit={handleTransferSubmit}>
+							<div className='warehouse-transfer-body'>
+								<div className='warehouse-transfer-item-card'>
+									<div className='warehouse-transfer-item-title'>
+										{transferItem.name}
+										{transferItem.model ? ` ${transferItem.model}` : ''}
+									</div>
+
+									<div className='warehouse-transfer-item-meta'>
+										{transferItem.is_serialized ? (
+											<>
+												{transferItem.identifier_type}:{' '}
+												{transferItem.identifier_value}
+											</>
+										) : (
+											<>Расходник · доступно: {transferItem.quantity} шт.</>
+										)}
+									</div>
+								</div>
+
+								<div className='warehouse-form-grid'>
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>Из города</span>
+										<select
+											className='warehouse-input'
+											name='from_city_id'
+											value={transferForm.from_city_id}
+											onChange={handleTransferChange}
+										>
+											<option value=''>Выберите город</option>
+
+											{cities.map(city => (
+												<option key={city.id} value={city.id}>
+													{city.name}
+												</option>
+											))}
+										</select>
+									</label>
+
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>В город</span>
+										<select
+											className='warehouse-input'
+											name='to_city_id'
+											value={transferForm.to_city_id}
+											onChange={handleTransferChange}
+										>
+											<option value=''>Выберите город</option>
+
+											{cities.map(city => (
+												<option key={city.id} value={city.id}>
+													{city.name}
+												</option>
+											))}
+										</select>
+									</label>
+
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>Количество</span>
+										<input
+											className={`warehouse-input ${
+												transferItem.is_serialized
+													? 'warehouse-disabled-input'
+													: ''
+											}`}
+											type='number'
+											name='quantity'
+											min='1'
+											max={
+												transferItem.is_serialized ? 1 : transferItem.quantity
+											}
+											value={
+												transferItem.is_serialized ? 1 : transferForm.quantity
+											}
+											disabled={transferItem.is_serialized}
+											onChange={handleTransferChange}
+										/>
+									</label>
+
+									<label className='warehouse-field'>
+										<span className='warehouse-label'>Причина</span>
+										<input
+											className='warehouse-input'
+											type='text'
+											name='reason'
+											value={transferForm.reason}
+											onChange={handleTransferChange}
+											placeholder='Например: передано на склад Астана'
+										/>
+									</label>
+								</div>
+							</div>
+
+							<div className='modal-footer warehouse-modal-footer'>
+								<button
+									className='modal-cancel-btn'
+									type='button'
+									onClick={closeTransferModal}
+									disabled={transferLoading}
+								>
+									Отмена
+								</button>
+
+								<button
+									className='warehouse-submit-btn'
+									type='submit'
+									disabled={transferLoading}
+								>
+									{transferLoading ? 'Перенос...' : 'Перенести'}
+								</button>
+							</div>
+						</form>
 					</div>
 				</div>
 			)}
