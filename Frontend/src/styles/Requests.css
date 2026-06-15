@@ -274,13 +274,14 @@
   flex-direction: column;
   background: #fcfcfc;
   border-radius: 8px;
-  overflow: hidden;
+  
 }
 
 .custom-tabs {
   display: flex;
   flex-shrink: 0;
   border-bottom: 1px solid #eaeaea;
+  border-radius: 8px 8px 0 0;  
   padding: 0 20px;
   background: #fff;
   outline: none;
@@ -372,6 +373,7 @@
   padding: 15px 20px;
   background: #fff;
   border-top: 1px solid #eaeaea;
+  border-radius: 0 0 8px 8px;  
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -395,6 +397,58 @@
 
 .footer-select:focus {
   border-color: #5e9424;
+}
+
+.footer-tech-search {
+  position: relative;
+}
+
+.footer-tech-input {
+  padding: 4px 8px;
+  font-size: 13px;
+  max-width: 160px;
+  width: 160px;
+  box-sizing: border-box;
+}
+
+.footer-tech-dropdown {
+  position: absolute;
+  bottom: calc(100% + 4px);  
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #eaeaea;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.footer-tech-option {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+}
+
+.footer-tech-option:hover {
+  background: #f5f5f5;
+}
+
+.footer-tech-option.active {
+  background: #f1f8e9;
+  color: #558b2f;
+  font-weight: 700;
+}
+
+.footer-tech-option-empty {
+  color: #999;
+  cursor: default;
+}
+
+.footer-tech-option-empty:hover {
+  background: transparent;
 }
 
 @media (max-width: 768px) {
@@ -1118,6 +1172,13 @@
 
   .footer-group {
     justify-content: space-between;
+  }
+
+  .footer-tech-search,
+  .footer-tech-input {
+    width: 100%;
+    max-width: none;
+    flex: 1;
   }
 
   .role-actions-wrapper {

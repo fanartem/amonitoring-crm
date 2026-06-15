@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/Requests.css'
 
@@ -77,6 +77,9 @@ export default function RequestDetailModal({
 	const [newComment, setNewComment] = useState('')
 	const [technicians, setTechnicians] = useState([])
 	const [selectedTech, setSelectedTech] = useState('')
+	const [techSearchTerm, setTechSearchTerm] = useState('')
+	const [isTechDropdownOpen, setTechDropdownOpen] = useState(false)
+	const techSearchRef = useRef(null)
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState('')
 
@@ -101,6 +104,12 @@ export default function RequestDetailModal({
 
 	const canManageEquipment = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
 
+	const filteredTechnicians = techSearchTerm.trim()
+		? technicians.filter(t =>
+				t.name.toLowerCase().includes(techSearchTerm.trim().toLowerCase()),
+			)
+		: technicians
+
 	useEffect(() => {
 		const handleKeyDown = e => {
 			if (e.key === 'Escape') onClose()
@@ -121,8 +130,25 @@ export default function RequestDetailModal({
 	useEffect(() => {
 		if (request) {
 			setSelectedTech(request.assigned_to ? request.assigned_to.toString() : '')
+			setTechSearchTerm(
+				request.assigned_to ? getTechName(request.assigned_to) : '',
+			)
 		}
-	}, [request])
+	}, [request, technicians])
+
+	useEffect(() => {
+		const handleClickOutside = e => {
+			if (
+				techSearchRef.current &&
+				!techSearchRef.current.contains(e.target)
+			) {
+				setTechDropdownOpen(false)
+			}
+		}
+
+		document.addEventListener('mousedown', handleClickOutside)
+		return () => document.removeEventListener('mousedown', handleClickOutside)
+	}, [])
 
 	useEffect(() => {
 		if (userRole === 'TECH_SUPPORT' && activeTab === 'equipment') {
@@ -1036,23 +1062,63 @@ export default function RequestDetailModal({
 							request.status !== 'CANCELLED' ? (
 								<div className='footer-group'>
 									<span style={{ fontSize: '13px' }}>Монтажник:</span>
-									<select
-										className='footer-select'
-										style={{
-											padding: '4px 8px',
-											fontSize: '13px',
-											maxWidth: '160px',
-										}}
-										value={selectedTech}
-										onChange={e => setSelectedTech(e.target.value)}
-									>
-										<option value=''>— не назначен —</option>
-										{technicians.map(t => (
-											<option key={t.id} value={t.id}>
-												{t.name}
-											</option>
-										))}
-									</select>
+
+									<div className='footer-tech-search' ref={techSearchRef}>
+										<input
+											className='footer-select footer-tech-input'
+											type='text'
+											placeholder='Поиск...'
+											value={techSearchTerm}
+											onChange={e => {
+												setTechSearchTerm(e.target.value)
+												setTechDropdownOpen(true)
+												if (selectedTech) setSelectedTech('')
+											}}
+											onFocus={() => setTechDropdownOpen(true)}
+										/>
+
+										{isTechDropdownOpen && (
+											<div className='footer-tech-dropdown'>
+												<div
+													className={`footer-tech-option ${
+														!selectedTech ? 'active' : ''
+													}`}
+													onClick={() => {
+														setSelectedTech('')
+														setTechSearchTerm('')
+														setTechDropdownOpen(false)
+													}}
+												>
+													— не назначен —
+												</div>
+
+												{filteredTechnicians.length === 0 ? (
+													<div className='footer-tech-option footer-tech-option-empty'>
+														Не найдено
+													</div>
+												) : (
+													filteredTechnicians.map(t => (
+														<div
+															key={t.id}
+															className={`footer-tech-option ${
+																String(t.id) === String(selectedTech)
+																	? 'active'
+																	: ''
+															}`}
+															onClick={() => {
+																setSelectedTech(String(t.id))
+																setTechSearchTerm(t.name)
+																setTechDropdownOpen(false)
+															}}
+														>
+															{t.name}
+														</div>
+													))
+												)}
+											</div>
+										)}
+									</div>
+
 									<button
 										className='btn-green'
 										style={{ padding: '5px 12px', fontSize: '13px' }}
