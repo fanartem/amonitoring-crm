@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/Prices.css'
 
@@ -70,6 +70,10 @@ export default function Prices() {
 	const [editingClientPriceId, setEditingClientPriceId] = useState(null)
 	const [clientPriceValue, setClientPriceValue] = useState('')
 
+	const [clientSearchTerm, setClientSearchTerm] = useState('')
+	const [isClientDropdownOpen, setClientDropdownOpen] = useState(false)
+	const clientSearchRef = useRef(null)
+
 	const userRole = getUserRole()
 
 	const canReadPrices = [
@@ -97,6 +101,31 @@ export default function Prices() {
 			setClientPrices([])
 		}
 	}, [selectedClientId])
+
+	useEffect(() => {
+		if (isCreateModalOpen) {
+			const previousOverflow = document.body.style.overflow
+			document.body.style.overflow = 'hidden'
+
+			return () => {
+				document.body.style.overflow = previousOverflow
+			}
+		}
+	}, [isCreateModalOpen])
+
+	useEffect(() => {
+		const handleClickOutside = e => {
+			if (
+				clientSearchRef.current &&
+				!clientSearchRef.current.contains(e.target)
+			) {
+				setClientDropdownOpen(false)
+			}
+		}
+
+		document.addEventListener('mousedown', handleClickOutside)
+		return () => document.removeEventListener('mousedown', handleClickOutside)
+	}, [])
 
 	const fetchPrices = async () => {
 		setLoading(true)
@@ -425,6 +454,38 @@ export default function Prices() {
 			? clients.filter(client => client.can_edit || client.can_create_request)
 			: clients
 
+	const filteredClientsForPrices = clientSearchTerm.trim()
+		? visibleClientsForPrices.filter(client =>
+				getClientDisplayName(client)
+					.toLowerCase()
+					.includes(clientSearchTerm.trim().toLowerCase()),
+			)
+		: visibleClientsForPrices
+
+	const handleSelectClientForPrices = client => {
+		setSelectedClientId(String(client.id))
+		setClientSearchTerm(getClientDisplayName(client))
+		setClientDropdownOpen(false)
+		cancelEditClientPrice()
+	}
+
+	const handleClientSearchChange = value => {
+		setClientSearchTerm(value)
+		setClientDropdownOpen(true)
+
+		if (selectedClientId) {
+			setSelectedClientId('')
+			cancelEditClientPrice()
+		}
+	}
+
+	const handleClearClientSelection = () => {
+		setSelectedClientId('')
+		setClientSearchTerm('')
+		setClientDropdownOpen(false)
+		cancelEditClientPrice()
+	}
+
 	return (
 		<div className='prices-page'>
 			<div className='prices-header'>
@@ -487,22 +548,22 @@ export default function Prices() {
 															!price.is_active ? 'prices-muted-row' : ''
 														}
 													>
-														<td>
+														<td data-label='Наименование'>
 															<strong>{price.name}</strong>
 														</td>
-														<td>
+														<td data-label='Код'>
 															<span className='prices-code'>{price.code}</span>
 														</td>
-														<td>{formatMoney(price.default_price)}</td>
-														<td>{price.unit || 'шт'}</td>
-														<td>
+														<td data-label='Цена'>{formatMoney(price.default_price)}</td>
+														<td data-label='Ед.'>{price.unit || 'шт'}</td>
+														<td data-label='Статус'>
 															<span
 																className={`prices-status ${price.is_active ? 'active' : 'inactive'}`}
 															>
 																{price.is_active ? 'Активна' : 'Отключена'}
 															</span>
 														</td>
-														<td>
+														<td className='prices-actions-cell'>
 															<div className='prices-actions'>
 																{canManageBasePrices ? (
 																	<>
@@ -554,25 +615,55 @@ export default function Prices() {
 						</div>
 					</div>
 
-					<label className='prices-field'>
+					<div className='prices-field prices-client-search' ref={clientSearchRef}>
 						<span>Клиент</span>
-						<select
-							className='prices-input'
-							value={selectedClientId}
-							onChange={e => {
-								setSelectedClientId(e.target.value)
-								cancelEditClientPrice()
-							}}
-						>
-							<option value=''>— выберите клиента —</option>
 
-							{visibleClientsForPrices.map(client => (
-								<option key={client.id} value={client.id}>
-									{getClientDisplayName(client)}
-								</option>
-							))}
-						</select>
-					</label>
+						<div className='prices-client-search-input-wrap'>
+							<input
+								className='prices-input'
+								type='text'
+								placeholder='Имя клиента...'
+								value={clientSearchTerm}
+								onChange={e => handleClientSearchChange(e.target.value)}
+								onFocus={() => setClientDropdownOpen(true)}
+							/>
+
+							{clientSearchTerm && (
+								<button
+									type='button'
+									className='prices-client-clear-btn'
+									onClick={handleClearClientSelection}
+									aria-label='Очистить'
+								>
+									×
+								</button>
+							)}
+						</div>
+
+						{isClientDropdownOpen && (
+							<div className='prices-client-dropdown'>
+								{filteredClientsForPrices.length === 0 ? (
+									<div className='prices-client-option prices-client-option-empty'>
+										Клиенты не найдены
+									</div>
+								) : (
+									filteredClientsForPrices.map(client => (
+										<div
+											key={client.id}
+											className={`prices-client-option ${
+												String(client.id) === String(selectedClientId)
+													? 'active'
+													: ''
+											}`}
+											onClick={() => handleSelectClientForPrices(client)}
+										>
+											{getClientDisplayName(client)}
+										</div>
+									))
+								)}
+							</div>
+						)}
+					</div>
 
 					{!selectedClientId ? (
 						<div className='prices-empty'>
@@ -599,7 +690,7 @@ export default function Prices() {
 											key={item.price_item_id}
 											className={!item.is_active ? 'prices-muted-row' : ''}
 										>
-											<td>
+											<td data-label='Наименование' className='prices-cell-stack'>
 												<strong>{item.name}</strong>
 												<div className='prices-small-muted'>
 													{categoryLabels[item.category] || item.category} ·{' '}
@@ -607,9 +698,9 @@ export default function Prices() {
 												</div>
 											</td>
 
-											<td>{formatMoney(item.default_price)}</td>
+											<td data-label='Базовая'>{formatMoney(item.default_price)}</td>
 
-											<td>
+											<td data-label='Цена клиента'>
 												{editingClientPriceId === item.price_item_id ? (
 													<input
 														className='prices-input prices-price-input'
@@ -627,11 +718,11 @@ export default function Prices() {
 												)}
 											</td>
 
-											<td>
+											<td data-label='Итоговая'>
 												<strong>{formatMoney(item.effective_price)}</strong>
 											</td>
 
-											<td>
+											<td className='prices-actions-cell'>
 												<div className='prices-actions'>
 													{canManageClientPrices ? (
 														editingClientPriceId === item.price_item_id ? (

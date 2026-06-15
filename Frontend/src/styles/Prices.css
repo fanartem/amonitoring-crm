@@ -2,6 +2,9 @@
   padding: 20px;
   background: #fff;
   min-height: 100vh;
+  overflow-x: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .prices-header {
@@ -286,6 +289,76 @@
   font-size: 11px;
 }
 
+.prices-client-search {
+  position: relative;
+}
+
+.prices-client-search-input-wrap {
+  position: relative;
+}
+
+.prices-client-search-input-wrap .prices-input {
+  padding-right: 32px;
+}
+
+.prices-client-clear-btn {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: #aaa;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.prices-client-clear-btn:hover {
+  color: #555;
+}
+
+.prices-client-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #eaeaea;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.1);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.prices-client-option {
+  padding: 9px 12px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+}
+
+.prices-client-option:hover {
+  background: #f5f5f5;
+}
+
+.prices-client-option.active {
+  background: #f1f8e9;
+  color: #558b2f;
+  font-weight: 700;
+}
+
+.prices-client-option-empty {
+  color: #999;
+  cursor: default;
+}
+
+.prices-client-option-empty:hover {
+  background: transparent;
+}
+
 .prices-modal-overlay {
   position: fixed;
   inset: 0;
@@ -295,6 +368,7 @@
   justify-content: center;
   z-index: 2000;
   padding: 20px;
+  overscroll-behavior: contain;
 }
 
 .prices-modal {
@@ -356,15 +430,137 @@
 }
 
 @media (max-width: 720px) {
+  .prices-page {
+    padding: 12px;
+  }
+
   .prices-header {
     flex-direction: column;
+  }
+
+  .prices-header h2 {
+    font-size: 20px;
   }
 
   .prices-primary-btn {
     width: 100%;
   }
 
+  .prices-card {
+    padding: 12px;
+  }
+
   .prices-actions {
     justify-content: flex-start;
+  }
+}
+
+/* Card layout for tables on small screens */
+@media (max-width: 640px) {
+  .prices-table-wrap {
+    overflow-x: visible;
+  }
+
+  .prices-table thead {
+    display: none;
+  }
+
+  .prices-table,
+  .prices-table tbody,
+  .prices-table tr,
+  .prices-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .prices-table tr {
+    box-sizing: border-box;
+    margin-bottom: 12px;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: 4px 10px;
+  }
+
+  .prices-table tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .prices-table td {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f2f2f2;
+    text-align: left;
+    width: 100%;
+    max-width: 100%;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  .prices-table td > * {
+    max-width: 100%;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: normal;
+  }
+
+  .prices-table td:last-child {
+    border-bottom: none;
+  }
+
+  .prices-table td::before {
+    content: attr(data-label);
+    color: #888;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.35px;
+    flex-shrink: 0;
+  }
+
+  .prices-table td.prices-actions-cell {
+    justify-content: flex-start;
+  }
+
+  .prices-table td.prices-actions-cell::before {
+    content: none;
+  }
+
+  .prices-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .prices-actions button {
+    flex: 1 1 auto;
+  }
+
+  .prices-price-input {
+    max-width: 100%;
+  }
+
+  .prices-code,
+  .prices-status,
+  .prices-client-price {
+    white-space: normal;
+    word-break: break-word;
+  }
+}
+
+@media (max-width: 480px) {
+  .prices-modal-body {
+    padding: 14px;
+  }
+
+  .prices-modal-footer {
+    padding: 12px 14px;
+  }
+
+  .prices-modal-footer button {
+    flex: 1 1 auto;
   }
 }
