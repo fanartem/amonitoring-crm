@@ -1019,15 +1019,15 @@
 
 .filter-input.filter-active,
 .filter-select.filter-active {
-	border: 2px solid #54b338;
+	border: 2px solid #5e9424;
 	background-color: #f5f9ff;
-	box-shadow: 0 0 0 3px rgba(47, 237, 110, 0.12);
+	box-shadow: 0 0 0 3px #2fed6e1f;
 }
 
 .filter-input.filter-active:focus,
 .filter-select.filter-active:focus {
-	border-color: #67af71;
-	box-shadow: 0 0 0 4px rgba(47, 237, 79, 0.18);
+	border-color: #5e9424;
+	box-shadow: 0 0 0 4px #2fed4f2e;
 }
 
 @media (max-width: 640px) {
