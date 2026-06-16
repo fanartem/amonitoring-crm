@@ -64,7 +64,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id, email, name, role, is_approved FROM users WHERE id = %s", (user_id,))
+            cursor.execute("SELECT id, email, name, role, is_approved, client_access_scope FROM users WHERE id = %s", (user_id,))
             user = cursor.fetchone()
             
             if user is None:

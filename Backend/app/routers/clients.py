@@ -38,6 +38,45 @@ TECHNICAL_ROOT_PARENT_NAMES = {
 ALLOWED_CLIENT_CREATOR_ROLES = [ADMIN, ROP, MANAGER, TECH_SUPPORT]
 ALLOWED_RESPONSIBLE_ROLES = [MANAGER, ROP, ADMIN]
 
+CLIENT_ACCESS_SCOPE_RESPONSIBLE_ONLY = "RESPONSIBLE_ONLY"
+
+def is_responsible_only_client_scope(current_user: dict) -> bool:
+    return current_user.get("client_access_scope") == CLIENT_ACCESS_SCOPE_RESPONSIBLE_ONLY
+
+def apply_client_access_scope_condition(
+    conditions: list[str],
+    values: list,
+    current_user: dict,
+    table_alias: str = "c",
+):
+    """
+    Ограничение видимости клиентов.
+    RESPONSIBLE_ONLY — пользователь видит только клиентов,
+    где он указан ответственным.
+    """
+    if is_responsible_only_client_scope(current_user):
+        conditions.append(f"{table_alias}.responsible_manager_id = %s")
+        values.append(current_user["id"])
+
+def ensure_client_visible_by_scope(client: dict, current_user: dict):
+    """
+    Защита прямого доступа по ID.
+    Нужна, чтобы пользователь не мог открыть клиента напрямую,
+    если его нет в списке.
+    """
+    if not is_responsible_only_client_scope(current_user):
+        return
+
+    responsible_manager_id = client.get("responsible_manager_id")
+
+    if (
+        responsible_manager_id is None
+        or int(responsible_manager_id) != int(current_user["id"])
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для просмотра этого клиента"
+        )
 
 def normalize_optional_str(value):
     if value is None:
@@ -46,7 +85,6 @@ def normalize_optional_str(value):
     value = str(value).strip()
     return value or None
 
-
 def get_client_status(value: str | None) -> str:
     status = str(value or "ACTIVE").strip().upper()
 
@@ -54,7 +92,6 @@ def get_client_status(value: str | None) -> str:
         raise HTTPException(status_code=400, detail="Некорректный статус клиента")
 
     return status
-
 
 def get_default_responsible_manager_id(data: ClientCreate, current_user: dict):
     """
@@ -72,7 +109,6 @@ def get_default_responsible_manager_id(data: ClientCreate, current_user: dict):
         return current_user["id"]
 
     return None
-
 
 def ensure_responsible_user_allowed(cursor, responsible_manager_id: int | None):
     if responsible_manager_id is None:
@@ -103,7 +139,6 @@ def ensure_responsible_user_allowed(cursor, responsible_manager_id: int | None):
             detail="Нельзя назначить неутверждённого пользователя ответственным"
         )
 
-
 def attach_client_permissions(client: dict, current_user: dict) -> dict:
     client["can_open_details"] = can_open_client_details(client, current_user)
     client["can_edit"] = can_edit_client(client, current_user)
@@ -111,7 +146,6 @@ def attach_client_permissions(client: dict, current_user: dict) -> dict:
     client["can_reassign"] = can_reassign_clients(current_user)
     client["can_create_request"] = can_create_request_for_client(client, current_user)
     return client
-
 
 def attach_clients_permissions(clients: list[dict], current_user: dict) -> list[dict]:
     for client in clients:
@@ -121,7 +155,6 @@ def attach_clients_permissions(clients: list[dict], current_user: dict) -> list[
             attach_client_tree_permissions(child, current_user)
 
     return clients
-
 
 def attach_client_tree_permissions(client: dict, current_user: dict):
     attach_client_permissions(client, current_user)
@@ -135,7 +168,6 @@ def is_technical_root_parent(value: str | None) -> bool:
     normalized = normalize_text(value)
     return normalized in TECHNICAL_ROOT_PARENT_NAMES
 
-
 def get_source_name(client: dict) -> str:
     return (
         client.get("source_client_name")
@@ -143,7 +175,6 @@ def get_source_name(client: dict) -> str:
         or client.get("name")
         or f"ID {client.get('id')}"
     )
-
 
 def get_parent_source_name(client: dict) -> str | None:
     parent = client.get("source_parent_client_name")
@@ -160,7 +191,6 @@ def get_parent_source_name(client: dict) -> str | None:
 
     return parent
 
-
 def empty_group(group_name: str, is_import_group: bool = True) -> dict:
     return {
         "group_name": group_name,
@@ -173,14 +203,12 @@ def empty_group(group_name: str, is_import_group: bool = True) -> dict:
         "clients": [],
     }
 
-
 def build_client_node(client: dict) -> dict:
     client["children"] = []
     client["children_count"] = 0
     client["total_vehicle_count"] = int(client.get("vehicle_count") or 0)
     client["total_request_count"] = int(client.get("request_count") or 0)
     return client
-
 
 def recalc_client_totals(
     client: dict,
@@ -282,7 +310,6 @@ def find_duplicate_client(
 
     cursor.execute(sql, tuple(params))
     return cursor.fetchone()
-
 
 def raise_duplicate_client_error(duplicate: dict):
     client_name = get_client_display_name(duplicate)
@@ -428,7 +455,18 @@ def get_clients(current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            sql = """
+            conditions = ["c.is_deleted = 0"]
+            values = []
+
+            apply_client_access_scope_condition(
+                conditions=conditions,
+                values=values,
+                current_user=current_user,
+                table_alias="c",
+            )
+
+            where_clause = " AND ".join(conditions)
+            sql = f"""
             SELECT 
                 c.id,
                 c.type,
@@ -466,7 +504,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
             LEFT JOIN requests r 
                 ON c.id = r.client_id 
                 AND r.is_deleted = 0
-            WHERE c.is_deleted = 0
+            WHERE {where_clause}
             GROUP BY 
                 c.id,
                 c.type,
@@ -495,7 +533,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 responsible_user.name
             ORDER BY c.created_at DESC
             """
-            cursor.execute(sql)
+            cursor.execute(sql, tuple(values))
             clients = cursor.fetchall()
 
             for client in clients:
@@ -608,7 +646,18 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            sql = """
+            conditions = ["c.is_deleted = 1"]
+            values = []
+
+            apply_client_access_scope_condition(
+                conditions=conditions,
+                values=values,
+                current_user=current_user,
+                table_alias="c",
+            )
+
+            where_clause = " AND ".join(conditions)
+            sql = f"""
             SELECT 
                 c.id,
                 c.type,
@@ -637,7 +686,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
             LEFT JOIN users creator ON c.created_by = creator.id
             LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
             LEFT JOIN requests r ON c.id = r.client_id
-            WHERE c.is_deleted = 1
+            WHERE {where_clause}
             GROUP BY 
                 c.id,
                 c.type,
@@ -660,7 +709,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 responsible.name
             ORDER BY c.deleted_at DESC
             """
-            cursor.execute(sql)
+            cursor.execute(sql, tuple(values))
             return cursor.fetchall()
     finally:
         connection.close()
@@ -671,8 +720,19 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
 
     try:
         with connection.cursor() as cursor:
+            conditions = ["c.is_deleted = 0"]
+            values = []
+
+            apply_client_access_scope_condition(
+                conditions=conditions,
+                values=values,
+                current_user=current_user,
+                table_alias="c",
+            )
+
+            where_clause = " AND ".join(conditions)
             cursor.execute(
-                """
+                f"""
                 SELECT 
                     c.id,
                     c.type,
@@ -719,7 +779,7 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                     ON c.id = v.client_id
                     AND v.is_deleted = 0
 
-                WHERE c.is_deleted = 0
+                WHERE {where_clause}
 
                 GROUP BY 
                     c.id,
@@ -752,7 +812,8 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                     c.source_parent_client_name ASC,
                     c.company_name ASC,
                     c.name ASC
-                """
+                """,
+                tuple(values)
             )
 
             rows = cursor.fetchall()
@@ -907,6 +968,8 @@ def update_client(
             if client["is_deleted"]:
                 raise HTTPException(status_code=400, detail="Нельзя редактировать клиента из корзины")
             
+            ensure_client_visible_by_scope(client, current_user)
+            
             if not can_edit_client(client, current_user):
                 raise HTTPException(
                     status_code=403,
@@ -1035,6 +1098,8 @@ def update_client_status(
                     status_code=400,
                     detail="Нельзя менять статус клиента из корзины"
                 )
+            
+            ensure_client_visible_by_scope(client, current_user)
 
             if client["status"] == new_status:
                 return {
@@ -1296,6 +1361,8 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
 
             if not client:
                 raise HTTPException(status_code=404, detail="Клиент не найден")
+            
+            ensure_client_visible_by_scope(client, current_user)
             
             if not can_open_client_details(client, current_user):
                 raise HTTPException(
