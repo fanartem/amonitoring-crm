@@ -62,6 +62,20 @@ const getPriceSourceLabel = source => {
 	return ''
 }
 
+const scheduleApprovalLabels = {
+	NOT_REQUIRED: 'Согласование не требуется',
+	PENDING: 'Ожидает согласования времени',
+	APPROVED: 'Время согласовано',
+	REJECTED: 'Время отклонено',
+}
+
+const scheduleApprovalClasses = {
+	NOT_REQUIRED: 'not-required',
+	PENDING: 'pending',
+	APPROVED: 'approved',
+	REJECTED: 'rejected',
+}
+
 export default function RequestDetailModal({
 	isOpen,
 	onClose,
@@ -82,6 +96,8 @@ export default function RequestDetailModal({
 	const techSearchRef = useRef(null)
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState('')
+	const [scheduleApprovalComment, setScheduleApprovalComment] = useState('')
+	const [scheduleApprovalLoading, setScheduleApprovalLoading] = useState(false)
 
 	const userRole = getUserRole()
 
@@ -103,6 +119,11 @@ export default function RequestDetailModal({
 	const canChangeRequestStatus = Boolean(request?.can_change_status)
 
 	const canManageEquipment = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
+
+	const canDecideScheduleApproval = ['ADMIN'].includes(userRole)
+
+	const isScheduleApprovalPending =
+		request?.schedule_approval_status === 'PENDING'
 
 	const filteredTechnicians = techSearchTerm.trim()
 		? technicians.filter(t =>
@@ -138,10 +159,7 @@ export default function RequestDetailModal({
 
 	useEffect(() => {
 		const handleClickOutside = e => {
-			if (
-				techSearchRef.current &&
-				!techSearchRef.current.contains(e.target)
-			) {
+			if (techSearchRef.current && !techSearchRef.current.contains(e.target)) {
 				setTechDropdownOpen(false)
 			}
 		}
@@ -296,6 +314,56 @@ export default function RequestDetailModal({
 		}
 	}
 
+	const handleScheduleApprovalDecision = async decision => {
+		if (!requestId) return
+
+		const isRejected = decision === 'REJECTED'
+
+		if (
+			isRejected &&
+			!window.confirm(
+				'Отклонить согласование времени? Заявка автоматически перейдет в статус "Отменено".',
+			)
+		) {
+			return
+		}
+
+		try {
+			setScheduleApprovalLoading(true)
+
+			const res = await fetch(
+				`${API_BASE_URL}/requests/${requestId}/schedule-approval`,
+				{
+					method: 'PATCH',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						status: decision,
+						comment: scheduleApprovalComment.trim() || null,
+					}),
+				},
+			)
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось обновить согласование')
+			}
+
+			setScheduleApprovalComment('')
+			await fetchRequestDetails()
+			onUpdated()
+
+			alert(
+				decision === 'APPROVED'
+					? 'Время выполнения согласовано'
+					: 'Время выполнения отклонено, заявка отменена',
+			)
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setScheduleApprovalLoading(false)
+		}
+	}
+
 	const handleDeleteRequest = async () => {
 		if (
 			!window.confirm(
@@ -349,6 +417,28 @@ export default function RequestDetailModal({
 		}
 
 		if (h.action === 'CREATED') return 'Заявка создана'
+
+		if (h.action === 'SCHEDULE_APPROVAL_REQUESTED') {
+			return `Запрошено согласование нерабочего времени: ${h.new_value || 'причина не указана'}`
+		}
+
+		if (h.action === 'SCHEDULE_APPROVAL_DECIDED') {
+			const value = String(h.new_value || '')
+
+			if (value.startsWith('APPROVED')) {
+				return `Нерабочее время согласовано${value.replace('APPROVED:', '').trim() ? `: ${value.replace('APPROVED:', '').trim()}` : ''}`
+			}
+
+			if (value.startsWith('REJECTED')) {
+				return `Нерабочее время отклонено${value.replace('REJECTED:', '').trim() ? `: ${value.replace('REJECTED:', '').trim()}` : ''}`
+			}
+
+			return 'Решение по согласованию времени обновлено'
+		}
+
+		if (h.action === 'SCHEDULED_AT_CHANGED') {
+			return `Желаемая дата выполнения изменена: ${formatDate(h.old_value)} → ${formatDate(h.new_value)}`
+		}
 
 		if (h.action === 'SELF_ACCEPTED') return 'Заявка принята в работу'
 
@@ -747,11 +837,117 @@ export default function RequestDetailModal({
 											)}
 
 											<div className='info-row'>
-												<span className='info-key'>Дата выполнения</span>
-												<span className='info-val'>
-													{formatDate(request.created_at).split(' ')[0]}
-												</span>
+												<div className='detail-row'>
+													<span>Дата создания:</span>
+													<strong>{formatDate(request.created_at)}</strong>
+												</div>
+
+												<div className='detail-row'>
+													<span>Желаемая дата выполнения:</span>
+													<strong>{formatDate(request.scheduled_at)}</strong>
+												</div>
 											</div>
+
+											{request.schedule_approval_status &&
+												request.schedule_approval_status !== 'NOT_REQUIRED' && (
+													<div className='schedule-approval-detail-box'>
+														<div className='schedule-approval-detail-header'>
+															<span
+																className={`schedule-approval-badge ${
+																	scheduleApprovalClasses[
+																		request.schedule_approval_status
+																	] || 'pending'
+																}`}
+															>
+																{scheduleApprovalLabels[
+																	request.schedule_approval_status
+																] || request.schedule_approval_status}
+															</span>
+														</div>
+
+														{request.schedule_approval_reason && (
+															<div className='schedule-approval-detail-row'>
+																<span className='schedule-approval-detail-key'>
+																	Причина менеджера:
+																</span>
+																<span className='schedule-approval-detail-value'>
+																	{request.schedule_approval_reason}
+																</span>
+															</div>
+														)}
+
+														{request.schedule_approval_requested_at && (
+															<div className='schedule-approval-detail-row'>
+																<span className='schedule-approval-detail-key'>
+																	Запрошено:
+																</span>
+																<span className='schedule-approval-detail-value'>
+																	{formatDate(
+																		request.schedule_approval_requested_at,
+																	)}
+																</span>
+															</div>
+														)}
+
+														{request.schedule_approval_comment && (
+															<div className='schedule-approval-detail-row'>
+																<span className='schedule-approval-detail-key'>
+																	Комментарий администрации:
+																</span>
+																<span className='schedule-approval-detail-value'>
+																	{request.schedule_approval_comment}
+																</span>
+															</div>
+														)}
+
+														{canDecideScheduleApproval &&
+															isScheduleApprovalPending && (
+																<div className='schedule-approval-actions'>
+																	<label className='schedule-approval-comment-field'>
+																		<span>Комментарий администрации</span>
+																		<textarea
+																			value={scheduleApprovalComment}
+																			onChange={e =>
+																				setScheduleApprovalComment(
+																					e.target.value,
+																				)
+																			}
+																			placeholder='Можно указать причину согласования или отказа...'
+																			rows={3}
+																		/>
+																	</label>
+
+																	<div className='schedule-approval-buttons'>
+																		<button
+																			type='button'
+																			className='schedule-approval-btn approve'
+																			disabled={scheduleApprovalLoading}
+																			onClick={() =>
+																				handleScheduleApprovalDecision(
+																					'APPROVED',
+																				)
+																			}
+																		>
+																			Согласовать
+																		</button>
+
+																		<button
+																			type='button'
+																			className='schedule-approval-btn reject'
+																			disabled={scheduleApprovalLoading}
+																			onClick={() =>
+																				handleScheduleApprovalDecision(
+																					'REJECTED',
+																				)
+																			}
+																		>
+																			Отклонить
+																		</button>
+																	</div>
+																</div>
+															)}
+													</div>
+												)}
 
 											{canViewRequestPrice && (
 												<div className='info-row'>
@@ -1059,7 +1255,10 @@ export default function RequestDetailModal({
 						>
 							{canAssignTechnician &&
 							request.status !== 'COMPLETED' &&
-							request.status !== 'CANCELLED' ? (
+							request.status !== 'CANCELLED' &&
+							!['PENDING', 'REJECTED'].includes(
+								request.schedule_approval_status,
+							) ? (
 								<div className='footer-group'>
 									<span style={{ fontSize: '13px' }}>Монтажник:</span>
 
@@ -1131,6 +1330,18 @@ export default function RequestDetailModal({
 											: 'Назначить'}
 									</button>
 								</div>
+
+							) : ['PENDING', 'REJECTED'].includes(
+									request.schedule_approval_status,
+							  ) ? (
+								<div className='footer-group'>
+									<span className='schedule-approval-footer-warning'>
+										{request.schedule_approval_status === 'PENDING'
+											? 'Монтажника можно назначить после согласования времени'
+											: 'Назначение недоступно: время отклонено'}
+									</span>
+								</div>
+
 							) : request.assigned_to ? (
 								<div className='footer-group'>
 									<span

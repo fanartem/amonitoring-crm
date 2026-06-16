@@ -266,6 +266,7 @@ export default function CreateRequestModal({
 		has_power_restore: false,
 		work_address: '',
 		work_date: '',
+		schedule_approval_reason: '',
 
 		platform: '',
 		manager_comment: '',
@@ -295,6 +296,7 @@ export default function CreateRequestModal({
 		has_power_restore: false,
 		work_address: '',
 		work_date: '',
+		schedule_approval_reason: '',
 
 		platform: '',
 		manager_comment: '',
@@ -326,8 +328,7 @@ export default function CreateRequestModal({
 				parent_client_id: '',
 				parent_source_name: '',
 
-				work_type:
-					mapWorkTypeToUI(editRequestData.work_type),
+				work_type: mapWorkTypeToUI(editRequestData.work_type),
 
 				work_format:
 					editRequestData.visit_type === 'ON_SITE'
@@ -340,7 +341,11 @@ export default function CreateRequestModal({
 				has_power_restore: false,
 
 				work_address: editRequestData.address || '',
-				work_date: '',
+				work_date: editRequestData.scheduled_at
+					? new Date(editRequestData.scheduled_at).toISOString().slice(0, 16)
+					: '',
+				schedule_approval_reason:
+					editRequestData.schedule_approval_reason || '',
 
 				platform: editRequestData.platform || '',
 				manager_comment: '',
@@ -785,6 +790,23 @@ export default function CreateRequestModal({
 		onClose()
 	}
 
+	const isWorkingScheduleTime = value => {
+		if (!value) return true
+
+		const date = new Date(value)
+		const day = date.getDay()
+		const hours = date.getHours()
+		const minutes = date.getMinutes()
+		const totalMinutes = hours * 60 + minutes
+
+		const start = 10 * 60
+		const end = 17 * 60 + 30
+
+		if (day === 0 || day === 6) return false
+
+		return totalMinutes >= start && totalMinutes <= end
+	}
+
 	const validateForm = () => {
 		const required = []
 
@@ -816,9 +838,19 @@ export default function CreateRequestModal({
 			required.push('parent_client_id')
 		}
 
-		if (!isEditMode) {
-			if (!formData.work_date) required.push('work_date')
+		if (!formData.work_date) {
+			required.push('work_date')
+		}
 
+		if (
+			formData.work_date &&
+			!isWorkingScheduleTime(formData.work_date) &&
+			!formData.schedule_approval_reason.trim()
+		) {
+			required.push('schedule_approval_reason')
+		}
+
+		if (!isEditMode) {
 			requestVehicles.forEach(vehicle => {
 				if (!vehicle.car_brand) required.push(`car_brand_${vehicle.local_id}`)
 				if (!vehicle.car_model) required.push(`car_model_${vehicle.local_id}`)
@@ -988,6 +1020,11 @@ export default function CreateRequestModal({
 				visit_type:
 					formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
 				platform: formData.platform.trim(),
+				scheduled_at: formData.work_date || null,
+				schedule_approval_reason:
+					formData.work_date && !isWorkingScheduleTime(formData.work_date)
+						? formData.schedule_approval_reason.trim()
+						: null,
 			}
 
 			if (isEditMode) {
@@ -1143,9 +1180,11 @@ export default function CreateRequestModal({
 				body: JSON.stringify({
 					client_id: finalClientId,
 					...basePayload,
-					scheduled_at: formData.work_date
-						? `${formData.work_date}T00:00:00`
-						: null,
+					scheduled_at: formData.work_date || null,
+					schedule_approval_reason:
+						formData.work_date && !isWorkingScheduleTime(formData.work_date)
+							? formData.schedule_approval_reason.trim()
+							: null,
 					vehicles: finalVehicles,
 					price: requestPricePayload,
 				}),
@@ -1697,20 +1736,42 @@ export default function CreateRequestModal({
 										/>
 									</label>
 
-									{!isEditMode && (
-										<label className='request-modal-field'>
-											<span className='request-modal-label required'>
-												Дата выполнения
-											</span>
-											<input
-												className={fieldClass('work_date')}
-												type='date'
-												name='work_date'
-												value={formData.work_date}
-												onChange={handleChange}
-											/>
-										</label>
-									)}
+									<label className='request-modal-field'>
+										<span className='request-modal-label required'>
+											Желаемая дата и время выполнения
+										</span>
+										<input
+											className={fieldClass('work_date')}
+											type='datetime-local'
+											name='work_date'
+											min={`${new Date().toISOString().slice(0, 10)}T10:00`}
+											value={formData.work_date}
+											onChange={handleChange}
+										/>
+									</label>
+
+									{formData.work_date &&
+										!isWorkingScheduleTime(formData.work_date) && (
+											<label className='request-modal-field request-modal-full'>
+												<span className='request-modal-label required'>
+													Причина выбора нерабочего времени
+												</span>
+
+												<textarea
+													className={fieldClass('schedule_approval_reason')}
+													name='schedule_approval_reason'
+													value={formData.schedule_approval_reason}
+													onChange={handleChange}
+													placeholder='Например: клиент просит выполнить работы после рабочего времени'
+													rows={3}
+												/>
+
+												<span className='request-modal-hint warning'>
+													Выбрано нерабочее время. Заявка будет отправлена на
+													согласование администрации.
+												</span>
+											</label>
+										)}
 								</div>
 
 								<div className='request-option-group'>

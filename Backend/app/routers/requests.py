@@ -1,6 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_connection
-from app.schemas import RequestCreate, RequestUpdate, AssignRequest, CommentCreate
+from app.schemas import (
+    RequestCreate,
+    RequestUpdate,
+    AssignRequest,
+    CommentCreate,
+    RequestScheduleApproval,
+)
 from app.security import get_current_user
 
 from app.permissions import (
@@ -27,7 +33,7 @@ from app.permissions import (
     is_tech_support,
 )
 
-from datetime import datetime
+from datetime import datetime, time, timezone, timedelta
 from app.notification_service import (
     notify_new_request,
     notify_request_status_changed,
@@ -39,6 +45,85 @@ from app.notification_service import (
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
 REQUEST_DELETE_TIME_LIMIT_SECONDS = 120
+
+WORK_DAY_START = time(10, 0)
+WORK_DAY_END = time(17, 30)
+
+SCHEDULE_APPROVAL_NOT_REQUIRED = "NOT_REQUIRED"
+SCHEDULE_APPROVAL_PENDING = "PENDING"
+SCHEDULE_APPROVAL_APPROVED = "APPROVED"
+SCHEDULE_APPROVAL_REJECTED = "REJECTED"
+
+ALMATY_TZ = timezone(timedelta(hours=5))
+
+def almaty_now():
+    return datetime.now(ALMATY_TZ).replace(tzinfo=None)
+
+def normalize_scheduled_at(value: datetime | None):
+    if value is None:
+        return None
+
+    return value.replace(tzinfo=None)
+
+
+def is_working_schedule_time(value: datetime) -> bool:
+    """
+    Рабочее время: понедельник-пятница, 10:00–17:30 включительно.
+    weekday(): 0 = Monday, 6 = Sunday
+    """
+    if value.weekday() >= 5:
+        return False
+
+    request_time = value.time()
+
+    return WORK_DAY_START <= request_time <= WORK_DAY_END
+
+
+def build_schedule_approval_data(
+    scheduled_at: datetime,
+    current_user: dict,
+    reason: str | None = None,
+):
+    role = current_user.get("role")
+
+    if is_working_schedule_time(scheduled_at):
+        return {
+            "status": SCHEDULE_APPROVAL_NOT_REQUIRED,
+            "reason": None,
+            "requested_by": None,
+            "requested_at": None,
+            "decided_by": None,
+            "decided_at": None,
+            "comment": None,
+        }
+
+    # Админ/РОП могут сразу создавать/изменять на нерабочее время
+    if role in [ADMIN, ROP]:
+        return {
+            "status": SCHEDULE_APPROVAL_APPROVED,
+            "reason": reason,
+            "requested_by": current_user["id"],
+            "requested_at": almaty_now(),
+            "decided_by": current_user["id"],
+            "decided_at": almaty_now(),
+            "comment": "Нерабочее время указано администратором/РОП",
+        }
+
+    if not reason or not reason.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Для выбора нерабочего времени укажите причину для согласования"
+        )
+
+    return {
+        "status": SCHEDULE_APPROVAL_PENDING,
+        "reason": reason.strip(),
+        "requested_by": current_user["id"],
+        "requested_at": almaty_now(),
+        "decided_by": None,
+        "decided_at": None,
+        "comment": None,
+    }
 
 def get_current_user_city(cursor, current_user: dict):
     """
@@ -278,6 +363,20 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
 
     if data.visit_type not in allowed_visit_types:
         raise HTTPException(status_code=400, detail="Некорректный формат работ")
+    
+    scheduled_at = normalize_scheduled_at(data.scheduled_at)
+
+    if scheduled_at is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо указать желаемую дату и время выполнения работ"
+        )
+
+    schedule_approval = build_schedule_approval_data(
+        scheduled_at=scheduled_at,
+        current_user=current_user,
+        reason=data.schedule_approval_reason,
+    )
 
     connection = get_connection()
 
@@ -399,11 +498,19 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     city,
                     platform,
                     scheduled_at,
+                    schedule_approval_status,
+                    schedule_approval_reason,
+                    schedule_approval_requested_by,
+                    schedule_approval_requested_at,
+                    schedule_approval_decided_by,
+                    schedule_approval_decided_at,
+                    schedule_approval_comment,
                     status,
                     total_price,
-                    created_by
+                    created_by,
+                    created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     data.client_id,
@@ -412,10 +519,18 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     data.address,
                     data.city,
                     platform,
-                    data.scheduled_at,
+                    scheduled_at,
+                    schedule_approval["status"],
+                    schedule_approval["reason"],
+                    schedule_approval["requested_by"],
+                    schedule_approval["requested_at"],
+                    schedule_approval["decided_by"],
+                    schedule_approval["decided_at"],
+                    schedule_approval["comment"],
                     "NEW",
                     total_price,
                     current_user["id"],
+                    almaty_now(),
                 )
             )
 
@@ -584,6 +699,27 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     f"Request created with {len(data.vehicles)} vehicle(s)"
                 )
             )
+
+            if schedule_approval["status"] == SCHEDULE_APPROVAL_PENDING:
+                cursor.execute(
+                    """
+                    INSERT INTO request_history (
+                        request_id,
+                        user_id,
+                        action,
+                        old_value,
+                        new_value
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        request_id,
+                        current_user["id"],
+                        "SCHEDULE_APPROVAL_REQUESTED",
+                        None,
+                        schedule_approval["reason"],
+                    )
+                )
             
             cursor.execute(
                 """
@@ -682,6 +818,13 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     r.city,
                     r.platform,
                     r.scheduled_at,
+                    r.schedule_approval_status,
+                    r.schedule_approval_reason,
+                    r.schedule_approval_requested_by,
+                    r.schedule_approval_requested_at,
+                    r.schedule_approval_decided_by,
+                    r.schedule_approval_decided_at,
+                    r.schedule_approval_comment,
                     r.status,
                     r.created_at,
                     r.assigned_to,
@@ -748,6 +891,13 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                     r.city,
                     r.platform,
                     r.scheduled_at,
+                    r.schedule_approval_status,
+                    r.schedule_approval_reason,
+                    r.schedule_approval_requested_by,
+                    r.schedule_approval_requested_at,
+                    r.schedule_approval_decided_by,
+                    r.schedule_approval_decided_at,
+                    r.schedule_approval_comment,
                     r.status,
                     r.created_at,
                     r.assigned_to,
@@ -860,6 +1010,13 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     r.city,
                     r.platform,
                     r.scheduled_at,
+                    r.schedule_approval_status,
+                    r.schedule_approval_reason,
+                    r.schedule_approval_requested_by,
+                    r.schedule_approval_requested_at,
+                    r.schedule_approval_decided_by,
+                    r.schedule_approval_decided_at,
+                    r.schedule_approval_comment,
                     r.status,
                     r.assigned_to,
                     r.is_paid,
@@ -987,9 +1144,9 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
                 add_request_update("city", data.city, "CITY_CHANGED")
 
-            # scheduled_at
+            # scheduled_at / желаемая дата выполнения
             if data.scheduled_at is not None:
-                new_scheduled_at = data.scheduled_at.replace(tzinfo=None)
+                new_scheduled_at = normalize_scheduled_at(data.scheduled_at)
 
                 if req["scheduled_at"] != new_scheduled_at:
                     if not can_edit_this_request:
@@ -998,7 +1155,48 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                             detail="Недостаточно прав для редактирования этой заявки"
                         )
 
-                    add_request_update("scheduled_at", new_scheduled_at, "SCHEDULED_AT_CHANGED")
+                    schedule_approval = build_schedule_approval_data(
+                        scheduled_at=new_scheduled_at,
+                        current_user=current_user,
+                        reason=data.schedule_approval_reason,
+                    )
+
+                    update_fields.append("scheduled_at = %s")
+                    update_values.append(new_scheduled_at)
+
+                    update_fields.append("schedule_approval_status = %s")
+                    update_values.append(schedule_approval["status"])
+
+                    update_fields.append("schedule_approval_reason = %s")
+                    update_values.append(schedule_approval["reason"])
+
+                    update_fields.append("schedule_approval_requested_by = %s")
+                    update_values.append(schedule_approval["requested_by"])
+
+                    update_fields.append("schedule_approval_requested_at = %s")
+                    update_values.append(schedule_approval["requested_at"])
+
+                    update_fields.append("schedule_approval_decided_by = %s")
+                    update_values.append(schedule_approval["decided_by"])
+
+                    update_fields.append("schedule_approval_decided_at = %s")
+                    update_values.append(schedule_approval["decided_at"])
+
+                    update_fields.append("schedule_approval_comment = %s")
+                    update_values.append(schedule_approval["comment"])
+
+                    add_history(
+                        "SCHEDULED_AT_CHANGED",
+                        req["scheduled_at"],
+                        new_scheduled_at
+                    )
+
+                    if schedule_approval["status"] == SCHEDULE_APPROVAL_PENDING:
+                        add_history(
+                            "SCHEDULE_APPROVAL_REQUESTED",
+                            None,
+                            schedule_approval["reason"]
+                        )
 
             # payment
             if data.is_paid is not None:
@@ -1012,7 +1210,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                 new_paid = bool(data.is_paid)
 
                 if old_paid != new_paid:
-                    paid_at_val = datetime.now() if new_paid else None
+                    paid_at_val = almaty_now() if new_paid else None
 
                     update_fields.append("is_paid = %s")
                     update_values.append(new_paid)
@@ -1088,6 +1286,147 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
     finally:
         connection.close()
 
+@router.patch("/{request_id}/schedule-approval")
+def decide_request_schedule_approval(
+    request_id: int,
+    data: RequestScheduleApproval,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] not in [ADMIN, ROP]:
+        raise HTTPException(
+            status_code=403,
+            detail="Только Админ или РОП может согласовывать нерабочее время"
+        )
+
+    if data.status not in [SCHEDULE_APPROVAL_APPROVED, SCHEDULE_APPROVAL_REJECTED]:
+        raise HTTPException(
+            status_code=400,
+            detail="Статус согласования должен быть APPROVED или REJECTED"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    status,
+                    schedule_approval_status
+                FROM requests
+                WHERE id = %s AND is_deleted = 0
+                """,
+                (request_id,)
+            )
+            req = cursor.fetchone()
+
+            if not req:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            if req["schedule_approval_status"] != SCHEDULE_APPROVAL_PENDING:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Эта заявка не ожидает согласования времени"
+                )
+
+            update_fields = [
+                "schedule_approval_status = %s",
+                "schedule_approval_decided_by = %s",
+                "schedule_approval_decided_at = %s",
+                "schedule_approval_comment = %s",
+            ]
+
+            update_values = [
+                data.status,
+                current_user["id"],
+                almaty_now(),
+                data.comment,
+            ]
+
+            if data.status == SCHEDULE_APPROVAL_REJECTED:
+                update_fields.append("status = %s")
+                update_values.append("CANCELLED")
+
+            update_values.append(request_id)
+
+            cursor.execute(
+                f"""
+                UPDATE requests
+                SET {', '.join(update_fields)}
+                WHERE id = %s
+                """,
+                tuple(update_values)
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    old_value,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "SCHEDULE_APPROVAL_DECIDED",
+                    req["schedule_approval_status"],
+                    f"{data.status}: {data.comment or ''}".strip(),
+                )
+            )
+
+            if data.status == SCHEDULE_APPROVAL_REJECTED and req["status"] != "CANCELLED":
+                cursor.execute(
+                    """
+                    INSERT INTO request_history (
+                        request_id,
+                        user_id,
+                        action,
+                        old_value,
+                        new_value
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        request_id,
+                        current_user["id"],
+                        "STATUS_CHANGED",
+                        req["status"],
+                        "CANCELLED",
+                    )
+                )
+
+                notify_request_status_changed(
+                    cursor=cursor,
+                    request_id=request_id,
+                    old_status=req["status"],
+                    new_status="CANCELLED",
+                    assigned_to=None,
+                    actor_user_id=current_user["id"],
+                )
+
+            connection.commit()
+
+            return {
+                "message": "Согласование обновлено",
+                "request_id": request_id,
+                "schedule_approval_status": data.status,
+                "request_status": "CANCELLED" if data.status == SCHEDULE_APPROVAL_REJECTED else req["status"],
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
 @router.delete("/{request_id}")
 def delete_request(request_id: int, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
@@ -1140,9 +1479,9 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
 
                 cursor.execute(
                     """
-                    SELECT TIMESTAMPDIFF(SECOND, %s, NOW()) AS age_seconds
+                    SELECT TIMESTAMPDIFF(SECOND, %s, %s) AS age_seconds
                     """,
-                    (request["created_at"],)
+                    (request["created_at"], almaty_now())
                 )
                 age = cursor.fetchone()
 
@@ -1166,11 +1505,11 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
                 """
                 UPDATE requests
                 SET is_deleted = 1,
-                    deleted_at = NOW(),
+                    deleted_at = %s,
                     deleted_by = %s
                 WHERE id = %s
                 """,
-                (current_user["id"], request_id)
+                (almaty_now(), current_user["id"], request_id)
             )
 
             cursor.execute(
@@ -1282,7 +1621,7 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
             # Проверяем заявку
             cursor.execute(
                 """
-                SELECT status, assigned_to
+                SELECT status, assigned_to, schedule_approval_status
                 FROM requests
                 WHERE id = %s AND is_deleted = 0
                 """,
@@ -1292,6 +1631,18 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
 
             if not req:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
+            
+            if req.get("schedule_approval_status") == SCHEDULE_APPROVAL_PENDING:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя назначить заявку, пока не согласовано нерабочее время"
+                )
+
+            if req.get("schedule_approval_status") == SCHEDULE_APPROVAL_REJECTED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя назначить заявку: нерабочее время отклонено администрацией"
+                )
 
             # Снимать монтажника можно только с активной заявки
             if req["status"] not in ["NEW", "IN_PROGRESS"]:
@@ -1534,6 +1885,13 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     r.city,
                     r.platform,
                     r.scheduled_at,
+                    r.schedule_approval_status,
+                    r.schedule_approval_reason,
+                    r.schedule_approval_requested_by,
+                    r.schedule_approval_requested_at,
+                    r.schedule_approval_decided_by,
+                    r.schedule_approval_decided_at,
+                    r.schedule_approval_comment,
                     r.status,
                     r.created_at,
                     r.assigned_to,
@@ -1743,7 +2101,7 @@ def accept_request(
 
             cursor.execute(
                 """
-                SELECT id, city, status, assigned_to, is_paid, is_deleted
+                SELECT id, city, status, assigned_to, is_paid, is_deleted, schedule_approval_status
                 FROM requests
                 WHERE id = %s
                 """,
@@ -1758,6 +2116,18 @@ def accept_request(
                 raise HTTPException(
                     status_code=400,
                     detail="Нельзя принять удалённую заявку"
+                )
+            
+            if request.get("schedule_approval_status") == SCHEDULE_APPROVAL_PENDING:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя принять заявку, пока не согласовано нерабочее время"
+                )
+
+            if request.get("schedule_approval_status") == SCHEDULE_APPROVAL_REJECTED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя принять заявку: нерабочее время отклонено администрацией"
                 )
 
             if current_user["role"] == TECHNICIAN and not request["is_paid"]:

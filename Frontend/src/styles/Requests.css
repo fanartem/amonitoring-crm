@@ -94,7 +94,7 @@
   background: #fff;
   border: 1px solid #eaeaea;
   border-radius: 8px;
-  padding: 20px;
+  padding: 20px 180px 72px 20px;
   box-shadow: 0 2px 5px rgba(0,0,0,0.02);
   cursor: default;
   transition: box-shadow 0.2s, border-color 0.2s, transform 0.15s;
@@ -1084,6 +1084,209 @@
 	box-shadow: 0 0 0 4px #2fed4f2e;
 }
 
+.schedule-approval-badge {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	margin-top: 8px;
+	padding: 4px 9px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 800;
+	line-height: 1.2;
+	border: 1px solid transparent;
+}
+
+.schedule-approval-badge.pending {
+	color: #9a5b00;
+	background: #fff8e1;
+	border-color: #ffe0a3;
+}
+
+.schedule-approval-badge.approved {
+	color: #2f6f16;
+	background: #eef8e8;
+	border-color: #cfe8c4;
+}
+
+.schedule-approval-badge.rejected {
+	color: #a32020;
+	background: #fdecec;
+	border-color: #f5bcbc;
+}
+
+.schedule-approval-badge.not-required {
+	color: #4b5563;
+	background: #f3f4f6;
+	border-color: #d1d5db;
+}
+
+.schedule-approval-badge {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	padding: 4px 9px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 800;
+	line-height: 1.2;
+	border: 1px solid transparent;
+}
+
+.schedule-approval-badge.pending {
+	color: #9a5b00;
+	background: #fff8e1;
+	border-color: #ffe0a3;
+}
+
+.schedule-approval-badge.approved {
+	color: #2f6f16;
+	background: #eef8e8;
+	border-color: #cfe8c4;
+}
+
+.schedule-approval-badge.rejected {
+	color: #a32020;
+	background: #fdecec;
+	border-color: #f5bcbc;
+}
+
+.schedule-approval-badge.not-required {
+	color: #4b5563;
+	background: #f3f4f6;
+	border-color: #d1d5db;
+}
+
+.schedule-approval-detail-box {
+	margin-top: 14px;
+  margin-bottom: 14px;
+	padding: 14px;
+	border-radius: 12px;
+	background: #fffaf0;
+	border: 1px solid #ffe0a3;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.schedule-approval-detail-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.schedule-approval-detail-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.schedule-approval-detail-key {
+	min-width: 170px;
+	color: #6b7280;
+	font-weight: 700;
+}
+
+.schedule-approval-detail-value {
+	color: #1f2933;
+	font-weight: 600;
+	white-space: pre-wrap;
+}
+
+.schedule-approval-actions {
+	margin-top: 4px;
+	padding-top: 12px;
+	border-top: 1px solid #ffe0a3;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.schedule-approval-comment-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	font-size: 13px;
+	font-weight: 700;
+	color: #374151;
+}
+
+.schedule-approval-comment-field textarea {
+	width: 100%;
+	min-height: 78px;
+	resize: vertical;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 9px 10px;
+	font-size: 13px;
+	font-family: inherit;
+	outline: none;
+	background: #fff;
+}
+
+.schedule-approval-comment-field textarea:focus {
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.schedule-approval-buttons {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.schedule-approval-btn {
+	border: none;
+	border-radius: 8px;
+	padding: 8px 14px;
+	font-size: 13px;
+	font-weight: 800;
+	cursor: pointer;
+	transition: 0.15s ease;
+}
+
+.schedule-approval-btn:disabled {
+	opacity: 0.65;
+	cursor: not-allowed;
+}
+
+.schedule-approval-btn.approve {
+	background: #5e9424;
+	color: #fff;
+}
+
+.schedule-approval-btn.approve:hover:not(:disabled) {
+	background: #4f7f1d;
+}
+
+.schedule-approval-btn.reject {
+	background: #c62828;
+	color: #fff;
+}
+
+.schedule-approval-btn.reject:hover:not(:disabled) {
+	background: #a91f1f;
+}
+
+.schedule-approval-footer-warning {
+	font-size: 13px;
+	font-weight: 700;
+	color: #9a5b00;
+	background: #fff8e1;
+	border: 1px solid #ffe0a3;
+	border-radius: 8px;
+	padding: 7px 10px;
+}
+
+.role-actions-wrapper {
+  max-width: calc(100% - 40px);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 @media (max-width: 640px) {
   .request-vehicle-header {
     flex-direction: column;
@@ -1142,7 +1345,7 @@
 @media (max-width: 900px) {
   .request-card {
     flex-direction: column;
-    padding-right: 70px;
+    padding: 20px 70px 72px 20px;
   }
 
   .card-column {

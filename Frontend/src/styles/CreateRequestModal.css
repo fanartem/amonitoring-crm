@@ -846,6 +846,29 @@
 	color: #b91c1c;
 }
 
+.request-modal-hint {
+	display: block;
+	margin-top: 7px;
+	font-size: 12px;
+	line-height: 1.35;
+	font-weight: 600;
+}
+
+.request-modal-hint.warning {
+	color: #9a5b00;
+	background: #fff8e1;
+	border: 1px solid #ffe0a3;
+	border-radius: 8px;
+	padding: 9px 10px;
+}
+
+.request-modal-field textarea.request-modal-input,
+textarea.request-modal-input {
+	min-height: 82px;
+	resize: vertical;
+	line-height: 1.4;
+}
+
 @media (max-width: 1150px) {
   .request-modal-main-layout {
     grid-template-columns: 1fr;

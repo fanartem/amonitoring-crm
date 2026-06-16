@@ -50,15 +50,6 @@ const getCurrentUserId = () => {
 	}
 }
 
-const getTodayDateInputValue = () => {
-	const today = new Date()
-	const year = today.getFullYear()
-	const month = String(today.getMonth() + 1).padStart(2, '0')
-	const day = String(today.getDate()).padStart(2, '0')
-
-	return `${year}-${month}-${day}`
-}
-
 export default function Requests() {
 	const [requests, setRequests] = useState([])
 	const [filteredRequests, setFilteredRequests] = useState([])
@@ -78,12 +69,13 @@ export default function Requests() {
 		payment: '',
 		city: '',
 		format: '',
-		date_from: getTodayDateInputValue(),
+		date_from: '',
 		date_to: '',
 	})
 
 	const [requestSuccessNotice, setRequestSuccessNotice] = useState('')
-	const [isRequestSuccessNoticeLeaving, setIsRequestSuccessNoticeLeaving] = useState(false)
+	const [isRequestSuccessNoticeLeaving, setIsRequestSuccessNoticeLeaving] =
+		useState(false)
 	const [highlightedRequests, setHighlightedRequests] = useState({})
 	const requestsSnapshotRef = useRef({})
 
@@ -146,6 +138,10 @@ export default function Requests() {
 			city: req.city,
 			visit_type: req.visit_type,
 			address: req.address,
+			scheduled_at: req.scheduled_at,
+			schedule_approval_status: req.schedule_approval_status,
+			schedule_approval_reason: req.schedule_approval_reason,
+			schedule_approval_comment: req.schedule_approval_comment,
 			assigned_to: req.assigned_to,
 			is_paid: req.is_paid,
 			paid_at: req.paid_at,
@@ -330,8 +326,10 @@ export default function Requests() {
 
 		if (filters.created_by) {
 			const creatorFilter = filters.created_by.toLowerCase()
-			result = result.filter(r => 
-				r.created_by_name && r.created_by_name.toLowerCase().includes(creatorFilter)
+			result = result.filter(
+				r =>
+					r.created_by_name &&
+					r.created_by_name.toLowerCase().includes(creatorFilter),
 			)
 		}
 		if (filters.date_from) {
@@ -375,13 +373,20 @@ export default function Requests() {
 				return statusA - statusB
 			}
 
-			const dateA = new Date(a.created_at).getTime()
-			const dateB = new Date(b.created_at).getTime()
+			const getScheduledSortTime = req => {
+				if (!req.scheduled_at) return Number.MAX_SAFE_INTEGER
+				return new Date(req.scheduled_at).getTime()
+			}
 
-			return dateB - dateA
+			const dateA = getScheduledSortTime(a)
+			const dateB = getScheduledSortTime(b)
+
+			if (dateA !== dateB) {
+				return dateA - dateB
+			}
+
+			return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
 		})
-
-		setFilteredRequests(result)
 
 		setFilteredRequests(result)
 	}, [filters, requests])
@@ -413,6 +418,20 @@ export default function Requests() {
 		IN_PROGRESS: 'status-progress',
 		COMPLETED: 'status-done',
 		CANCELLED: 'status-cancelled',
+	}
+
+	const scheduleApprovalLabels = {
+		NOT_REQUIRED: 'Согласование не требуется',
+		PENDING: 'Ожидает согласования времени',
+		APPROVED: 'Время согласовано',
+		REJECTED: 'Время отклонено',
+	}
+
+	const scheduleApprovalClasses = {
+		NOT_REQUIRED: 'not-required',
+		PENDING: 'pending',
+		APPROVED: 'approved',
+		REJECTED: 'rejected',
 	}
 
 	const roleLabels = {
@@ -642,6 +661,14 @@ export default function Requests() {
 				['Параметр', 'Значение'],
 				['Номер заявки', req.id],
 				['Дата создания', formatDate(req.created_at)],
+				['Желаемая дата/время выполнения', formatDate(req.scheduled_at)],
+				[
+					'Согласование времени',
+					req.schedule_approval_status
+						? scheduleApprovalLabels[req.schedule_approval_status] ||
+							req.schedule_approval_status
+						: '—',
+				],
 				['Статус', statusLabels[req.status] || req.status],
 				['Город', req.city || '—'],
 				['Адрес выезда', req.address || '—'],
@@ -762,7 +789,7 @@ export default function Requests() {
 				</div>
 
 				<div className='filter-group'>
-					<label>Дата от</label>
+					<label>Дата создания от:</label>
 					<input
 						className={getFilterClassName('date_from')}
 						type='date'
@@ -773,7 +800,7 @@ export default function Requests() {
 				</div>
 
 				<div className='filter-group'>
-					<label>Дата до</label>
+					<label>до:</label>
 					<input
 						className={getFilterClassName('date_to')}
 						type='date'
@@ -1049,8 +1076,34 @@ export default function Requests() {
 
 						<div className='card-column'>
 							<div className='card-item'>
-								<span className='card-label'>Дата</span>
+								<span className='card-label'>Дата создания</span>
 								<span className='card-value'>{formatDate(req.created_at)}</span>
+							</div>
+							<div className='card-item'>
+								<span className='card-label'>
+									Желаемая дата/время выполнения
+								</span>
+								<span className='card-value'>
+									{formatDate(req.scheduled_at)}
+								</span>
+
+								{req.schedule_approval_status &&
+									req.schedule_approval_status !== 'NOT_REQUIRED' && (
+										<span
+											className={`schedule-approval-badge ${
+												scheduleApprovalClasses[req.schedule_approval_status] ||
+												'pending'
+											}`}
+											title={
+												req.schedule_approval_reason ||
+												req.schedule_approval_comment ||
+												scheduleApprovalLabels[req.schedule_approval_status]
+											}
+										>
+											{scheduleApprovalLabels[req.schedule_approval_status] ||
+												req.schedule_approval_status}
+										</span>
+									)}
 							</div>
 							{canViewRequestPrice && (
 								<div className='card-item request-card-price-box'>
@@ -1220,7 +1273,10 @@ export default function Requests() {
 							{(userRole === 'TECHNICIAN' ||
 								userRole === 'SENIOR_TECHNICIAN') &&
 								req.status === 'NEW' &&
-								!req.assigned_to && (
+								!req.assigned_to &&
+								!['PENDING', 'REJECTED'].includes(
+									req.schedule_approval_status,
+								) && (
 									<button
 										className='btn-green'
 										onClick={e => handleAcceptRequest(e, req)}

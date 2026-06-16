@@ -11,6 +11,7 @@ class RequestCreate(BaseModel):
     platform: str
     address: str | None = None
     scheduled_at: datetime | None = None
+    schedule_approval_reason: str | None = None
     vehicles: list["RequestVehicleInput"]
     price: "RequestPriceInput | None" = None
 
@@ -20,8 +21,13 @@ class RequestUpdate(BaseModel):
     city: str | None = None
     platform: str | None = None
     scheduled_at: datetime | None = None
+    schedule_approval_reason: str | None = None
     status: str | None = None
     is_paid: Optional[bool] = None
+
+class RequestScheduleApproval(BaseModel):
+    status: str
+    comment: str | None = None
 
 class RequestVehicleInput(BaseModel):
     vehicle_id: int
