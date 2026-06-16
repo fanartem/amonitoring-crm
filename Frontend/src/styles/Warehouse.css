@@ -719,6 +719,160 @@
 	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
 }
 
+.warehouse-history-btn {
+	background: #f3f4f6;
+	color: #374151;
+	border: 1px solid #d1d5db;
+}
+
+.warehouse-history-btn:hover {
+	background: #e5e7eb;
+}
+
+.warehouse-history-modal {
+	width: 760px;
+	max-width: 96%;
+	max-height: 90vh;
+	display: flex;
+	flex-direction: column;
+	background: #fcfcfc;
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.warehouse-history-body {
+	padding: 18px 20px;
+	background: #f7f7f7;
+	overflow-y: auto;
+}
+
+.warehouse-history-item-card {
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	padding: 14px 16px;
+	margin-bottom: 16px;
+}
+
+.warehouse-history-item-title {
+	font-size: 15px;
+	font-weight: 800;
+	color: #1f2933;
+}
+
+.warehouse-history-item-meta {
+	margin-top: 5px;
+	font-size: 13px;
+	font-weight: 600;
+	color: #6b7280;
+}
+
+.warehouse-history-empty {
+	padding: 22px;
+	text-align: center;
+	color: #777;
+	background: #fff;
+	border: 1px dashed #d1d5db;
+	border-radius: 12px;
+}
+
+.warehouse-history-list {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.warehouse-history-row {
+	position: relative;
+	display: flex;
+	gap: 12px;
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 12px;
+	padding: 14px;
+}
+
+.warehouse-history-row-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: #5e9424;
+	margin-top: 6px;
+	flex: 0 0 auto;
+}
+
+.warehouse-history-row-content {
+	flex: 1;
+	min-width: 0;
+}
+
+.warehouse-history-row-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 4px;
+}
+
+.warehouse-history-action {
+	font-size: 14px;
+	font-weight: 800;
+	color: #1f2933;
+}
+
+.warehouse-history-date {
+	font-size: 12px;
+	font-weight: 700;
+	color: #6b7280;
+	white-space: nowrap;
+}
+
+.warehouse-history-actor {
+	font-size: 12px;
+	font-weight: 700;
+	color: #4b5563;
+	margin-bottom: 8px;
+}
+
+.warehouse-history-details {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 13px;
+	color: #374151;
+	line-height: 1.35;
+}
+
+.warehouse-history-value pre {
+	margin: 6px 0 0;
+	padding: 8px 10px;
+	background: #f3f4f6;
+	border-radius: 8px;
+	white-space: pre-wrap;
+	font-size: 12px;
+	color: #374151;
+	font-family: inherit;
+}
+
+@media (max-width: 640px) {
+	.warehouse-history-body {
+		padding: 14px;
+	}
+
+	.warehouse-history-row {
+		padding: 12px;
+	}
+
+	.warehouse-history-row-head {
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.warehouse-history-date {
+		white-space: normal;
+	}
+}
+
 @media (max-width: 768px) {
 	.import-city-controls {
 		grid-template-columns: 1fr;

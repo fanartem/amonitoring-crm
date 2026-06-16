@@ -28,6 +28,31 @@ const STATUS_COLORS = {
 	INSTALLED: '#1976d2',
 	WRITTEN_OFF: '#c62828',
 }
+const HISTORY_ACTIONS = {
+	CREATED: 'Добавлено на склад',
+	UPDATED: 'Изменено',
+	CITY_CHANGED: 'Город изменён',
+	CITY_TRANSFERRED: 'Перенос между городами',
+	CONSUMABLE_TRANSFERRED_OUT: 'Расходник списан из города',
+	CONSUMABLE_TRANSFERRED_IN: 'Расходник поступил в город',
+
+	IMPORT_CREATED: 'Добавлено через импорт',
+	IMPORT_SERIALIZED_TRANSFERRED: 'Перенос через импорт',
+	IMPORT_CONSUMABLE_ADDED: 'Расходник добавлен через импорт',
+	IMPORT_CONSUMABLE_TRANSFERRED_OUT:
+		'Расходник перенесён из города через импорт',
+	IMPORT_CONSUMABLE_TRANSFERRED_IN: 'Расходник перенесён в город через импорт',
+
+	ATTACHED_TO_REQUEST: 'Привязано к заявке',
+	DETACHED_FROM_REQUEST: 'Отвязано от заявки',
+
+	DELETED: 'Перемещено в корзину',
+	RESTORED: 'Восстановлено из корзины',
+	WRITTEN_OFF: 'Списано',
+
+	ISSUED_TO_USER: 'Выдано сотруднику',
+	RETURNED_FROM_USER: 'Возвращено от сотрудника',
+}
 
 export default function Warehouse() {
 	const [items, setItems] = useState([])
@@ -51,6 +76,10 @@ export default function Warehouse() {
 		reason: '',
 	})
 	const [transferLoading, setTransferLoading] = useState(false)
+
+	const [historyItem, setHistoryItem] = useState(null)
+	const [historyRows, setHistoryRows] = useState([])
+	const [historyLoading, setHistoryLoading] = useState(false)
 
 	const [isModalOpen, setIsModalOpen] = useState(false)
 	const [editItem, setEditItem] = useState(null)
@@ -1055,6 +1084,87 @@ export default function Warehouse() {
 		}
 	}
 
+	const formatDateTime = value => {
+		if (!value) return '—'
+
+		try {
+			return new Date(value).toLocaleString('ru-RU')
+		} catch {
+			return value
+		}
+	}
+
+	const getHistoryActionLabel = action => {
+		return HISTORY_ACTIONS[action] || action || 'Действие'
+	}
+
+	const openHistoryModal = async item => {
+		setHistoryItem(item)
+		setHistoryRows([])
+		setHistoryLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/warehouse/items/${item.id}/history`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Не удалось загрузить историю')
+			}
+
+			setHistoryRows(Array.isArray(data) ? data : [])
+		} catch (err) {
+			alert(err.message)
+			setHistoryItem(null)
+		} finally {
+			setHistoryLoading(false)
+		}
+	}
+
+	const closeHistoryModal = () => {
+		setHistoryItem(null)
+		setHistoryRows([])
+		setHistoryLoading(false)
+	}
+
+	const renderHistoryMovementText = row => {
+		const fromCity = row.from_city_name || null
+		const toCity = row.to_city_name || null
+
+		if (fromCity && toCity) {
+			return `${fromCity} → ${toCity}`
+		}
+
+		if (toCity) {
+			return `→ ${toCity}`
+		}
+
+		if (fromCity) {
+			return `${fromCity} →`
+		}
+
+		return null
+	}
+
+	const renderHistoryVehicleText = row => {
+		const vehicleParts = [row.brand, row.vehicle_model].filter(Boolean)
+		const title = vehicleParts.join(' ').trim()
+
+		if (!title && !row.plate_number && !row.vin) return null
+
+		const details = []
+
+		if (row.plate_number) details.push(row.plate_number)
+		if (row.vin) details.push(row.vin)
+
+		return `${title || 'Авто'}${details.length ? ` (${details.join(' · ')})` : ''}`
+	}
+
 	const renderWarehouseItemRow = item => {
 		return (
 			<tr
@@ -1178,6 +1288,14 @@ export default function Warehouse() {
 						{viewMode === 'active' ? (
 							<div className='warehouse-actions'>
 								<button
+									className='warehouse-action-btn warehouse-history-btn'
+									onClick={() => openHistoryModal(item)}
+									title='История оборудования'
+								>
+									🕘
+								</button>
+
+								<button
 									className='warehouse-action-btn warehouse-transfer-btn'
 									onClick={() => openTransferModal(item)}
 									title='Перенести в другой город'
@@ -1202,12 +1320,22 @@ export default function Warehouse() {
 								</button>
 							</div>
 						) : (
-							<button
-								className='warehouse-restore-btn'
-								onClick={() => handleRestore(item.id)}
-							>
-								Восстановить
-							</button>
+							<div className='warehouse-actions'>
+								<button
+									className='warehouse-action-btn warehouse-history-btn'
+									onClick={() => openHistoryModal(item)}
+									title='История оборудования'
+								>
+									🕘
+								</button>
+
+								<button
+									className='warehouse-restore-btn'
+									onClick={() => handleRestore(item.id)}
+								>
+									Восстановить
+								</button>
+							</div>
 						)}
 					</div>
 				</td>
@@ -1957,6 +2085,168 @@ export default function Warehouse() {
 								</button>
 							</div>
 						</form>
+					</div>
+				</div>
+			)}
+
+			{historyItem && (
+				<div className='modal-overlay open' onClick={closeHistoryModal}>
+					<div
+						className='modal-window warehouse-history-modal'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>История оборудования</span>
+
+							<button
+								className='modal-close'
+								type='button'
+								onClick={closeHistoryModal}
+							>
+								&times;
+							</button>
+						</div>
+
+						<div className='warehouse-history-body'>
+							<div className='warehouse-history-item-card'>
+								<div className='warehouse-history-item-title'>
+									{historyItem.name}
+									{historyItem.model ? ` ${historyItem.model}` : ''}
+								</div>
+
+								<div className='warehouse-history-item-meta'>
+									{historyItem.is_serialized ? (
+										<>
+											{historyItem.identifier_type}:{' '}
+											{historyItem.identifier_value}
+										</>
+									) : (
+										<>Расходник · текущее кол-во: {historyItem.quantity} шт.</>
+									)}
+
+									<span> · </span>
+
+									<span>
+										{historyItem.city_name || getCityName(historyItem.city_id)}
+									</span>
+								</div>
+							</div>
+
+							{historyLoading ? (
+								<div className='warehouse-history-empty'>
+									Загрузка истории...
+								</div>
+							) : historyRows.length === 0 ? (
+								<div className='warehouse-history-empty'>
+									История по этому оборудованию пока пустая
+								</div>
+							) : (
+								<div className='warehouse-history-list'>
+									{historyRows.map(row => {
+										const movementText = renderHistoryMovementText(row)
+										const vehicleText = renderHistoryVehicleText(row)
+
+										return (
+											<div key={row.id} className='warehouse-history-row'>
+												<div className='warehouse-history-row-dot' />
+
+												<div className='warehouse-history-row-content'>
+													<div className='warehouse-history-row-head'>
+														<div className='warehouse-history-action'>
+															{getHistoryActionLabel(row.action)}
+														</div>
+
+														<div className='warehouse-history-date'>
+															{formatDateTime(row.created_at)}
+														</div>
+													</div>
+
+													<div className='warehouse-history-actor'>
+														Кто выполнил: {row.created_by_name || '—'}
+													</div>
+
+													<div className='warehouse-history-details'>
+														{movementText && (
+															<div>
+																<strong>Город:</strong> {movementText}
+															</div>
+														)}
+
+														{row.quantity !== null &&
+															row.quantity !== undefined && (
+																<div>
+																	<strong>Количество:</strong> {row.quantity}
+																</div>
+															)}
+
+														{row.old_status || row.new_status ? (
+															<div>
+																<strong>Статус:</strong>{' '}
+																{STATUSES[row.old_status] ||
+																	row.old_status ||
+																	'—'}{' '}
+																→{' '}
+																{STATUSES[row.new_status] ||
+																	row.new_status ||
+																	'—'}
+															</div>
+														) : null}
+
+														{row.request_id && (
+															<div>
+																<strong>Заявка:</strong> #{row.request_id}
+																{row.request_city
+																	? ` · ${row.request_city}`
+																	: ''}
+																{row.request_address
+																	? ` · ${row.request_address}`
+																	: ''}
+															</div>
+														)}
+
+														{vehicleText && (
+															<div>
+																<strong>Авто:</strong> {vehicleText}
+															</div>
+														)}
+
+														{row.target_user_name && (
+															<div>
+																<strong>Сотрудник:</strong>{' '}
+																{row.target_user_name}
+															</div>
+														)}
+
+														{row.old_value && (
+															<div className='warehouse-history-value'>
+																<strong>Изменения:</strong>
+																<pre>{row.old_value}</pre>
+															</div>
+														)}
+
+														{row.reason && (
+															<div>
+																<strong>Причина:</strong> {row.reason}
+															</div>
+														)}
+													</div>
+												</div>
+											</div>
+										)
+									})}
+								</div>
+							)}
+						</div>
+
+						<div className='modal-footer warehouse-modal-footer'>
+							<button
+								className='modal-cancel-btn'
+								type='button'
+								onClick={closeHistoryModal}
+							>
+								Закрыть
+							</button>
+						</div>
 					</div>
 				</div>
 			)}

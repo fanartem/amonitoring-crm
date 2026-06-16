@@ -168,7 +168,6 @@ def require_city(cursor, city_id: int):
 
     return city
 
-
 def add_warehouse_movement(
     cursor,
     warehouse_item_id: int,
@@ -176,7 +175,16 @@ def add_warehouse_movement(
     current_user: dict,
     from_city_id: int | None = None,
     to_city_id: int | None = None,
+    request_id: int | None = None,
+    request_vehicle_id: int | None = None,
+    vehicle_id: int | None = None,
+    request_equipment_id: int | None = None,
+    target_user_id: int | None = None,
     quantity: int | None = None,
+    old_status: str | None = None,
+    new_status: str | None = None,
+    old_value: str | None = None,
+    new_value: str | None = None,
     reason: str | None = None,
 ):
     cursor.execute(
@@ -186,23 +194,40 @@ def add_warehouse_movement(
             action,
             from_city_id,
             to_city_id,
+            request_id,
+            request_vehicle_id,
+            vehicle_id,
+            request_equipment_id,
+            target_user_id,
             quantity,
+            old_status,
+            new_status,
+            old_value,
+            new_value,
             reason,
             created_by
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             warehouse_item_id,
             action,
             from_city_id,
             to_city_id,
+            request_id,
+            request_vehicle_id,
+            vehicle_id,
+            request_equipment_id,
+            target_user_id,
             quantity,
+            old_status,
+            new_status,
+            old_value,
+            new_value,
             reason,
             current_user["id"],
         )
     )
-
 
 def normalize_consumable_key(row: dict):
     return (
@@ -1163,6 +1188,90 @@ def get_warehouse_items(
     finally:
         connection.close()
 
+@router.get("/items/{item_id}/history")
+def get_warehouse_item_history(
+    item_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    История действий по оборудованию.
+    Доступ: роли, которые могут просматривать склад.
+    """
+    require_warehouse_read(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM warehouse_items
+                WHERE id = %s
+                """,
+                (item_id,)
+            )
+            item = cursor.fetchone()
+
+            if not item:
+                raise HTTPException(status_code=404, detail="Оборудование не найдено")
+
+            cursor.execute(
+                """
+                SELECT
+                    wh.id,
+                    wh.warehouse_item_id,
+                    wh.action,
+
+                    wh.from_city_id,
+                    from_city.name AS from_city_name,
+
+                    wh.to_city_id,
+                    to_city.name AS to_city_name,
+
+                    wh.request_id,
+                    wh.request_vehicle_id,
+                    wh.vehicle_id,
+                    wh.request_equipment_id,
+                    wh.target_user_id,
+                    target_user.name AS target_user_name,
+
+                    wh.quantity,
+                    wh.old_status,
+                    wh.new_status,
+                    wh.old_value,
+                    wh.new_value,
+                    wh.reason,
+
+                    wh.created_by,
+                    actor.name AS created_by_name,
+                    wh.created_at,
+
+                    r.city AS request_city,
+                    r.address AS request_address,
+
+                    v.brand,
+                    v.model AS vehicle_model,
+                    v.plate_number,
+                    v.vin
+                FROM warehouse_item_movements wh
+                LEFT JOIN cities from_city ON wh.from_city_id = from_city.id
+                LEFT JOIN cities to_city ON wh.to_city_id = to_city.id
+                LEFT JOIN users actor ON wh.created_by = actor.id
+                LEFT JOIN users target_user ON wh.target_user_id = target_user.id
+                LEFT JOIN requests r ON wh.request_id = r.id
+                LEFT JOIN vehicles v ON wh.vehicle_id = v.id
+                WHERE wh.warehouse_item_id = %s
+                ORDER BY wh.created_at DESC, wh.id DESC
+                """,
+                (item_id,)
+            )
+
+            return cursor.fetchall()
+
+    finally:
+        connection.close()
+
 @router.post("/items")
 def create_warehouse_item(
     data: WarehouseItemCreate,
@@ -1373,6 +1482,46 @@ def update_warehouse_item(
 
             cursor.execute(sql, tuple(values))
 
+            changed_fields = []
+
+            for field in allowed_fields:
+                if field in update_data and field not in ["city_id"]:
+                    old = item.get(field)
+                    new = update_data.get(field)
+
+                    if str(old) != str(new):
+                        changed_fields.append(f"{field}: {old} → {new}")
+
+            if changed_fields:
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="UPDATED",
+                    current_user=current_user,
+                    quantity=item.get("quantity"),
+                    old_status=item.get("status"),
+                    new_status=update_data.get("status", item.get("status")),
+                    old_value="\n".join(changed_fields),
+                    new_value=None,
+                    reason="Редактирование оборудования"
+                )
+
+            if (
+                "status" in update_data
+                and item.get("status") != "WRITTEN_OFF"
+                and update_data["status"] == "WRITTEN_OFF"
+            ):
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="WRITTEN_OFF",
+                    current_user=current_user,
+                    quantity=item.get("quantity"),
+                    old_status=item.get("status"),
+                    new_status="WRITTEN_OFF",
+                    reason="Списание через редактирование оборудования"
+                )
+
             if "city_id" in update_data and int(update_data["city_id"]) != int(item["city_id"]):
                 add_warehouse_movement(
                     cursor=cursor,
@@ -1485,6 +1634,8 @@ def transfer_warehouse_item(
                     from_city_id=data.from_city_id,
                     to_city_id=data.to_city_id,
                     quantity=1,
+                    old_status=item.get("status"),
+                    new_status=item.get("status"),
                     reason=data.reason,
                 )
 
@@ -1636,7 +1787,7 @@ def delete_warehouse_item(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, status, is_deleted
+                SELECT id, status, is_deleted, quantity, city_id
                 FROM warehouse_items
                 WHERE id = %s
                 """,
@@ -1665,6 +1816,19 @@ def delete_warehouse_item(
                 WHERE id = %s
                 """,
                 (current_user["id"], item_id)
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=item_id,
+                action="DELETED",
+                current_user=current_user,
+                from_city_id=item["city_id"],
+                to_city_id=None,
+                quantity=item.get("quantity"),
+                old_status=item.get("status"),
+                new_status=item.get("status"),
+                reason="Перемещено в корзину"
             )
 
             connection.commit()
@@ -1739,7 +1903,7 @@ def restore_warehouse_item(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, is_deleted
+                SELECT id, is_deleted, status, quantity, city_id
                 FROM warehouse_items
                 WHERE id = %s
                 """,
@@ -1762,6 +1926,19 @@ def restore_warehouse_item(
                 WHERE id = %s
                 """,
                 (item_id,)
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=item_id,
+                action="RESTORED",
+                current_user=current_user,
+                from_city_id=None,
+                to_city_id=item["city_id"],
+                quantity=item.get("quantity"),
+                old_status=item.get("status"),
+                new_status=item.get("status"),
+                reason="Восстановлено из корзины"
             )
 
             connection.commit()
@@ -1887,6 +2064,7 @@ def detach_equipment_from_request(
                     city.name AS city_name,
                     wi.status,
 
+                    v.id AS vehicle_id,
                     v.brand,
                     v.model AS vehicle_model,
                     v.plate_number
@@ -1939,6 +2117,23 @@ def detach_equipment_from_request(
                 WHERE id = %s
                 """,
                 (link_id,)
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=link["warehouse_item_id"],
+                action="DETACHED_FROM_REQUEST",
+                current_user=current_user,
+                from_city_id=None,
+                to_city_id=link.get("city_id"),
+                request_id=request_id,
+                request_vehicle_id=link.get("request_vehicle_id"),
+                vehicle_id=link.get("vehicle_id"),
+                request_equipment_id=link_id,
+                quantity=link.get("quantity"),
+                old_status=link.get("status"),
+                new_status="IN_STOCK" if is_serialized else link.get("status"),
+                reason="Оборудование отвязано от заявки и возвращено на склад"
             )
 
             item_title = f"{link['name']}"
@@ -2170,6 +2365,23 @@ def attach_equipment_to_request_vehicle(
             )
 
             link_id = cursor.lastrowid
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=data.warehouse_item_id,
+                action="ATTACHED_TO_REQUEST",
+                current_user=current_user,
+                from_city_id=item.get("city_id"),
+                to_city_id=None,
+                request_id=request_id,
+                request_vehicle_id=request_vehicle_id,
+                vehicle_id=request_vehicle.get("vehicle_id"),
+                request_equipment_id=link_id,
+                quantity=data.quantity,
+                old_status=item.get("status"),
+                new_status="INSTALLED" if is_serialized else item.get("status"),
+                reason=data.note or "Привязано к автомобилю в заявке"
+            )
 
             item_title = f"{item['name']}"
             if item["model"]:
