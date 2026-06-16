@@ -274,7 +274,7 @@
   flex-direction: column;
   background: #fcfcfc;
   border-radius: 8px;
-  
+  overflow: hidden;
 }
 
 .custom-tabs {
@@ -460,9 +460,7 @@
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;   /* Плавный скролл на iOS */
     gap: 8px !important;                 
-    padding: 4px 20px 8px 20px !important; /* ПОМЕНЯЛИ НА 20px, чтобы компенсировать маргины */
-    margin-left: -20px !important;       /* Выталкиваем в края экрана */
-    margin-right: -20px !important;       
+    padding: 4px 12px 8px 12px !important;
     
     scrollbar-width: none;                /* Прячем полосу прокрутки */
   }
