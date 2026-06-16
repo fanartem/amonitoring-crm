@@ -837,15 +837,15 @@ export default function RequestDetailModal({
 											)}
 
 											<div className='info-row'>
-												<div className='detail-row'>
-													<span>Дата создания:</span>
-													<strong>{formatDate(request.created_at)}</strong>
-												</div>
+												<span className='info-key'>Дата создания:</span>
+												<span className='info-val'>
+													{formatDate(request.created_at)}
+												</span>
+											</div>
 
-												<div className='detail-row'>
-													<span>Желаемая дата выполнения:</span>
-													<strong>{formatDate(request.scheduled_at)}</strong>
-												</div>
+											<div className='info-row'>
+												<strong>Желаемая дата выполнения:</strong>
+												<strong>{formatDate(request.scheduled_at)}</strong>
 											</div>
 
 											{request.schedule_approval_status &&
@@ -1330,7 +1330,6 @@ export default function RequestDetailModal({
 											: 'Назначить'}
 									</button>
 								</div>
-
 							) : ['PENDING', 'REJECTED'].includes(
 									request.schedule_approval_status,
 							  ) ? (
@@ -1341,7 +1340,6 @@ export default function RequestDetailModal({
 											: 'Назначение недоступно: время отклонено'}
 									</span>
 								</div>
-
 							) : request.assigned_to ? (
 								<div className='footer-group'>
 									<span
