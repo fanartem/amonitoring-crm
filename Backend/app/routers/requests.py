@@ -97,7 +97,7 @@ def build_schedule_approval_data(
             "comment": None,
         }
 
-    # Админ/РОП могут сразу создавать/изменять на нерабочее время
+    # Админ могут сразу создавать/изменять на нерабочее время
     if role in [ADMIN, ROP]:
         return {
             "status": SCHEDULE_APPROVAL_APPROVED,
@@ -106,7 +106,7 @@ def build_schedule_approval_data(
             "requested_at": almaty_now(),
             "decided_by": current_user["id"],
             "decided_at": almaty_now(),
-            "comment": "Нерабочее время указано администратором/РОП",
+            "comment": "Нерабочее время указано администратором",
         }
 
     if not reason or not reason.strip():
