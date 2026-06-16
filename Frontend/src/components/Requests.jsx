@@ -360,6 +360,29 @@ export default function Requests() {
 
 		if (filters.city) result = result.filter(r => r.city === filters.city)
 
+		const statusOrder = {
+			NEW: 1,
+			IN_PROGRESS: 2,
+			COMPLETED: 3,
+			CANCELLED: 4,
+		}
+
+		result = [...result].sort((a, b) => {
+			const statusA = statusOrder[a.status] || 99
+			const statusB = statusOrder[b.status] || 99
+
+			if (statusA !== statusB) {
+				return statusA - statusB
+			}
+
+			const dateA = new Date(a.created_at).getTime()
+			const dateB = new Date(b.created_at).getTime()
+
+			return dateB - dateA
+		})
+
+		setFilteredRequests(result)
+
 		setFilteredRequests(result)
 	}, [filters, requests])
 
@@ -381,7 +404,6 @@ export default function Requests() {
 	const statusLabels = {
 		NEW: 'В ожидании',
 		IN_PROGRESS: 'Принято в работу',
-		DONE: 'Работы завершены',
 		CANCELLED: 'Отменено',
 		COMPLETED: 'Работы завершены',
 	}
@@ -389,7 +411,6 @@ export default function Requests() {
 	const statusClasses = {
 		NEW: 'status-new',
 		IN_PROGRESS: 'status-progress',
-		DONE: 'status-done',
 		COMPLETED: 'status-done',
 		CANCELLED: 'status-cancelled',
 	}
