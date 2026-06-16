@@ -844,8 +844,8 @@ export default function RequestDetailModal({
 											</div>
 
 											<div className='info-row'>
-												<strong>Желаемая дата выполнения:</strong>
-												<strong>{formatDate(request.scheduled_at)}</strong>
+												<span className='info-key bold'>Желаемая дата выполнения:</span>
+												<span className='info-val bold'>{formatDate(request.scheduled_at)}</span>
 											</div>
 
 											{request.schedule_approval_status &&
