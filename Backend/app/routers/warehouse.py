@@ -15,7 +15,19 @@ from app.schemas import (
 router = APIRouter(prefix="/warehouse", tags=["Warehouse"])
 
 WAREHOUSE_MANAGE_ROLES = ["ADMIN", "WAREHOUSE_MANAGER"]
-WAREHOUSE_READ_ROLES = ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "MANAGER", "SENIOR_TECHNICIAN", "TECHNICIAN"]
+
+# Полноценный доступ к странице склада: список, группировка, история, корзина
+WAREHOUSE_FULL_READ_ROLES = ["ADMIN", "ROP", "WAREHOUSE_MANAGER"]
+
+# Просмотр оборудования только внутри заявки/автомобиля
+REQUEST_EQUIPMENT_READ_ROLES = [
+    "ADMIN",
+    "ROP",
+    "WAREHOUSE_MANAGER",
+    "MANAGER",
+    "SENIOR_TECHNICIAN",
+    "TECHNICIAN",
+]
 
 ALLOWED_CATEGORIES = [
     "GPS_TRACKER",
@@ -43,16 +55,62 @@ ALLOWED_STATUSES = [
     "WRITTEN_OFF",
 ]
 
+def require_warehouse_full_read(current_user: dict):
+    if current_user["role"] not in WAREHOUSE_FULL_READ_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для просмотра склада"
+        )
 
-def require_warehouse_read(current_user: dict):
-    if current_user["role"] not in WAREHOUSE_READ_ROLES:
-        raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра склада")
+def require_request_equipment_read(current_user: dict):
+    if current_user["role"] not in REQUEST_EQUIPMENT_READ_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для просмотра оборудования заявки"
+        )
+    
+def normalize_city(value):
+    if value is None:
+        return None
+    return str(value).strip().lower()
 
+
+def can_user_access_request_equipment(request: dict, current_user: dict) -> bool:
+    role = current_user.get("role")
+    user_id = int(current_user["id"])
+
+    if role in ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT"]:
+        return True
+
+    if role == "SENIOR_TECHNICIAN":
+        return True
+
+    if role == "MANAGER":
+        created_by = request.get("created_by")
+        responsible_manager_id = request.get("responsible_manager_id")
+
+        return (
+            created_by is not None and int(created_by) == user_id
+        ) or (
+            responsible_manager_id is not None
+            and int(responsible_manager_id) == user_id
+        )
+
+    if role == "TECHNICIAN":
+        if not request.get("is_paid"):
+            return False
+
+        if normalize_city(request.get("city")) != normalize_city(current_user.get("city")):
+            return False
+
+        assigned_to = request.get("assigned_to")
+        return assigned_to is None or int(assigned_to) == user_id
+
+    return False
 
 def require_warehouse_manage(current_user: dict):
     if current_user["role"] not in WAREHOUSE_MANAGE_ROLES:
         raise HTTPException(status_code=403, detail="Недостаточно прав для управления складом")
-
 
 def validate_warehouse_item(data: dict):
     category = data.get("category")
@@ -878,7 +936,7 @@ def get_warehouse_items_grouped(
     Для серийного оборудования quantity считается как 1 на строку.
     Для расходников quantity берется из warehouse_items.quantity.
     """
-    require_warehouse_read(current_user)
+    require_warehouse_full_read(current_user)
 
     connection = get_connection()
 
@@ -1092,7 +1150,7 @@ def get_warehouse_items(
     Список оборудования на складе.
     Доступ: ADMIN, WAREHOUSE_MANAGER, MANAGER.
     """
-    require_warehouse_read(current_user)
+    require_warehouse_full_read(current_user)
 
     connection = get_connection()
     try:
@@ -1197,7 +1255,7 @@ def get_warehouse_item_history(
     История действий по оборудованию.
     Доступ: роли, которые могут просматривать склад.
     """
-    require_warehouse_read(current_user)
+    require_warehouse_full_read(current_user)
 
     connection = get_connection()
 
@@ -1965,16 +2023,24 @@ def get_request_equipment(
     Получить всё оборудование, привязанное к заявке.
     Доступ: все авторизованные пользователи.
     """
-    require_warehouse_read(current_user)
+    require_request_equipment_read(current_user)
 
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id
-                FROM requests
-                WHERE id = %s AND is_deleted = 0
+                SELECT
+                    r.id,
+                    r.city,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+                    c.responsible_manager_id
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s
+                AND r.is_deleted = 0
                 """,
                 (request_id,)
             )
@@ -1982,6 +2048,12 @@ def get_request_equipment(
 
             if not request:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
+            
+            if not can_user_access_request_equipment(request, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра оборудования этой заявки"
+                )
 
             cursor.execute(
                 """
@@ -2441,7 +2513,7 @@ def get_request_vehicle_equipment(
     Получить оборудование конкретного автомобиля внутри заявки.
     Доступ: все авторизованные пользователи.
     """
-    require_warehouse_read(current_user)
+    require_request_equipment_read(current_user)
 
     connection = get_connection()
     try:
@@ -2451,9 +2523,15 @@ def get_request_vehicle_equipment(
                 SELECT
                     rv.id,
                     rv.request_id,
-                    r.is_deleted
+                    r.is_deleted,
+                    r.city,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+                    c.responsible_manager_id
                 FROM request_vehicles rv
                 INNER JOIN requests r ON rv.request_id = r.id
+                LEFT JOIN clients c ON r.client_id = c.id
                 WHERE rv.id = %s
                 """,
                 (request_vehicle_id,)
@@ -2470,6 +2548,12 @@ def get_request_vehicle_equipment(
                 raise HTTPException(
                     status_code=400,
                     detail="Заявка удалена"
+                )
+            
+            if not can_user_access_request_equipment(request_vehicle, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра оборудования этой заявки"
                 )
 
             cursor.execute(
