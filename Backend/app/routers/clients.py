@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from app.database import get_connection
 from app.schemas import (
     ClientCreate,
@@ -714,8 +714,54 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
     finally:
         connection.close()
 
+def collect_client_ids_from_group(group: dict) -> list[int]:
+    ids = []
+
+    def walk(client: dict | None):
+        if not client:
+            return
+
+        client_id = client.get("id")
+        if client_id:
+            ids.append(int(client_id))
+
+        for child in client.get("children") or []:
+            walk(child)
+
+    walk(group.get("parent_client"))
+
+    for client in group.get("clients") or []:
+        walk(client)
+
+    return ids
+
+
+def apply_counts_to_group(group: dict, request_counts: dict[int, int], vehicle_counts: dict[int, int]):
+    def walk(client: dict | None):
+        if not client:
+            return
+
+        client_id = int(client.get("id") or 0)
+
+        client["request_count"] = int(request_counts.get(client_id, 0))
+        client["vehicle_count"] = int(vehicle_counts.get(client_id, 0))
+        client["total_request_count"] = int(client["request_count"])
+        client["total_vehicle_count"] = int(client["vehicle_count"])
+
+        for child in client.get("children") or []:
+            walk(child)
+
+    walk(group.get("parent_client"))
+
+    for client in group.get("clients") or []:
+        walk(client)
+
 @router.get("/grouped")
-def get_clients_grouped(current_user: dict = Depends(get_current_user)):
+def get_clients_grouped(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
     connection = get_connection()
 
     try:
@@ -731,9 +777,12 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
             )
 
             where_clause = " AND ".join(conditions)
+
+            # Важно: здесь НЕ джойним requests/vehicles.
+            # Иначе снова будет тяжёлая загрузка всей базы.
             cursor.execute(
                 f"""
-                SELECT 
+                SELECT
                     c.id,
                     c.type,
                     c.name,
@@ -761,8 +810,8 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                     status_user.name AS status_changed_by_name,
                     responsible_user.name AS responsible_changed_by_name,
 
-                    COUNT(DISTINCT r.id) AS request_count,
-                    COUNT(DISTINCT v.id) AS vehicle_count
+                    0 AS request_count,
+                    0 AS vehicle_count
 
                 FROM clients c
 
@@ -771,49 +820,15 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                 LEFT JOIN users status_user ON c.status_changed_by = status_user.id
                 LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
 
-                LEFT JOIN requests r 
-                    ON c.id = r.client_id 
-                    AND r.is_deleted = 0
-
-                LEFT JOIN vehicles v
-                    ON c.id = v.client_id
-                    AND v.is_deleted = 0
-
                 WHERE {where_clause}
 
-                GROUP BY 
-                    c.id,
-                    c.type,
-                    c.name,
-                    c.company_name,
-                    c.phone,
-                    c.email,
-                    c.source_system,
-                    c.source_client_name,
-                    c.source_parent_client_name,
-                    c.source_inn,
-                    c.created_at,
-                    c.is_deleted,
-                    c.deleted_at,
-                    c.deleted_by,
-                    c.status,
-                    c.created_by,
-                    c.responsible_manager_id,
-                    c.status_changed_at,
-                    c.status_changed_by,
-                    c.responsible_changed_at,
-                    c.responsible_changed_by,
-                    creator.name,
-                    responsible.name,
-                    status_user.name,
-                    responsible_user.name
-
-                ORDER BY 
+                ORDER BY
                     c.source_parent_client_name ASC,
                     c.company_name ASC,
-                    c.name ASC
+                    c.name ASC,
+                    c.id ASC
                 """,
-                tuple(values)
+                tuple(values),
             )
 
             rows = cursor.fetchall()
@@ -822,8 +837,6 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
             hierarchy_clients = []
 
             for row in rows:
-                # Клиенты с source_client_name/source_parent_client_name участвуют в дереве.
-                # Это и импорт GlonassSoft, и новые CRM-подклиенты.
                 if row.get("source_client_name") or row.get("source_parent_client_name"):
                     hierarchy_clients.append(build_client_node(row))
                 else:
@@ -862,8 +875,6 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
 
             # Root-клиенты иерархии как отдельные верхнеуровневые группы
             for client in root_clients:
-                recalc_client_totals(client)
-
                 group_name = get_source_name(client)
 
                 group = empty_group(
@@ -873,33 +884,14 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
 
                 group["parent_client"] = client
                 group["clients"] = client.get("children") or []
-                group["clients_count"] = 1 + int(client.get("children_count") or 0)
-                group["subclients_count"] = int(client.get("children_count") or 0)
-                group["request_count"] = int(client.get("total_request_count") or 0)
-                group["vehicle_count"] = int(client.get("total_vehicle_count") or 0)
 
                 groups.append(group)
 
-            # Внешние группы, где parent указан как имя, но не найден как клиент в clients
+            # Внешние группы, где parent указан как имя, но не найден как клиент
             for group in external_groups.values():
-                total_clients = 0
-                total_requests = 0
-                total_vehicles = 0
-
-                for client in group["clients"]:
-                    recalc_client_totals(client)
-                    total_clients += 1 + int(client.get("children_count") or 0)
-                    total_requests += int(client.get("total_request_count") or 0)
-                    total_vehicles += int(client.get("total_vehicle_count") or 0)
-
-                group["clients_count"] = total_clients
-                group["subclients_count"] = total_clients
-                group["request_count"] = total_requests
-                group["vehicle_count"] = total_vehicles
-
                 groups.append(group)
 
-            # Обычные клиенты CRM отдельной группой
+            # Обычные CRM-клиенты отдельной группой
             if regular_clients:
                 regular_group = empty_group(
                     group_name=CRM_GROUP_NAME,
@@ -907,17 +899,6 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                 )
 
                 regular_group["clients"] = regular_clients
-                regular_group["clients_count"] = len(regular_clients)
-                regular_group["subclients_count"] = len(regular_clients)
-                regular_group["request_count"] = sum(
-                    int(client.get("request_count") or 0)
-                    for client in regular_clients
-                )
-                regular_group["vehicle_count"] = sum(
-                    int(client.get("vehicle_count") or 0)
-                    for client in regular_clients
-                )
-
                 groups.append(regular_group)
 
             groups.sort(
@@ -927,14 +908,403 @@ def get_clients_grouped(current_user: dict = Depends(get_current_user)):
                 )
             )
 
-            for group in groups:
+            total_groups = len(groups)
+            offset = (page - 1) * page_size
+            paged_groups = groups[offset:offset + page_size]
+
+            # Собираем ID клиентов только из текущей страницы групп
+            paged_client_ids = []
+
+            for group in paged_groups:
+                paged_client_ids.extend(collect_client_ids_from_group(group))
+
+            paged_client_ids = sorted(set(paged_client_ids))
+
+            request_counts = {}
+            vehicle_counts = {}
+
+            if paged_client_ids:
+                placeholders = ", ".join(["%s"] * len(paged_client_ids))
+
+                cursor.execute(
+                    f"""
+                    SELECT client_id, COUNT(*) AS count
+                    FROM requests
+                    WHERE is_deleted = 0
+                      AND client_id IN ({placeholders})
+                    GROUP BY client_id
+                    """,
+                    tuple(paged_client_ids),
+                )
+
+                for row in cursor.fetchall():
+                    request_counts[int(row["client_id"])] = int(row["count"] or 0)
+
+                cursor.execute(
+                    f"""
+                    SELECT client_id, COUNT(*) AS count
+                    FROM vehicles
+                    WHERE is_deleted = 0
+                      AND client_id IN ({placeholders})
+                    GROUP BY client_id
+                    """,
+                    tuple(paged_client_ids),
+                )
+
+                for row in cursor.fetchall():
+                    vehicle_counts[int(row["client_id"])] = int(row["count"] or 0)
+
+            # Проставляем counts, пересчитываем totals и права только для текущей страницы
+            for group in paged_groups:
+                apply_counts_to_group(group, request_counts, vehicle_counts)
+
                 if group.get("parent_client"):
-                    attach_client_tree_permissions(group["parent_client"], current_user)
+                    parent_client = group["parent_client"]
+
+                    recalc_client_totals(parent_client)
+
+                    group["clients"] = parent_client.get("children") or []
+                    group["clients_count"] = 1 + int(parent_client.get("children_count") or 0)
+                    group["subclients_count"] = int(parent_client.get("children_count") or 0)
+                    group["request_count"] = int(parent_client.get("total_request_count") or 0)
+                    group["vehicle_count"] = int(parent_client.get("total_vehicle_count") or 0)
+
+                    attach_client_tree_permissions(parent_client, current_user)
+
+                    for client in group.get("clients") or []:
+                        attach_client_tree_permissions(client, current_user)
+
+                    continue
+
+                total_clients = 0
+                total_requests = 0
+                total_vehicles = 0
 
                 for client in group.get("clients") or []:
+                    recalc_client_totals(client)
+
+                    total_clients += 1 + int(client.get("children_count") or 0)
+                    total_requests += int(client.get("total_request_count") or 0)
+                    total_vehicles += int(client.get("total_vehicle_count") or 0)
+
                     attach_client_tree_permissions(client, current_user)
 
-            return groups
+                group["clients_count"] = total_clients
+                group["subclients_count"] = total_clients
+                group["request_count"] = total_requests
+                group["vehicle_count"] = total_vehicles
+
+            return {
+                "items": paged_groups,
+                "total": total_groups,
+                "page": page,
+                "page_size": page_size,
+            }
+
+    finally:
+        connection.close()
+
+@router.get("/{client_id}/grouped-position")
+def get_client_grouped_position(
+    client_id: int,
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Возвращает, на какой странице /clients/grouped находится клиент,
+    в какой группе он лежит и каких родителей нужно раскрыть.
+    """
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            conditions = ["c.is_deleted = 0"]
+            values = []
+
+            apply_client_access_scope_condition(
+                conditions=conditions,
+                values=values,
+                current_user=current_user,
+                table_alias="c",
+            )
+
+            where_clause = " AND ".join(conditions)
+
+            cursor.execute(
+                f"""
+                SELECT
+                    c.id,
+                    c.type,
+                    c.name,
+                    c.company_name,
+                    c.phone,
+                    c.email,
+                    c.status,
+                    c.source_system,
+                    c.source_client_name,
+                    c.source_parent_client_name,
+                    c.source_inn,
+                    c.created_at,
+                    c.created_by,
+                    c.responsible_manager_id,
+                    c.status_changed_at,
+                    c.status_changed_by,
+                    c.responsible_changed_at,
+                    c.responsible_changed_by,
+                    c.is_deleted,
+                    c.deleted_at,
+                    c.deleted_by,
+
+                    creator.name AS created_by_name,
+                    responsible.name AS responsible_manager_name,
+                    status_user.name AS status_changed_by_name,
+                    responsible_user.name AS responsible_changed_by_name,
+
+                    0 AS request_count,
+                    0 AS vehicle_count
+
+                FROM clients c
+
+                LEFT JOIN users creator ON c.created_by = creator.id
+                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+                LEFT JOIN users status_user ON c.status_changed_by = status_user.id
+                LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
+
+                WHERE {where_clause}
+
+                ORDER BY
+                    c.source_parent_client_name ASC,
+                    c.company_name ASC,
+                    c.name ASC,
+                    c.id ASC
+                """,
+                tuple(values),
+            )
+
+            rows = cursor.fetchall()
+
+            regular_clients = []
+            hierarchy_clients = []
+
+            for row in rows:
+                if row.get("source_client_name") or row.get("source_parent_client_name"):
+                    hierarchy_clients.append(build_client_node(row))
+                else:
+                    regular_clients.append(build_client_node(row))
+
+            nodes_by_source_name = {}
+
+            for client in hierarchy_clients:
+                source_name = get_source_name(client)
+                nodes_by_source_name[normalize_text(source_name)] = client
+
+            root_clients = []
+            external_groups = {}
+
+            for client in hierarchy_clients:
+                parent_name = get_parent_source_name(client)
+
+                if not parent_name:
+                    root_clients.append(client)
+                    continue
+
+                parent_node = nodes_by_source_name.get(normalize_text(parent_name))
+
+                if parent_node:
+                    parent_node["children"].append(client)
+                else:
+                    if parent_name not in external_groups:
+                        external_groups[parent_name] = empty_group(
+                            group_name=parent_name,
+                            is_import_group=True,
+                        )
+
+                    external_groups[parent_name]["clients"].append(client)
+
+            groups = []
+
+            for client in root_clients:
+                group_name = get_source_name(client)
+
+                group = empty_group(
+                    group_name=group_name,
+                    is_import_group=client.get("source_system") == "GLONASS_SOFT",
+                )
+
+                group["parent_client"] = client
+                group["clients"] = client.get("children") or []
+                groups.append(group)
+
+            for group in external_groups.values():
+                groups.append(group)
+
+            if regular_clients:
+                regular_group = empty_group(
+                    group_name=CRM_GROUP_NAME,
+                    is_import_group=False,
+                )
+
+                regular_group["clients"] = regular_clients
+                groups.append(regular_group)
+
+            groups.sort(
+                key=lambda group: (
+                    group["group_name"] == CRM_GROUP_NAME,
+                    group["group_name"].lower(),
+                )
+            )
+
+            def find_in_tree(clients_list, target_id, ancestors=None):
+                if ancestors is None:
+                    ancestors = []
+
+                for client in clients_list or []:
+                    current_id = int(client.get("id") or 0)
+
+                    if current_id == int(target_id):
+                        return {
+                            "client": client,
+                            "ancestor_ids": ancestors,
+                        }
+
+                    result = find_in_tree(
+                        client.get("children") or [],
+                        target_id,
+                        ancestors + [current_id],
+                    )
+
+                    if result:
+                        return result
+
+                return None
+
+            for group_index, group in enumerate(groups):
+                parent_client = group.get("parent_client")
+
+                if parent_client and int(parent_client.get("id") or 0) == int(client_id):
+                    return {
+                        "client_id": client_id,
+                        "page": (group_index // page_size) + 1,
+                        "page_size": page_size,
+                        "group_index": group_index,
+                        "group_name": group["group_name"],
+                        "is_parent_client": True,
+                        "ancestor_ids": [],
+                    }
+
+                result = find_in_tree(group.get("clients") or [], client_id)
+
+                if result:
+                    return {
+                        "client_id": client_id,
+                        "page": (group_index // page_size) + 1,
+                        "page_size": page_size,
+                        "group_index": group_index,
+                        "group_name": group["group_name"],
+                        "is_parent_client": False,
+                        "ancestor_ids": result["ancestor_ids"],
+                    }
+
+            raise HTTPException(status_code=404, detail="Клиент не найден в списке")
+
+    finally:
+        connection.close()
+
+@router.get("/{client_id}")
+def get_client_by_id(
+    client_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            conditions = [
+                "c.id = %s",
+                "c.is_deleted = 0",
+            ]
+            values = [client_id]
+
+            apply_client_access_scope_condition(
+                conditions=conditions,
+                values=values,
+                current_user=current_user,
+                table_alias="c",
+            )
+
+            where_clause = " AND ".join(conditions)
+
+            cursor.execute(
+                f"""
+                SELECT
+                    c.id,
+                    c.type,
+                    c.name,
+                    c.company_name,
+                    c.phone,
+                    c.email,
+                    c.status,
+                    c.source_system,
+                    c.source_client_name,
+                    c.source_parent_client_name,
+                    c.source_inn,
+                    c.created_at,
+                    c.created_by,
+                    c.responsible_manager_id,
+                    c.status_changed_at,
+                    c.status_changed_by,
+                    c.responsible_changed_at,
+                    c.responsible_changed_by,
+                    c.is_deleted,
+                    c.deleted_at,
+                    c.deleted_by,
+
+                    creator.name AS created_by_name,
+                    responsible.name AS responsible_manager_name,
+                    status_user.name AS status_changed_by_name,
+                    responsible_user.name AS responsible_changed_by_name,
+
+                    (
+                        SELECT COUNT(*)
+                        FROM requests r
+                        WHERE r.client_id = c.id
+                          AND r.is_deleted = 0
+                    ) AS request_count,
+
+                    (
+                        SELECT COUNT(*)
+                        FROM vehicles v
+                        WHERE v.client_id = c.id
+                          AND v.is_deleted = 0
+                    ) AS vehicle_count
+
+                FROM clients c
+
+                LEFT JOIN users creator ON c.created_by = creator.id
+                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+                LEFT JOIN users status_user ON c.status_changed_by = status_user.id
+                LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
+
+                WHERE {where_clause}
+
+                LIMIT 1
+                """,
+                tuple(values),
+            )
+
+            client = cursor.fetchone()
+
+            if not client:
+                raise HTTPException(status_code=404, detail="Клиент не найден")
+
+            attach_client_permissions(client, current_user)
+
+            client["children"] = []
+            client["children_count"] = 0
+            client["total_request_count"] = int(client.get("request_count") or 0)
+            client["total_vehicle_count"] = int(client.get("vehicle_count") or 0)
+
+            return client
 
     finally:
         connection.close()

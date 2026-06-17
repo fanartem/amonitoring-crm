@@ -32,6 +32,7 @@ const getUserRole = () => {
 export default function Clients() {
 	const [clients, setClients] = useState([])
 	const [clientGroups, setClientGroups] = useState([])
+	const [clientGroupsTotal, setClientGroupsTotal] = useState(0)
 	const [clientGroupsPage, setClientGroupsPage] = useState(1)
 	const [clientGroupsPageSize, setClientGroupsPageSize] = useState(20)
 	const [expandedGroups, setExpandedGroups] = useState({})
@@ -116,6 +117,7 @@ export default function Clients() {
 	// Состояние для навигации из строки поиска
 	const [pendingOpenClientId, setPendingOpenClientId] = useState(null)
 	const [pendingListClientId, setPendingListClientId] = useState(null)
+	const [pendingClientPosition, setPendingClientPosition] = useState(null)
 
 	const [pendingHighlightVehicleId, setPendingHighlightVehicleId] =
 		useState(null)
@@ -132,9 +134,10 @@ export default function Clients() {
 
 	const clientGroupsSnapshotRef = useRef({})
 	const selectedClientRef = useRef(null)
+	const clientGroupsPageRef = useRef(clientGroupsPage)
+	const clientGroupsPageSizeRef = useRef(clientGroupsPageSize)
 
 	useEffect(() => {
-		fetchClientGroups({ initial: true })
 		fetchTechnicians()
 
 		if (['ADMIN', 'ROP'].includes(userRole)) {
@@ -143,13 +146,33 @@ export default function Clients() {
 	}, [])
 
 	useEffect(() => {
+		clientGroupsPageRef.current = clientGroupsPage
+	}, [clientGroupsPage])
+
+	useEffect(() => {
+		clientGroupsPageSizeRef.current = clientGroupsPageSize
+	}, [clientGroupsPageSize])
+
+	useEffect(() => {
+		fetchClientGroups({
+			initial: clientGroupsPage === 1,
+			page: clientGroupsPage,
+			pageSize: clientGroupsPageSize,
+		})
+	}, [clientGroupsPage, clientGroupsPageSize])
+
+	useEffect(() => {
 		const intervalId = setInterval(() => {
 			if (document.hidden) return
 			if (isCreateModalOpen) return
 			if (editingVehicle) return
 			if (clientActionLoading) return
 
-			fetchClientGroups({ silent: true })
+			fetchClientGroups({
+				silent: true,
+				page: clientGroupsPageRef.current,
+				pageSize: clientGroupsPageSizeRef.current,
+			})
 
 			if (selectedClientRef.current) {
 				fetchClientRequests(selectedClientRef.current.id)
@@ -199,47 +222,78 @@ export default function Clients() {
 
 	// 2. Когда клиенты загружены + есть pending → открываем нужного клиента
 	useEffect(() => {
+		if (!pendingOpenClientId || !pendingHighlightVehicleId) {
+			return
+		}
+
+		const openClient = async () => {
+			const allClients = flattenClientsFromGroups(clientGroups)
+
+			let client = allClients.find(
+				c => Number(c.id) === Number(pendingOpenClientId),
+			)
+
+			if (!client) {
+				client = await fetchClientById(pendingOpenClientId)
+			}
+
+			if (!client) return
+
+			setPendingOpenClientId(null)
+			handleClientClick(client)
+		}
+
+		openClient()
+	}, [clientGroups, pendingOpenClientId, pendingHighlightVehicleId])
+
+	useEffect(() => {
+		if (!pendingListClientId) return
+
+		const goToClientPage = async () => {
+			const position = await fetchClientGroupedPosition(pendingListClientId)
+
+			if (!position) {
+				setPendingListClientId(null)
+				return
+			}
+
+			setPendingClientPosition(position)
+
+			if (Number(clientGroupsPage) !== Number(position.page)) {
+				setClientGroupsPage(Number(position.page))
+			}
+		}
+
+		goToClientPage()
+	}, [pendingListClientId])
+
+	useEffect(() => {
 		if (
-			!pendingOpenClientId ||
-			!pendingHighlightVehicleId ||
+			!pendingListClientId ||
+			!pendingClientPosition ||
 			clientGroups.length === 0
 		) {
 			return
 		}
 
-		const allClients = flattenClientsFromGroups(clientGroups)
-
-		const client = allClients.find(
-			c => Number(c.id) === Number(pendingOpenClientId),
-		)
-
-		if (!client) return
-
-		setPendingOpenClientId(null)
-		handleClientClick(client)
-	}, [clientGroups, pendingOpenClientId, pendingHighlightVehicleId])
-
-	useEffect(() => {
-		if (!pendingListClientId || clientGroups.length === 0) return
+		if (Number(clientGroupsPage) !== Number(pendingClientPosition.page)) {
+			return
+		}
 
 		const result = findClientInGroups(pendingListClientId)
 
 		if (!result) return
 
-		const nextPage = Math.floor(result.groupIndex / clientGroupsPageSize) + 1
-
-		setClientGroupsPage(nextPage)
-
 		setExpandedGroups(prev => ({
 			...prev,
-			[result.group.group_name]: true,
+			[pendingClientPosition.group_name]: true,
 		}))
 
-		if (result.ancestorIds.length > 0) {
+		if (pendingClientPosition.ancestor_ids?.length > 0) {
 			setExpandedClientNodes(prev => {
 				const next = { ...prev }
 
-				result.ancestorIds.forEach(clientId => {
+				pendingClientPosition.ancestor_ids.forEach(clientId => {
 					next[clientId] = true
 				})
 
@@ -247,20 +301,18 @@ export default function Clients() {
 			})
 		}
 
-		if (result.isParentClient) {
-			setHighlightedGroupName(result.group.group_name)
+		if (pendingClientPosition.is_parent_client) {
+			setHighlightedGroupName(pendingClientPosition.group_name)
 			setHighlightedClientId(null)
 		} else {
 			setHighlightedClientId(Number(pendingListClientId))
 			setHighlightedGroupName(null)
 		}
 
-		setPendingListClientId(null)
-
 		setTimeout(() => {
-			const el = result.isParentClient
-				? groupRefs.current[result.group.group_name]
-				: clientRefs.current[Number(result.client.id)]
+			const el = pendingClientPosition.is_parent_client
+				? groupRefs.current[pendingClientPosition.group_name]
+				: clientRefs.current[Number(pendingListClientId)]
 
 			if (el) {
 				el.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -271,7 +323,15 @@ export default function Clients() {
 			setHighlightedClientId(null)
 			setHighlightedGroupName(null)
 		}, 2800)
-	}, [pendingListClientId, clientGroups, clientGroupsPageSize])
+
+		setPendingListClientId(null)
+		setPendingClientPosition(null)
+	}, [
+		clientGroups,
+		clientGroupsPage,
+		pendingListClientId,
+		pendingClientPosition,
+	])
 
 	// 3. Когда клиент открыт + нужна подсветка → автоматически показываем и грузим машины
 	useEffect(() => {
@@ -405,6 +465,8 @@ export default function Clients() {
 	const fetchClientGroups = async ({
 		silent = false,
 		initial = false,
+		page = clientGroupsPageRef.current,
+		pageSize = clientGroupsPageSizeRef.current,
 	} = {}) => {
 		if (!silent) {
 			setLoading(true)
@@ -412,16 +474,33 @@ export default function Clients() {
 		}
 
 		try {
-			const response = await fetch(`${API_BASE_URL}/clients/grouped`, {
-				headers: getAuthHeaders(),
+			const params = new URLSearchParams({
+				page: String(page),
+				page_size: String(pageSize),
 			})
+
+			const response = await fetch(
+				`${API_BASE_URL}/clients/grouped?${params}`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
 
 			if (!response.ok) {
 				throw new Error('Не удалось загрузить группы клиентов')
 			}
 
 			const data = await response.json()
-			const groups = Array.isArray(data) ? data : []
+
+			const groups = Array.isArray(data)
+				? data
+				: Array.isArray(data.items)
+					? data.items
+					: []
+
+			setClientGroupsTotal(
+				Array.isArray(data) ? groups.length : Number(data.total || 0),
+			)
 
 			if (silent) {
 				const previousSnapshot = clientGroupsSnapshotRef.current || {}
@@ -482,9 +561,7 @@ export default function Clients() {
 				const initialExpanded = {}
 
 				groups.forEach(group => {
-					if (group.group_name === 'Обычные клиенты CRM') {
-						initialExpanded[group.group_name] = true
-					}
+					initialExpanded[group.group_name] = true
 				})
 
 				setExpandedGroups(initialExpanded)
@@ -503,7 +580,11 @@ export default function Clients() {
 	}
 
 	const refreshClientsData = () => {
-		fetchClientGroups()
+		fetchClientGroups({
+			initial: clientGroupsPageRef.current === 1,
+			page: clientGroupsPageRef.current,
+			pageSize: clientGroupsPageSizeRef.current,
+		})
 
 		if (selectedClientRef.current) {
 			fetchClientRequests(selectedClientRef.current.id)
@@ -695,6 +776,47 @@ export default function Clients() {
 			}
 		} catch (err) {
 			console.error('Ошибка загрузки заявок клиента:', err)
+		}
+	}
+
+	const fetchClientById = async clientId => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/clients/${clientId}`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось загрузить клиента')
+			}
+
+			return await res.json()
+		} catch (err) {
+			console.error('Ошибка загрузки клиента по ID:', err)
+			alert(err.message)
+			return null
+		}
+	}
+
+	const fetchClientGroupedPosition = async clientId => {
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/clients/${clientId}/grouped-position?page_size=${clientGroupsPageSizeRef.current}`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось найти клиента в списке')
+			}
+
+			return await res.json()
+		} catch (err) {
+			console.error('Ошибка определения страницы клиента:', err)
+			alert(err.message)
+			return null
 		}
 	}
 
@@ -932,7 +1054,7 @@ export default function Clients() {
 			}
 
 			updateClientLocally(updatedClient)
-			fetchClientGroups()
+			fetchClientGroups({ silent: true })
 		} catch (err) {
 			alert(err.message)
 		} finally {
@@ -992,7 +1114,7 @@ export default function Clients() {
 			}
 
 			updateClientLocally(updatedClient)
-			fetchClientGroups()
+			fetchClientGroups({ silent: true })
 		} catch (err) {
 			alert(err.message)
 		} finally {
@@ -1588,11 +1710,7 @@ export default function Clients() {
 		)
 	}
 
-	const paginatedClientGroups = getPaginatedItems(
-		clientGroups,
-		clientGroupsPage,
-		clientGroupsPageSize,
-	)
+	const paginatedClientGroups = clientGroups
 
 	return (
 		<div className='clients-page-container'>
@@ -1651,11 +1769,10 @@ export default function Clients() {
 							{renderPagination({
 								page: clientGroupsPage,
 								pageSize: clientGroupsPageSize,
-								totalItems: clientGroups.length,
+								totalItems: clientGroupsTotal,
 								onPageChange: setClientGroupsPage,
 								onPageSizeChange: setClientGroupsPageSize,
 							})}
-
 							<div className='client-groups-list'>
 								{paginatedClientGroups.map(group => {
 									const hasSubclients =
@@ -1756,7 +1873,7 @@ export default function Clients() {
 							{renderPagination({
 								page: clientGroupsPage,
 								pageSize: clientGroupsPageSize,
-								totalItems: clientGroups.length,
+								totalItems: clientGroupsTotal,
 								onPageChange: setClientGroupsPage,
 								onPageSizeChange: setClientGroupsPageSize,
 							})}
