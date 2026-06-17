@@ -31,7 +31,8 @@ def get_pending_users(current_user: dict = Depends(get_current_user)):
             cursor.execute("""
                 SELECT id, email, name, role, city, created_at 
                 FROM users 
-                WHERE is_approved = FALSE
+                WHERE is_approved = FALSE 
+                AND is_active = 1
             """)
             return cursor.fetchall()
     finally:
