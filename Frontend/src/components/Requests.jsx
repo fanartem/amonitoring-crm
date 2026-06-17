@@ -86,6 +86,25 @@ export default function Requests() {
 	const canViewRequestPrice =
 		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
 
+	const isTechnicianUser = ['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(
+		userRole,
+	)
+
+	const canUseCityFilter = !isTechnicianUser
+	const canUsePaymentFilter = !isTechnicianUser
+
+	const [myRequestsFirst, setMyRequestsFirst] = useState(isTechnicianUser)
+
+	const isMyActiveRequest = req => {
+		if (!myRequestsFirst) return false
+		if (!currentUserId) return false
+
+		return (
+			Number(req.assigned_to) === Number(currentUserId) &&
+			!['COMPLETED', 'CANCELLED'].includes(req.status)
+		)
+	}
+
 	useEffect(() => {
 		fetchRequests({ initial: true })
 		fetchCities()
@@ -345,51 +364,102 @@ export default function Requests() {
 
 		if (filters.status) result = result.filter(r => r.status === filters.status)
 
-		if (filters.payment === 'PAID') {
+		if (canUsePaymentFilter && filters.payment === 'PAID') {
 			result = result.filter(r => Boolean(r.is_paid))
 		}
 
-		if (filters.payment === 'UNPAID') {
+		if (canUsePaymentFilter && filters.payment === 'UNPAID') {
 			result = result.filter(r => !Boolean(r.is_paid))
 		}
 
 		if (filters.format)
 			result = result.filter(r => r.visit_type === filters.format)
 
-		if (filters.city) result = result.filter(r => r.city === filters.city)
+		if (canUseCityFilter && filters.city) {
+			result = result.filter(r => r.city === filters.city)
+		}
 
-		const statusOrder = {
-			NEW: 1,
-			IN_PROGRESS: 2,
-			COMPLETED: 3,
-			CANCELLED: 4,
+		const getRequestSortGroup = req => {
+			if (isMyActiveRequest(req)) return 0
+
+			if (req.status === 'NEW') return 1
+			if (req.status === 'IN_PROGRESS') return 2
+			if (req.status === 'COMPLETED') return 3
+			if (req.status === 'CANCELLED') return 4
+
+			return 99
+		}
+
+		const getTime = value => {
+			if (!value) return null
+
+			const time = new Date(value).getTime()
+
+			return Number.isNaN(time) ? null : time
+		}
+
+		const getOldRequestTime = req => {
+			return (
+				getTime(req.scheduled_at) ||
+				getTime(req.created_at) ||
+				Number.MAX_SAFE_INTEGER
+			)
+		}
+
+		const getFreshRequestTime = req => {
+			return (
+				getTime(req.completed_at) ||
+				getTime(req.cancelled_at) ||
+				getTime(req.accepted_at) ||
+				getTime(req.updated_at) ||
+				getTime(req.status_changed_at) ||
+				getTime(req.created_at) ||
+				0
+			)
 		}
 
 		result = [...result].sort((a, b) => {
-			const statusA = statusOrder[a.status] || 99
-			const statusB = statusOrder[b.status] || 99
+			const groupA = getRequestSortGroup(a)
+			const groupB = getRequestSortGroup(b)
 
-			if (statusA !== statusB) {
-				return statusA - statusB
+			if (groupA !== groupB) {
+				return groupA - groupB
 			}
 
-			const getScheduledSortTime = req => {
-				if (!req.scheduled_at) return Number.MAX_SAFE_INTEGER
-				return new Date(req.scheduled_at).getTime()
+			// В ожидании — старые сверху, чтобы утренние заявки не терялись.
+			if (groupA === 1) {
+				const dateA = getOldRequestTime(a)
+				const dateB = getOldRequestTime(b)
+
+				if (dateA !== dateB) {
+					return dateA - dateB
+				}
+
+				return (
+					new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+				)
 			}
 
-			const dateA = getScheduledSortTime(a)
-			const dateB = getScheduledSortTime(b)
+			// Мои, принятые, завершённые и отменённые — новые сверху.
+			const dateA = getFreshRequestTime(a)
+			const dateB = getFreshRequestTime(b)
 
 			if (dateA !== dateB) {
-				return dateA - dateB
+				return dateB - dateA
 			}
 
-			return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+			return Number(b.id || 0) - Number(a.id || 0)
 		})
 
 		setFilteredRequests(result)
-	}, [filters, requests])
+	}, [
+		filters,
+		requests,
+		myRequestsFirst,
+		currentUserId,
+		canUseCityFilter,
+		canUsePaymentFilter,
+	])
 
 	const handleFilterChange = e =>
 		setFilters({ ...filters, [e.target.name]: e.target.value })
@@ -824,36 +894,40 @@ export default function Requests() {
 						<option value='CANCELLED'>Отмененные заявки</option>
 					</select>
 				</div>
-				<div className='filter-group'>
-					<label>Оплата</label>
-					<select
-						className={getFilterSelectClassName('payment')}
-						name='payment'
-						value={filters.payment}
-						onChange={handleFilterChange}
-					>
-						<option value=''>Все оплаты</option>
-						<option value='PAID'>Оплачено</option>
-						<option value='UNPAID'>Не оплачено</option>
-					</select>
-				</div>
-				<div className='filter-group'>
-					<label>Город</label>
-					<select
-						className={getFilterSelectClassName('city')}
-						name='city'
-						value={filters.city}
-						onChange={handleFilterChange}
-					>
-						<option value=''>Все города</option>
+				{canUsePaymentFilter && (
+					<div className='filter-group'>
+						<label>Оплата</label>
+						<select
+							className={getFilterSelectClassName('payment')}
+							name='payment'
+							value={filters.payment}
+							onChange={handleFilterChange}
+						>
+							<option value=''>Все оплаты</option>
+							<option value='PAID'>Оплачено</option>
+							<option value='UNPAID'>Не оплачено</option>
+						</select>
+					</div>
+				)}
+				{canUseCityFilter && (
+					<div className='filter-group'>
+						<label>Город</label>
+						<select
+							className={getFilterSelectClassName('city')}
+							name='city'
+							value={filters.city}
+							onChange={handleFilterChange}
+						>
+							<option value=''>Все города</option>
 
-						{cities.map(city => (
-							<option key={city.id} value={city.name}>
-								{city.name}
-							</option>
-						))}
-					</select>
-				</div>
+							{cities.map(city => (
+								<option key={city.id} value={city.name}>
+									{city.name}
+								</option>
+							))}
+						</select>
+					</div>
+				)}
 				<div className='filter-group'>
 					<label>Формат работы</label>
 					<select
@@ -870,6 +944,18 @@ export default function Requests() {
 				<button className='btn-reset' onClick={resetFilters}>
 					Сбросить
 				</button>
+				{isTechnicianUser && (
+					<label
+						className={`my-requests-toggle ${myRequestsFirst ? 'active' : ''}`}
+					>
+						<input
+							type='checkbox'
+							checked={myRequestsFirst}
+							onChange={e => setMyRequestsFirst(e.target.checked)}
+						/>
+						<span>Мои заявки сверху</span>
+					</label>
+				)}
 			</div>
 
 			<div className='requests-count'>
@@ -890,7 +976,9 @@ export default function Requests() {
 				{filteredRequests.map(req => (
 					<div
 						key={req.id}
-						className={`request-card ${highlightedRequests[String(req.id)] || ''}`}
+						className={`request-card ${
+							isMyActiveRequest(req) ? 'request-card-my-active' : ''
+						} ${highlightedRequests[String(req.id)] || ''}`}
 						style={{
 							zIndex: activeDropdown === req.id ? 100 : 1,
 							position: 'relative',
@@ -948,6 +1036,9 @@ export default function Requests() {
 								>
 									{statusLabels[req.status] || req.status}
 								</div>
+								{isMyActiveRequest(req) && (
+									<div className='my-request-badge'>Моя заявка</div>
+								)}
 							</div>
 
 							<div className='card-item request-creator-card-item'>

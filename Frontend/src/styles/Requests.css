@@ -1290,6 +1290,51 @@
   font-weight: bold;
 }
 
+.my-requests-toggle {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 9px 12px;
+	border: 1px solid #d8e7c8;
+	border-radius: 10px;
+	background: #f8fbf4;
+	color: #4f7d22;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	user-select: none;
+	white-space: nowrap;
+}
+
+.my-requests-toggle input {
+	margin: 0;
+	cursor: pointer;
+}
+
+.my-requests-toggle.active {
+	border-color: #5e9424;
+	background: #eef7e6;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.request-card-my-active {
+	border: 2px solid #5e9424;
+	box-shadow: 0 4px 16px rgba(94, 148, 36, 0.16);
+}
+
+.my-request-badge {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	margin-top: 6px;
+	padding: 3px 10px;
+	border-radius: 999px;
+	background: #eef7e6;
+	color: #4f7d22;
+	font-size: 11px;
+	font-weight: 700;
+}
+
 @media (max-width: 640px) {
   .status-badge {
     width: 100px;
