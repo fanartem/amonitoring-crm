@@ -2,46 +2,83 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from app.database import get_connection
 from app.security import verify_password, create_access_token, hash_password, ACCESS_TOKEN_EXPIRE_MINUTES
-from app.schemas import UserCreate # Эту схему добавим в Шаге 4
+from app.schemas import UserCreate
 from datetime import timedelta
+from pymysql.err import IntegrityError
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register")
 def register(data: UserCreate):
     connection = get_connection()
+
+    email = data.email.strip().lower()
+
     try:
         with connection.cursor() as cursor:
-            # Проверяем, не занят ли email
-            cursor.execute("SELECT id FROM users WHERE email = %s", (data.email,))
-            if cursor.fetchone():
-                raise HTTPException(status_code=400, detail="Email already registered")
+            cursor.execute(
+                "SELECT id FROM users WHERE email = %s LIMIT 1",
+                (email,)
+            )
 
-            # Проверяем, есть ли уже пользователи в базе
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=409,
+                    detail="Пользователь с таким email уже зарегистрирован"
+                )
+
             cursor.execute("SELECT COUNT(*) as count FROM users")
             user_count = cursor.fetchone()["count"]
 
-            # Если база пустая, первый юзер становится Админом и сразу одобряется
             if user_count == 0:
                 final_role = "ADMIN"
                 is_approved = True
             else:
-                final_role = data.role # или роль по умолчанию, например "TECHNICIAN"
+                final_role = data.role
                 is_approved = False
 
-            # Хэшируем пароль и сохраняем
             hashed = hash_password(data.password)
+
             sql = """
             INSERT INTO users (email, hashed_password, name, city, role, is_approved)
             VALUES (%s, %s, %s, %s, %s, %s)
             """
-            cursor.execute(sql, (data.email, hashed, data.name, data.city, final_role, is_approved))
+
+            cursor.execute(
+                sql,
+                (email, hashed, data.name, data.city, final_role, is_approved)
+            )
+
             connection.commit()
-            
+
             if is_approved:
-                return {"message": "You are the first user! Admin account created and approved automatically."}
-            else:
-                return {"message": "Registration request sent. Wait for admin approval."}
+                return {
+                    "message": "You are the first user! Admin account created and approved automatically."
+                }
+
+            return {
+                "message": "Registration request sent. Wait for admin approval."
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+
+    except IntegrityError as e:
+        connection.rollback()
+
+        if e.args and e.args[0] == 1062:
+            raise HTTPException(
+                status_code=409,
+                detail="Пользователь с таким email уже зарегистрирован"
+            )
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
     finally:
         connection.close()
         
@@ -58,6 +95,12 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Неправильный email или пароль",
+                )
+            
+            if user.get("is_active") == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Ваш аккаунт отключен администратором."
                 )
 
             # Проверяем одобрение админом

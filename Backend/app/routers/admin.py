@@ -98,7 +98,17 @@ def delete_user(user_id: int, current_user: dict = Depends(get_current_user)):
             if user["email"] == "admin@amonitoring.kz":
                 raise HTTPException(status_code=400, detail="Cannot delete main admin")
 
-            cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            cursor.execute(
+                """
+                UPDATE users
+                SET is_active = 0,
+                    is_approved = 0,
+                    deleted_at = NOW(),
+                    deleted_by = %s
+                WHERE id = %s
+                """,
+                (current_user["id"], user_id)
+            )
             connection.commit()
 
             return {"message": f"User {user_id} deleted"}
