@@ -137,6 +137,101 @@ def get_vehicles(
     finally:
         connection.close()
 
+@router.get("/search")
+def search_vehicles(
+    q: str = Query(..., min_length=2),
+    limit: int = Query(default=10, ge=1, le=20),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Быстрый глобальный поиск автомобилей без загрузки всех машин на фронт.
+    Ищет по гос. номеру, VIN, марке, модели.
+    """
+    search = q.strip()
+
+    if len(search) < 2:
+        return []
+
+    like_value = f"%{search}%"
+
+    conditions = [
+        "v.is_deleted = 0",
+        "c.is_deleted = 0",
+        """
+        (
+            v.plate_number LIKE %s OR
+            v.vin LIKE %s OR
+            v.brand LIKE %s OR
+            v.model LIKE %s
+        )
+        """,
+    ]
+
+    values = [
+        like_value,
+        like_value,
+        like_value,
+        like_value,
+    ]
+
+    # Учитываем ограничение Максима и будущих пользователей с таким же scope
+    if current_user.get("client_access_scope") == "RESPONSIBLE_ONLY":
+        conditions.append("c.responsible_manager_id = %s")
+        values.append(current_user["id"])
+
+    where_clause = " AND ".join(conditions)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            sql = f"""
+            SELECT
+                v.id,
+                v.client_id,
+                v.brand,
+                v.model,
+                v.plate_number,
+                v.vin,
+                v.year,
+                v.type,
+
+                c.name AS client_name,
+                c.company_name,
+                c.type AS client_type,
+                c.responsible_manager_id,
+
+                responsible.name AS responsible_manager_name
+            FROM vehicles v
+            LEFT JOIN clients c ON v.client_id = c.id
+            LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+            WHERE {where_clause}
+            ORDER BY
+                CASE
+                    WHEN v.plate_number = %s THEN 1
+                    WHEN v.vin = %s THEN 2
+                    WHEN v.plate_number LIKE %s THEN 3
+                    WHEN v.vin LIKE %s THEN 4
+                    ELSE 5
+                END,
+                v.id DESC
+            LIMIT %s
+            """
+
+            values.extend([
+                search,
+                search.upper(),
+                like_value,
+                like_value,
+                limit,
+            ])
+
+            cursor.execute(sql, tuple(values))
+            return cursor.fetchall()
+
+    finally:
+        connection.close()
+
 @router.get("/check-vin")
 def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
     """

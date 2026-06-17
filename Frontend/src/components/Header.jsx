@@ -8,6 +8,10 @@ import { getWorkTypeLabel } from '../utils/workTypes'
 export default function Header() {
 	const userDataStr = localStorage.getItem('user_data')
 	const user = userDataStr ? JSON.parse(userDataStr) : null
+	const userRole = user?.role
+	const canSearchWarehouse = ['ADMIN', 'ROP', 'WAREHOUSE_MANAGER'].includes(
+		userRole,
+	)
 	const [query, setQuery] = useState('')
 	const [isOpen, setIsOpen] = useState(false)
 	const searchRef = useRef(null)
@@ -15,8 +19,8 @@ export default function Header() {
 
 	const [clients, setClients] = useState([])
 	const [requests, setRequests] = useState([])
-	const [vehicles, setVehicles] = useState([])
 	const [warehouseItems, setWarehouseItems] = useState([])
+	const [vehicleSearchResults, setVehicleSearchResults] = useState([])
 	const [notifications, setNotifications] = useState([])
 	const [unreadCount, setUnreadCount] = useState(0)
 	const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
@@ -132,9 +136,12 @@ export default function Header() {
 		window.location.href = '/login'
 	}
 
-	// Загружаем данные один раз при монтировании компонента
+	// Загружаем лёгкие данные для глобального поиска.
+	// Важно: НЕ грузим /vehicles?client_id=... по каждому клиенту.
 	useEffect(() => {
-		const loadData = async () => {
+		let cancelled = false
+
+		const loadSearchData = async () => {
 			try {
 				const headers = getJsonAuthHeaders()
 
@@ -147,10 +154,14 @@ export default function Header() {
 						.then(res => (res.ok ? res.json() : []))
 						.catch(() => []),
 
-					fetch(`${API_BASE_URL}/warehouse/items`, { headers })
-						.then(res => (res.ok ? res.json() : []))
-						.catch(() => []),
+					canSearchWarehouse
+						? fetch(`${API_BASE_URL}/warehouse/items`, { headers })
+								.then(res => (res.ok ? res.json() : []))
+								.catch(() => [])
+						: Promise.resolve([]),
 				])
+
+				if (cancelled) return
 
 				const activeClients = Array.isArray(resClients)
 					? resClients.filter(c => !c.is_deleted)
@@ -167,30 +178,74 @@ export default function Header() {
 				setClients(activeClients)
 				setRequests(activeRequests)
 				setWarehouseItems(activeWarehouse)
-
-				// Загружаем автомобили по каждому клиенту, потому что /vehicles требует client_id
-				const vehiclesByClients = await Promise.all(
-					activeClients.map(client =>
-						fetch(`${API_BASE_URL}/vehicles?client_id=${client.id}`, {
-							headers,
-						})
-							.then(res => (res.ok ? res.json() : []))
-							.catch(() => []),
-					),
-				)
-
-				const allVehicles = vehiclesByClients
-					.flat()
-					.filter(vehicle => !vehicle.is_deleted)
-
-				setVehicles(allVehicles)
 			} catch (error) {
 				console.error('Ошибка при загрузке данных для поиска:', error)
 			}
 		}
 
-		loadData()
-	}, [])
+		loadSearchData()
+
+		const intervalId = setInterval(() => {
+			if (document.hidden) return
+			loadSearchData()
+		}, 30000)
+
+		const handleFocus = () => {
+			loadSearchData()
+		}
+
+		window.addEventListener('focus', handleFocus)
+
+		return () => {
+			cancelled = true
+			clearInterval(intervalId)
+			window.removeEventListener('focus', handleFocus)
+		}
+	}, [canSearchWarehouse])
+
+	useEffect(() => {
+		const q = query.trim()
+
+		if (q.length < 2) {
+			setVehicleSearchResults([])
+			return
+		}
+
+		let cancelled = false
+
+		const timeoutId = setTimeout(async () => {
+			try {
+				const res = await fetch(
+					`${API_BASE_URL}/vehicles/search?q=${encodeURIComponent(q)}&limit=8`,
+					{
+						headers: getJsonAuthHeaders(),
+					},
+				)
+
+				if (!res.ok) {
+					if (!cancelled) setVehicleSearchResults([])
+					return
+				}
+
+				const data = await res.json()
+
+				if (!cancelled) {
+					setVehicleSearchResults(Array.isArray(data) ? data : [])
+				}
+			} catch (err) {
+				console.error('Ошибка поиска машин:', err)
+
+				if (!cancelled) {
+					setVehicleSearchResults([])
+				}
+			}
+		}, 350)
+
+		return () => {
+			cancelled = true
+			clearTimeout(timeoutId)
+		}
+	}, [query])
 
 	useEffect(() => {
 		fetchNotifications()
@@ -287,33 +342,22 @@ export default function Header() {
 			})
 		})
 
-		// 2.1. Поиск по автомобилям из /vehicles?client_id=...
-		// Нужно для авто, которые есть у клиента, но могут ещё не быть в заявках
-		vehicles.forEach(v => {
-			const matches =
-				v.plate_number?.toLowerCase().includes(q) ||
-				v.vin?.toLowerCase().includes(q) ||
-				v.brand?.toLowerCase().includes(q) ||
-				v.model?.toLowerCase().includes(q)
-
-			if (!matches) return
-
+		vehicleSearchResults.forEach(v => {
 			const vehicleId = v.id || v.vehicle_id
+
 			if (!vehicleId || vehicleResultsMap.has(vehicleId)) return
 
-			const client = clients.find(c => Number(c.id) === Number(v.client_id))
-
-			const clientName = client ? client.company_name || client.name : 'Клиент'
-
+			const clientName = v.company_name || v.client_name || 'Клиент'
 			const vehicleTitle = `${v.brand || ''} ${v.model || ''}`.trim() || 'Авто'
 			const plate = v.plate_number ? ` · ${v.plate_number}` : ''
+			const vin = v.vin ? ` · VIN: ${v.vin}` : ''
 
 			vehicleResultsMap.set(vehicleId, {
 				id: vehicleId,
 				clientId: v.client_id,
 				vehicleId,
 				title: `${vehicleTitle}${plate}`,
-				subtitle: `Автомобиль клиента: ${clientName}`,
+				subtitle: `Автомобиль клиента: ${clientName}${vin}`,
 				type: 'vehicle',
 			})
 		})
@@ -364,49 +408,58 @@ export default function Header() {
 		requestResultsMap.forEach(item => results.push(item))
 
 		// 4. Поиск по ОБОРУДОВАНИЮ СКЛАДА:
-		// IMEI / MAC / serial / название / модель / производитель
-		const matchedEquipment = warehouseItems.filter(item => {
-			const searchableValues = [
-				item.name,
-				item.manufacturer,
-				item.model,
-				item.identifier_type,
-				item.identifier_value,
-				item.serial_number,
-				item.client_name,
-				item.company_name,
-				item.plate_number,
-				item.vin,
-			]
+		// Только для ролей, которым доступен склад.
+		if (canSearchWarehouse) {
+			const matchedEquipment = warehouseItems.filter(item => {
+				const searchableValues = [
+					item.name,
+					item.manufacturer,
+					item.model,
+					item.identifier_type,
+					item.identifier_value,
+					item.serial_number,
+					item.client_name,
+					item.company_name,
+					item.plate_number,
+					item.vin,
+				]
 
-			return searchableValues.some(value =>
-				String(value || '')
-					.toLowerCase()
-					.includes(q),
-			)
-		})
-
-		matchedEquipment.forEach(item => {
-			const title = getEquipmentTitle(item)
-			const identifierText = getEquipmentIdentifierText(item)
-
-			const installedText =
-				item.status === 'INSTALLED'
-					? ` • Установлено: ${
-							item.company_name || item.client_name || 'клиент не указан'
-						}${item.plate_number ? ` • ${item.plate_number}` : ''}`
-					: ''
-
-			results.push({
-				id: item.id,
-				title: `${title}`,
-				subtitle: `Оборудование • ${identifierText}${installedText}`,
-				type: 'equipment',
+				return searchableValues.some(value =>
+					String(value || '')
+						.toLowerCase()
+						.includes(q),
+				)
 			})
-		})
+
+			matchedEquipment.forEach(item => {
+				const title = getEquipmentTitle(item)
+				const identifierText = getEquipmentIdentifierText(item)
+
+				const installedText =
+					item.status === 'INSTALLED'
+						? ` • Установлено: ${
+								item.company_name || item.client_name || 'клиент не указан'
+							}${item.plate_number ? ` • ${item.plate_number}` : ''}`
+						: ''
+
+				results.push({
+					id: item.id,
+					title: `${title}`,
+					subtitle: `Оборудование • ${identifierText}${installedText}`,
+					type: 'equipment',
+				})
+			})
+		}
 
 		return results.slice(0, 8)
-	}, [query, clients, requests, vehicles, warehouseItems])
+	}, [
+		query,
+		clients,
+		requests,
+		vehicleSearchResults,
+		warehouseItems,
+		canSearchWarehouse,
+	])
 
 	useEffect(() => {
 		const handleClickOutside = event => {

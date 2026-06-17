@@ -134,7 +134,6 @@ export default function Clients() {
 	const selectedClientRef = useRef(null)
 
 	useEffect(() => {
-		fetchClients({ initial: true })
 		fetchClientGroups({ initial: true })
 		fetchTechnicians()
 
@@ -150,7 +149,6 @@ export default function Clients() {
 			if (editingVehicle) return
 			if (clientActionLoading) return
 
-			fetchClients({ silent: true })
 			fetchClientGroups({ silent: true })
 
 			if (selectedClientRef.current) {
@@ -204,12 +202,14 @@ export default function Clients() {
 		if (
 			!pendingOpenClientId ||
 			!pendingHighlightVehicleId ||
-			clients.length === 0
+			clientGroups.length === 0
 		) {
 			return
 		}
 
-		const client = clients.find(
+		const allClients = flattenClientsFromGroups(clientGroups)
+
+		const client = allClients.find(
 			c => Number(c.id) === Number(pendingOpenClientId),
 		)
 
@@ -217,7 +217,7 @@ export default function Clients() {
 
 		setPendingOpenClientId(null)
 		handleClientClick(client)
-	}, [clients, pendingOpenClientId, pendingHighlightVehicleId])
+	}, [clientGroups, pendingOpenClientId, pendingHighlightVehicleId])
 
 	useEffect(() => {
 		if (!pendingListClientId || clientGroups.length === 0) return
@@ -503,7 +503,6 @@ export default function Clients() {
 	}
 
 	const refreshClientsData = () => {
-		fetchClients()
 		fetchClientGroups()
 
 		if (selectedClientRef.current) {
@@ -933,7 +932,6 @@ export default function Clients() {
 			}
 
 			updateClientLocally(updatedClient)
-			fetchClients()
 			fetchClientGroups()
 		} catch (err) {
 			alert(err.message)
@@ -994,7 +992,6 @@ export default function Clients() {
 			}
 
 			updateClientLocally(updatedClient)
-			fetchClients()
 			fetchClientGroups()
 		} catch (err) {
 			alert(err.message)
