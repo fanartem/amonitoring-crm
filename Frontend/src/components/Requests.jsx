@@ -90,7 +90,7 @@ export default function Requests() {
 		userRole,
 	)
 
-	const canUseCityFilter = !isTechnicianUser
+	const canUseCityFilter = userRole !== 'TECHNICIAN'
 	const canUsePaymentFilter = !isTechnicianUser
 
 	const [myRequestsFirst, setMyRequestsFirst] = useState(isTechnicianUser)
