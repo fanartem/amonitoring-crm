@@ -65,6 +65,7 @@ export default function Requests() {
 	const [filters, setFilters] = useState({
 		search: '',
 		created_by: '',
+		assigned_to: '',
 		status: '',
 		payment: '',
 		city: '',
@@ -351,6 +352,15 @@ export default function Requests() {
 					r.created_by_name.toLowerCase().includes(creatorFilter),
 			)
 		}
+
+		if (filters.assigned_to) {
+			const assigneeFilter = filters.assigned_to.toLowerCase()
+			result = result.filter(r => {
+				if (!r.assigned_to) return false
+				const techName = getTechName(r.assigned_to)
+				return Boolean(techName) && techName.toLowerCase().includes(assigneeFilter)
+			})
+		}
 		if (filters.date_from) {
 			const fromDate = new Date(filters.date_from)
 			fromDate.setHours(0, 0, 0, 0)
@@ -455,6 +465,7 @@ export default function Requests() {
 	}, [
 		filters,
 		requests,
+		technicians,
 		myRequestsFirst,
 		currentUserId,
 		canUseCityFilter,
@@ -468,6 +479,7 @@ export default function Requests() {
 		setFilters({
 			search: '',
 			created_by: '',
+			assigned_to: '',
 			status: '',
 			payment: '',
 			city: '',
@@ -834,7 +846,7 @@ export default function Requests() {
 
 	return (
 		<div className='requests-page-container'>
-			<div className='filters-bar'>
+			<div className='filters-bar filters-bar-top'>
 				<div className='filter-group filter-main'>
 					<label>Глобальный поиск</label>
 					<input
@@ -857,7 +869,20 @@ export default function Requests() {
 						onChange={handleFilterChange}
 					/>
 				</div>
+				<div className='filter-group filter-creator'>
+					<label>Исполнитель заявки</label>
+					<input
+						className={getFilterClassName('assigned_to')}
+						type='text'
+						name='assigned_to'
+						placeholder='ФИО исполнителя...'
+						value={filters.assigned_to || ''}
+						onChange={handleFilterChange}
+					/>
+				</div>
+			</div>
 
+			<div className='filters-bar'>
 				<div className='filter-group'>
 					<label>Дата создания от:</label>
 					<input

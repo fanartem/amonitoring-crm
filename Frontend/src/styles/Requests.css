@@ -24,6 +24,10 @@
   align-items: flex-end;
 }
 
+.filters-bar-top {
+  margin-bottom: 12px;
+}
+
 .filter-group {
   display: flex;
   flex-direction: column;
