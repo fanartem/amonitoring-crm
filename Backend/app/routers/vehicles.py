@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_connection
 from app.schemas import VehicleCreate, VehicleUpdate
 from app.security import get_current_user
+from app.permissions import can_create_request_for_client
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
 
@@ -10,13 +11,53 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
     if current_user["role"] not in ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]:
         raise HTTPException(
             status_code=403,
-            detail="Только Админ, РОП и Менеджер могут создавать машины"
+            detail="Только Админ, РОП, Менеджер и Тех. поддержка могут создавать машины"
         )
 
     connection = get_connection()
 
     try:
         with connection.cursor() as cursor:
+            # 1. Проверяем клиента ДО проверки VIN и ДО создания машины.
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    type,
+                    name,
+                    company_name,
+                    status,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
+                FROM clients
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (data.client_id,)
+            )
+
+            client = cursor.fetchone()
+
+            if not client or client["is_deleted"]:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Клиент не найден"
+                )
+
+            if not can_create_request_for_client(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для добавления машины этому клиенту"
+                )
+
+            if client.get("status") == "BLOCKED":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя добавить машину заблокированному клиенту"
+                )
+
+            # 2. Только после проверки прав нормализуем и проверяем VIN.
             vin = data.vin.strip().upper() if data.vin else ""
 
             if not vin:
@@ -27,19 +68,35 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
 
             cursor.execute(
                 """
-                SELECT id, brand, model, plate_number
-                FROM vehicles
-                WHERE vin = %s
-                AND is_deleted = 0
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    c.name AS client_name,
+                    c.company_name AS client_company_name
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.vin = %s
+                  AND v.is_deleted = 0
+                LIMIT 1
                 """,
                 (vin,)
             )
+
             existing_vehicle = cursor.fetchone()
 
             if existing_vehicle:
+                client_name = (
+                    existing_vehicle.get("client_company_name")
+                    or existing_vehicle.get("client_name")
+                    or f"ID клиента {existing_vehicle.get('client_id')}"
+                )
+
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Автомобиль с VIN {vin} уже существует"
+                    detail=f"Автомобиль с VIN {vin} уже существует у клиента: {client_name}"
                 )
 
             sql = """

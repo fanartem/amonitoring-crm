@@ -397,7 +397,13 @@ export default function CreateRequestModal({
 			})
 
 			if (res.ok) {
-				setClientsList(await res.json())
+				const data = await res.json()
+
+				const availableClients = Array.isArray(data)
+					? data.filter(client => client.can_create_request)
+					: []
+
+				setClientsList(availableClients)
 			}
 		} catch (err) {
 			console.error(err)
