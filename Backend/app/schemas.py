@@ -100,6 +100,14 @@ class VehicleUpdate(BaseModel):
     year: Optional[int] = None
     type: Optional[str] = None
 
+class VehicleClientTransfer(BaseModel):
+    new_client_id: int
+    reason: str
+
+class VehicleDeleteRequest(BaseModel):
+    delete_reason_type: str
+    delete_reason: str
+
 class CityCreate(BaseModel):
     name: str
 

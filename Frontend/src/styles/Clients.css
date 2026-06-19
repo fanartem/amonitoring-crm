@@ -1070,6 +1070,112 @@
 	}
 }
 
+.vehicle-card-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	justify-content: flex-end;
+	align-items: center;
+}
+
+.vehicle-delete-btn {
+	border-color: #ffcdd2;
+	color: #c62828;
+	background: #fff;
+}
+
+.vehicle-delete-btn:hover {
+	background: #ffebee;
+	border-color: #ef9a9a;
+}
+
+.vehicle-transfer-btn {
+	border-color: #bbdefb;
+	color: #1565c0;
+	background: #fff;
+}
+
+.vehicle-transfer-btn:hover {
+	background: #e3f2fd;
+	border-color: #90caf9;
+}
+
+.vehicle-restore-btn {
+	border-color: #c8e6c9;
+	color: #2e7d32;
+	background: #fff;
+	white-space: nowrap;
+}
+
+.vehicle-restore-btn:hover {
+	background: #e8f5e9;
+}
+
+.vehicle-trash-card {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+	border: 1px solid #ffcdd2;
+	border-radius: 8px;
+	padding: 12px;
+	background: #fff;
+}
+
+.vehicle-delete-reason-box {
+	margin-top: 10px;
+	padding: 10px;
+	border: 1px solid #ffe0e0;
+	border-radius: 8px;
+	background: #fff8f8;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.vehicle-delete-reason-box strong {
+	color: #c62828;
+	font-size: 13px;
+}
+
+.vehicle-delete-reason-box span {
+	color: #555;
+	font-size: 13px;
+}
+
+.vehicle-transfer-warning.danger {
+	background: #fff8f8;
+	border-color: #ffcdd2;
+	color: #b71c1c;
+}
+
+.vehicle-submit-btn.danger {
+	background: #c62828;
+	border-color: #c62828;
+	color: #fff;
+}
+
+.vehicle-submit-btn.danger:hover {
+	background: #b71c1c;
+	border-color: #b71c1c;
+}
+
+@media (max-width: 768px) {
+	.vehicle-trash-card {
+		flex-direction: column;
+	}
+
+	.vehicle-card-actions {
+		width: 100%;
+		justify-content: stretch;
+	}
+
+	.vehicle-card-actions button,
+	.vehicle-restore-btn {
+		width: 100%;
+	}
+}
+
 @media (max-width: 640px) {
   .client-inline-select {
 		width: 100%;

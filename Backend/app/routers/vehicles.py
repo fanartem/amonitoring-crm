@@ -1,10 +1,38 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_connection
-from app.schemas import VehicleCreate, VehicleUpdate
+from app.schemas import VehicleCreate, VehicleUpdate, VehicleClientTransfer, VehicleDeleteRequest
 from app.security import get_current_user
 from app.permissions import can_create_request_for_client
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
+
+VEHICLE_DELETE_ROLES = ["ADMIN"]
+
+VEHICLE_TRASH_VIEW_ROLES = [
+    "ADMIN",
+    "ROP",
+    "ACCOUNTANT",
+    "MANAGER",
+    "WAREHOUSE_MANAGER",
+]
+
+VEHICLE_RESTORE_ROLES = ["ADMIN"]
+
+ALLOWED_VEHICLE_DELETE_REASON_TYPES = [
+    "EQUIPMENT_REMOVED",
+    "SERVICE_STOPPED_SIM_BLOCKED",
+    "OTHER",
+]
+
+def get_client_display_name(client: dict) -> str:
+    if not client:
+        return "Клиент не найден"
+
+    return (
+        client.get("company_name")
+        or client.get("name")
+        or f"ID клиента {client.get('id')}"
+    )
 
 @router.post("")
 def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current_user)):
@@ -344,18 +372,31 @@ def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
         connection.close()
 
 @router.get("/deleted")
-def get_deleted_vehicles(current_user: dict = Depends(get_current_user)):
-    """Список удалённых машин. Только ADMIN и MANAGER."""
-    if current_user["role"] not in ["ADMIN", "MANAGER"]:
+def get_deleted_vehicles(
+    client_id: int | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Список удалённых машин. Просмотр: ADMIN, ROP, ACCOUNTANT, MANAGER, WAREHOUSE_MANAGER."""
+    if current_user["role"] not in VEHICLE_TRASH_VIEW_ROLES:
         raise HTTPException(
             status_code=403,
-            detail="Только Менеджер или Админ могут просматривать корзину машин"
+            detail="Недостаточно прав для просмотра корзины машин"
         )
 
+    conditions = ["v.is_deleted = 1"]
+    values = []
+
+    if client_id:
+        conditions.append("v.client_id = %s")
+        values.append(client_id)
+
+    where_clause = " AND ".join(conditions)
+
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
-            sql = """
+            sql = f"""
             SELECT 
                 v.id,
                 v.client_id,
@@ -367,6 +408,8 @@ def get_deleted_vehicles(current_user: dict = Depends(get_current_user)):
                 v.type,
                 v.deleted_at,
                 v.deleted_by,
+                v.delete_reason_type,
+                v.delete_reason,
 
                 c.name AS client_name,
                 c.company_name,
@@ -382,7 +425,7 @@ def get_deleted_vehicles(current_user: dict = Depends(get_current_user)):
             LEFT JOIN requests r 
                 ON rv.request_id = r.id
                 AND r.is_deleted = 0
-            WHERE v.is_deleted = 1
+            WHERE {where_clause}
             GROUP BY 
                 v.id,
                 v.client_id,
@@ -394,14 +437,18 @@ def get_deleted_vehicles(current_user: dict = Depends(get_current_user)):
                 v.type,
                 v.deleted_at,
                 v.deleted_by,
+                v.delete_reason_type,
+                v.delete_reason,
                 c.name,
                 c.company_name,
                 c.type,
                 u.name
             ORDER BY v.deleted_at DESC
             """
-            cursor.execute(sql)
+
+            cursor.execute(sql, tuple(values))
             return cursor.fetchall()
+
     finally:
         connection.close()
 
@@ -596,13 +643,380 @@ def update_vehicle(
     finally:
         connection.close()
 
-@router.delete("/{vehicle_id}")
-def delete_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_user)):
-    """Soft delete машины. Только ADMIN и MANAGER."""
+@router.post("/{vehicle_id}/transfer-client")
+def transfer_vehicle_to_client(
+    vehicle_id: int,
+    data: VehicleClientTransfer,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Перенос машины от одного клиента к другому.
+
+    Меняем только vehicles.client_id.
+    Старые заявки, request_vehicles и request_equipment не переносим,
+    потому что они являются историей работ старого клиента.
+    """
     if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут удалять машины")
+        raise HTTPException(
+            status_code=403,
+            detail="Только Менеджер или Админ могут переносить машины между клиентами"
+        )
+
+    reason = (data.reason or "").strip()
+
+    if not reason:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо указать причину переноса"
+        )
 
     connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    v.is_deleted,
+
+                    old_client.id AS old_client_id,
+                    old_client.type AS old_client_type,
+                    old_client.name AS old_client_name,
+                    old_client.company_name AS old_client_company_name,
+                    old_client.status AS old_client_status,
+                    old_client.created_by AS old_client_created_by,
+                    old_client.responsible_manager_id AS old_client_responsible_manager_id,
+                    old_client.is_deleted AS old_client_is_deleted
+                FROM vehicles v
+                LEFT JOIN clients old_client ON v.client_id = old_client.id
+                WHERE v.id = %s
+                LIMIT 1
+                """,
+                (vehicle_id,)
+            )
+
+            vehicle = cursor.fetchone()
+
+            if not vehicle:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Машина не найдена"
+                )
+
+            if vehicle["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя переносить машину из корзины"
+                )
+
+            if not vehicle["old_client_id"] or vehicle["old_client_is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя перенести машину: текущий клиент не найден или находится в корзине"
+                )
+
+            old_client = {
+                "id": vehicle["old_client_id"],
+                "type": vehicle["old_client_type"],
+                "name": vehicle["old_client_name"],
+                "company_name": vehicle["old_client_company_name"],
+                "status": vehicle["old_client_status"],
+                "created_by": vehicle["old_client_created_by"],
+                "responsible_manager_id": vehicle["old_client_responsible_manager_id"],
+                "is_deleted": vehicle["old_client_is_deleted"],
+            }
+
+            if not can_create_request_for_client(old_client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для переноса машины от текущего клиента"
+                )
+
+            if int(vehicle["client_id"]) == int(data.new_client_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Машина уже находится у выбранного клиента"
+                )
+
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    type,
+                    name,
+                    company_name,
+                    status,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
+                FROM clients
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (data.new_client_id,)
+            )
+
+            new_client = cursor.fetchone()
+
+            if not new_client or new_client["is_deleted"]:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Новый клиент не найден"
+                )
+
+            if not can_create_request_for_client(new_client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для переноса машины к выбранному клиенту"
+                )
+
+            if new_client.get("status") == "BLOCKED":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя перенести машину к заблокированному клиенту"
+                )
+
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT rv.request_id) AS request_count
+                FROM request_vehicles rv
+                INNER JOIN requests r ON rv.request_id = r.id
+                WHERE rv.vehicle_id = %s
+                  AND r.is_deleted = 0
+                """,
+                (vehicle_id,)
+            )
+            request_count_row = cursor.fetchone()
+            request_count = int(request_count_row["request_count"] or 0)
+
+            cursor.execute(
+                """
+                SELECT COUNT(re.id) AS equipment_count
+                FROM request_equipment re
+                INNER JOIN request_vehicles rv ON re.request_vehicle_id = rv.id
+                INNER JOIN requests r ON rv.request_id = r.id
+                WHERE rv.vehicle_id = %s
+                  AND r.is_deleted = 0
+                """,
+                (vehicle_id,)
+            )
+            equipment_count_row = cursor.fetchone()
+            equipment_count = int(equipment_count_row["equipment_count"] or 0)
+
+            old_client_id = int(vehicle["client_id"])
+            new_client_id = int(data.new_client_id)
+
+            cursor.execute(
+                """
+                UPDATE vehicles
+                SET client_id = %s
+                WHERE id = %s
+                """,
+                (new_client_id, vehicle_id)
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO vehicle_transfer_history (
+                    vehicle_id,
+                    old_client_id,
+                    new_client_id,
+                    reason,
+                    created_by
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    vehicle_id,
+                    old_client_id,
+                    new_client_id,
+                    reason,
+                    current_user["id"],
+                )
+            )
+
+            history_id = cursor.lastrowid
+
+            connection.commit()
+
+            return {
+                "message": "Машина перенесена к другому клиенту",
+                "vehicle_id": vehicle_id,
+                "old_client_id": old_client_id,
+                "old_client_name": get_client_display_name({
+                    "id": old_client_id,
+                    "name": vehicle["old_client_name"],
+                    "company_name": vehicle["old_client_company_name"],
+                }),
+                "new_client_id": new_client_id,
+                "new_client_name": get_client_display_name(new_client),
+                "reason": reason,
+                "history_id": history_id,
+                "historical_requests_left_unchanged": request_count,
+                "equipment_links_left_unchanged": equipment_count,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.get("/{vehicle_id}/transfer-history")
+def get_vehicle_transfer_history(
+    vehicle_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Только Менеджер или Админ могут просматривать историю переноса машины"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.is_deleted,
+
+                    c.id AS current_client_id,
+                    c.type AS current_client_type,
+                    c.name AS current_client_name,
+                    c.company_name AS current_client_company_name,
+                    c.created_by,
+                    c.responsible_manager_id,
+                    c.is_deleted AS current_client_is_deleted
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.id = %s
+                LIMIT 1
+                """,
+                (vehicle_id,)
+            )
+
+            vehicle = cursor.fetchone()
+
+            if not vehicle:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Машина не найдена"
+                )
+
+            if vehicle["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Машина находится в корзине"
+                )
+
+            current_client = {
+                "id": vehicle["current_client_id"],
+                "type": vehicle["current_client_type"],
+                "name": vehicle["current_client_name"],
+                "company_name": vehicle["current_client_company_name"],
+                "created_by": vehicle["created_by"],
+                "responsible_manager_id": vehicle["responsible_manager_id"],
+                "is_deleted": vehicle["current_client_is_deleted"],
+            }
+
+            if not can_create_request_for_client(current_client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра истории переноса этой машины"
+                )
+
+            cursor.execute(
+                """
+                SELECT
+                    h.id,
+                    h.vehicle_id,
+                    h.old_client_id,
+                    old_client.type AS old_client_type,
+                    old_client.name AS old_client_name,
+                    old_client.company_name AS old_client_company_name,
+
+                    h.new_client_id,
+                    new_client.type AS new_client_type,
+                    new_client.name AS new_client_name,
+                    new_client.company_name AS new_client_company_name,
+
+                    h.reason,
+                    h.created_by,
+                    creator.name AS created_by_name,
+                    h.created_at
+                FROM vehicle_transfer_history h
+                LEFT JOIN clients old_client ON h.old_client_id = old_client.id
+                LEFT JOIN clients new_client ON h.new_client_id = new_client.id
+                LEFT JOIN users creator ON h.created_by = creator.id
+                WHERE h.vehicle_id = %s
+                ORDER BY h.created_at DESC, h.id DESC
+                """,
+                (vehicle_id,)
+            )
+
+            rows = cursor.fetchall()
+
+            for row in rows:
+                row["old_client_display_name"] = get_client_display_name({
+                    "id": row["old_client_id"],
+                    "name": row["old_client_name"],
+                    "company_name": row["old_client_company_name"],
+                })
+
+                row["new_client_display_name"] = get_client_display_name({
+                    "id": row["new_client_id"],
+                    "name": row["new_client_name"],
+                    "company_name": row["new_client_company_name"],
+                })
+
+            return rows
+
+    finally:
+        connection.close()
+
+@router.delete("/{vehicle_id}")
+def delete_vehicle(
+    vehicle_id: int,
+    data: VehicleDeleteRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Soft delete машины. Только ADMIN."""
+    if current_user["role"] not in VEHICLE_DELETE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Только Админ может удалять машины"
+        )
+
+    delete_reason_type = (data.delete_reason_type or "").strip()
+    delete_reason = (data.delete_reason or "").strip()
+
+    if delete_reason_type not in ALLOWED_VEHICLE_DELETE_REASON_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Некорректный тип причины удаления машины"
+        )
+
+    if not delete_reason:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо указать причину удаления машины"
+        )
+
+    connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -645,20 +1059,30 @@ def delete_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_use
                 UPDATE vehicles
                 SET is_deleted = 1,
                     deleted_at = NOW(),
-                    deleted_by = %s
+                    deleted_by = %s,
+                    delete_reason_type = %s,
+                    delete_reason = %s
                 WHERE id = %s
                 """,
-                (current_user["id"], vehicle_id)
+                (
+                    current_user["id"],
+                    delete_reason_type,
+                    delete_reason,
+                    vehicle_id,
+                )
             )
 
             connection.commit()
 
             return {
                 "message": "Машина перемещена в корзину",
-                "vehicle_id": vehicle_id
+                "vehicle_id": vehicle_id,
+                "delete_reason_type": delete_reason_type,
+                "delete_reason": delete_reason,
             }
 
     except HTTPException:
+        connection.rollback()
         raise
     except Exception as e:
         connection.rollback()
@@ -669,8 +1093,8 @@ def delete_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_use
 @router.patch("/{vehicle_id}/restore")
 def restore_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_user)):
     """Восстановление машины из корзины. Только ADMIN и MANAGER."""
-    if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут восстанавливать машины")
+    if current_user["role"] not in VEHICLE_RESTORE_ROLES:
+        raise HTTPException(status_code=403, detail="Только Админы могут восстанавливать машины")
 
     connection = get_connection()
     try:
@@ -707,7 +1131,9 @@ def restore_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_us
                 UPDATE vehicles
                 SET is_deleted = 0,
                     deleted_at = NULL,
-                    deleted_by = NULL
+                    deleted_by = NULL,
+                    delete_reason_type = NULL,
+                    delete_reason = NULL
                 WHERE id = %s
                 """,
                 (vehicle_id,)

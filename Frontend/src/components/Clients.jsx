@@ -76,6 +76,28 @@ export default function Clients() {
 
 	// Состояние для редактируемого автомобиля
 	const [editingVehicle, setEditingVehicle] = useState(null)
+
+	const [deletingVehicle, setDeletingVehicle] = useState(null)
+	const [deleteVehicleForm, setDeleteVehicleForm] = useState({
+		delete_reason_type: 'SERVICE_STOPPED_SIM_BLOCKED',
+		delete_reason: '',
+	})
+
+	const [deletedVehicles, setDeletedVehicles] = useState([])
+	const [showDeletedVehicles, setShowDeletedVehicles] = useState(false)
+	const [deletedVehiclesLoading, setDeletedVehiclesLoading] = useState(false)
+
+	// Состояние для переноса автомобиля к другому клиенту
+	const [transferringVehicle, setTransferringVehicle] = useState(null)
+	const [transferVehicleForm, setTransferVehicleForm] = useState({
+		new_client_id: '',
+		reason: '',
+	})
+	const [transferClientQuery, setTransferClientQuery] = useState('')
+	const [transferVehicleHistory, setTransferVehicleHistory] = useState([])
+	const [transferVehicleHistoryLoading, setTransferVehicleHistoryLoading] =
+		useState(false)
+
 	const [showVehicles, setShowVehicles] = useState(false)
 
 	const userRole = getUserRole()
@@ -89,6 +111,20 @@ export default function Clients() {
 	)
 
 	const canDeleteClient = ['ADMIN', 'ROP'].includes(userRole)
+
+	const canSoftDeleteVehicle = userRole === 'ADMIN'
+
+	const canViewVehicleTrash = [
+		'ADMIN',
+		'ROP',
+		'ACCOUNTANT',
+		'MANAGER',
+		'WAREHOUSE_MANAGER',
+	].includes(userRole)
+
+	const canRestoreVehicle = userRole === 'ADMIN'
+
+	const canTransferVehicle = ['ADMIN', 'ROP', 'MANAGER'].includes(userRole)
 
 	const canOpenClientDetails = client => Boolean(client?.can_open_details)
 
@@ -978,6 +1014,8 @@ export default function Clients() {
 		setVehiclesTotal(0)
 		setVehicleEquipmentMap({})
 		setShowVehicles(false)
+		setDeletedVehicles([])
+		setShowDeletedVehicles(false)
 
 		fetchClientRequests(client.id)
 	}
@@ -1316,6 +1354,300 @@ export default function Clients() {
 			)
 		} catch (err) {
 			alert('Ошибка: ' + err.message)
+		}
+	}
+
+	const getVehicleDeleteReasonTypeLabel = type => {
+		if (type === 'EQUIPMENT_REMOVED') {
+			return 'Устройства сняты, машина удалена из GlonassSoft'
+		}
+
+		if (type === 'SERVICE_STOPPED_SIM_BLOCKED') {
+			return 'Устройства остались, SIM заблокированы'
+		}
+
+		if (type === 'OTHER') {
+			return 'Другое'
+		}
+
+		return type || '—'
+	}
+
+	const fetchDeletedVehicles = async clientId => {
+		if (!clientId) return
+
+		setDeletedVehiclesLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/vehicles/deleted?client_id=${clientId}`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось загрузить корзину машин')
+			}
+
+			const data = await res.json()
+			setDeletedVehicles(Array.isArray(data) ? data : [])
+		} catch (err) {
+			alert(err.message)
+			setDeletedVehicles([])
+		} finally {
+			setDeletedVehiclesLoading(false)
+		}
+	}
+
+	const openDeleteVehicleModal = vehicle => {
+		setDeletingVehicle(vehicle)
+		setDeleteVehicleForm({
+			delete_reason_type: 'SERVICE_STOPPED_SIM_BLOCKED',
+			delete_reason: '',
+		})
+	}
+
+	const closeDeleteVehicleModal = () => {
+		setDeletingVehicle(null)
+		setDeleteVehicleForm({
+			delete_reason_type: 'SERVICE_STOPPED_SIM_BLOCKED',
+			delete_reason: '',
+		})
+	}
+
+	const handleVehicleDeleteSubmit = async e => {
+		e.preventDefault()
+
+		if (!deletingVehicle) return
+
+		if (!deleteVehicleForm.delete_reason_type) {
+			alert('Выберите тип удаления')
+			return
+		}
+
+		if (!deleteVehicleForm.delete_reason.trim()) {
+			alert('Укажите причину удаления')
+			return
+		}
+
+		const confirmText =
+			`Удалить машину "${deletingVehicle.brand || ''} ${deletingVehicle.model || ''} ${deletingVehicle.plate_number || ''}" в корзину?\n\n` +
+			`Тип: ${getVehicleDeleteReasonTypeLabel(deleteVehicleForm.delete_reason_type)}\n\n` +
+			'Это не удалит старые заявки и не спишет оборудование. Машина просто исчезнет из активного списка.'
+
+		if (!window.confirm(confirmText)) return
+
+		setClientActionLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/vehicles/${deletingVehicle.id}`,
+				{
+					method: 'DELETE',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						delete_reason_type: deleteVehicleForm.delete_reason_type,
+						delete_reason: deleteVehicleForm.delete_reason.trim(),
+					}),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Не удалось удалить машину')
+			}
+
+			alert('Машина перемещена в корзину')
+
+			closeDeleteVehicleModal()
+
+			if (selectedClient) {
+				fetchClientVehicles(
+					selectedClient.id,
+					true,
+					vehiclesPage,
+					vehiclesPageSize,
+				)
+
+				if (showDeletedVehicles) {
+					fetchDeletedVehicles(selectedClient.id)
+				}
+			}
+
+			fetchClientGroups({ silent: true })
+			fetchClients({ silent: true })
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setClientActionLoading(false)
+		}
+	}
+
+	const handleVehicleRestore = async vehicle => {
+		if (!vehicle) return
+
+		const confirmText =
+			`Восстановить машину "${vehicle.brand || ''} ${vehicle.model || ''} ${vehicle.plate_number || ''}"?\n\n` +
+			'Она снова появится в активном списке машин клиента.'
+
+		if (!window.confirm(confirmText)) return
+
+		setClientActionLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/vehicles/${vehicle.id}/restore`,
+				{
+					method: 'PATCH',
+					headers: getAuthHeaders(),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Не удалось восстановить машину')
+			}
+
+			alert('Машина восстановлена')
+
+			if (selectedClient) {
+				fetchClientVehicles(
+					selectedClient.id,
+					true,
+					vehiclesPage,
+					vehiclesPageSize,
+				)
+				fetchDeletedVehicles(selectedClient.id)
+			}
+
+			fetchClientGroups({ silent: true })
+			fetchClients({ silent: true })
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setClientActionLoading(false)
+		}
+	}
+
+	const fetchVehicleTransferHistory = async vehicleId => {
+		setTransferVehicleHistoryLoading(true)
+		setTransferVehicleHistory([])
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/vehicles/${vehicleId}/transfer-history`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось загрузить историю переноса')
+			}
+
+			const data = await res.json()
+			setTransferVehicleHistory(Array.isArray(data) ? data : [])
+		} catch (err) {
+			console.error('Ошибка загрузки истории переноса машины:', err)
+			setTransferVehicleHistory([])
+		} finally {
+			setTransferVehicleHistoryLoading(false)
+		}
+	}
+
+	const openTransferVehicleModal = vehicle => {
+		setTransferringVehicle(vehicle)
+		setTransferVehicleForm({
+			new_client_id: '',
+			reason: '',
+		})
+		setTransferClientQuery('')
+		fetchVehicleTransferHistory(vehicle.id)
+	}
+
+	const closeTransferVehicleModal = () => {
+		setTransferringVehicle(null)
+		setTransferVehicleForm({
+			new_client_id: '',
+			reason: '',
+		})
+		setTransferClientQuery('')
+		setTransferVehicleHistory([])
+	}
+
+	const handleVehicleTransferSubmit = async e => {
+		e.preventDefault()
+
+		if (!transferringVehicle) return
+
+		if (!transferVehicleForm.new_client_id) {
+			alert('Выберите нового клиента')
+			return
+		}
+
+		if (!transferVehicleForm.reason.trim()) {
+			alert('Укажите причину переноса')
+			return
+		}
+
+		const targetClient = clients.find(
+			client => Number(client.id) === Number(transferVehicleForm.new_client_id),
+		)
+
+		const confirmText =
+			`Перенести машину "${transferringVehicle.brand || ''} ${transferringVehicle.model || ''} ${transferringVehicle.plate_number || ''}" ` +
+			`от клиента "${getClientDisplayName(selectedClient)}" ` +
+			`к клиенту "${targetClient ? getClientDisplayName(targetClient) : `ID ${transferVehicleForm.new_client_id}`}"?\n\n` +
+			'Старые заявки останутся у текущего клиента. Перенесётся только карточка машины.'
+
+		if (!window.confirm(confirmText)) return
+
+		setClientActionLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/vehicles/${transferringVehicle.id}/transfer-client`,
+				{
+					method: 'POST',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						new_client_id: Number(transferVehicleForm.new_client_id),
+						reason: transferVehicleForm.reason.trim(),
+					}),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Не удалось перенести машину')
+			}
+
+			alert('Машина успешно перенесена к другому клиенту')
+
+			closeTransferVehicleModal()
+
+			if (selectedClient) {
+				fetchClientVehicles(
+					selectedClient.id,
+					true,
+					vehiclesPage,
+					vehiclesPageSize,
+				)
+				fetchClientRequests(selectedClient.id)
+			}
+
+			fetchClients({ silent: true })
+			fetchClientGroups({ silent: true })
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setClientActionLoading(false)
 		}
 	}
 
@@ -1856,6 +2188,30 @@ export default function Clients() {
 		)
 	}
 
+	const filteredTransferClients = (clients || [])
+		.filter(client => {
+			if (!client || client.is_deleted) return false
+
+			if (selectedClient && Number(client.id) === Number(selectedClient.id)) {
+				return false
+			}
+
+			const q = transferClientQuery.trim().toLowerCase()
+
+			if (!q) return true
+
+			return [
+				client.name,
+				client.company_name,
+				client.client_name,
+				client.phone,
+				client.email,
+			]
+				.filter(Boolean)
+				.some(field => String(field).toLowerCase().includes(q))
+		})
+		.slice(0, 50)
+
 	const paginatedClientGroups = clientGroups
 
 	return (
@@ -1913,9 +2269,7 @@ export default function Clients() {
 							{isPickerOpen && (
 								<div className='client-picker-dropdown'>
 									{filteredPickerClients.length === 0 ? (
-										<div className='client-picker-empty'>
-											Ничего не найдено
-										</div>
+										<div className='client-picker-empty'>Ничего не найдено</div>
 									) : (
 										filteredPickerClients.map(c => (
 											<button
@@ -2287,6 +2641,32 @@ export default function Clients() {
 										: '🚗 Просмотреть все машины клиента'}
 							</button>
 
+							{canViewVehicleTrash && (
+								<button
+									className='btn-details'
+									onClick={() => {
+										if (showDeletedVehicles) {
+											setShowDeletedVehicles(false)
+										} else {
+											setShowDeletedVehicles(true)
+											fetchDeletedVehicles(selectedClient.id)
+										}
+									}}
+									disabled={deletedVehiclesLoading}
+									style={{
+										padding: '6px 12px',
+										fontSize: '13px',
+										marginLeft: '8px',
+									}}
+								>
+									{deletedVehiclesLoading
+										? 'Загрузка...'
+										: showDeletedVehicles
+											? '🗑 Скрыть корзину машин'
+											: '🗑 Корзина машин'}
+								</button>
+							)}
+
 							{/* БЛОК ВЫВОДА МАШИН С КНОПКОЙ ИЗМЕНИТЬ */}
 							{showVehicles && clientVehicles.length > 0 && (
 								<div
@@ -2356,13 +2736,36 @@ export default function Clients() {
 													</div>
 												</div>
 
-												{canEditClient(selectedClient) && (
-													<button
-														className='btn-details vehicle-edit-btn'
-														onClick={() => setEditingVehicle(v)}
-													>
-														✎ Изменить
-													</button>
+												{(canEditClient(selectedClient) ||
+													canTransferVehicle) && (
+													<div className='vehicle-card-actions'>
+														{canEditClient(selectedClient) && (
+															<button
+																className='btn-details vehicle-edit-btn'
+																onClick={() => setEditingVehicle(v)}
+															>
+																✎ Изменить
+															</button>
+														)}
+
+														{canTransferVehicle && (
+															<button
+																className='btn-details vehicle-transfer-btn'
+																onClick={() => openTransferVehicleModal(v)}
+															>
+																⇄ Перенести
+															</button>
+														)}
+
+														{canSoftDeleteVehicle && (
+															<button
+																className='btn-details vehicle-delete-btn'
+																onClick={() => openDeleteVehicleModal(v)}
+															>
+																🗑 Удалить
+															</button>
+														)}
+													</div>
 												)}
 											</div>
 										))}
@@ -2375,6 +2778,94 @@ export default function Clients() {
 										onPageChange: handleVehiclesPageChange,
 										onPageSizeChange: handleVehiclesPageSizeChange,
 									})}
+								</div>
+							)}
+
+							{showDeletedVehicles && (
+								<div
+									className='vehicle-trash-box'
+									style={{
+										marginTop: '15px',
+										background: '#fff8f8',
+										border: '1px solid #ffcdd2',
+										borderRadius: '8px',
+										padding: '15px',
+									}}
+								>
+									<h4
+										style={{
+											margin: '0 0 10px 0',
+											fontSize: '14px',
+											color: '#c62828',
+										}}
+									>
+										Корзина машин клиента ({deletedVehicles.length})
+									</h4>
+
+									{deletedVehiclesLoading ? (
+										<div style={{ color: '#888', padding: '15px 0' }}>
+											Загрузка корзины...
+										</div>
+									) : deletedVehicles.length === 0 ? (
+										<div style={{ color: '#888', padding: '15px 0' }}>
+											В корзине нет машин этого клиента
+										</div>
+									) : (
+										<div style={{ display: 'grid', gap: '10px' }}>
+											{deletedVehicles.map(vehicle => (
+												<div key={vehicle.id} className='vehicle-trash-card'>
+													<div className='vehicle-card-main'>
+														<div className='vehicle-card-header'>
+															<strong className='vehicle-card-title'>
+																{vehicle.brand} {vehicle.model}
+															</strong>
+														</div>
+
+														<div className='vehicle-card-meta'>
+															Гос. номер: {vehicle.plate_number || 'б/н'} • VIN:{' '}
+															{vehicle.vin || '—'} • Год: {vehicle.year || '—'}
+														</div>
+
+														<div className='vehicle-card-meta'>
+															Удалил: {vehicle.deleted_by_name || '—'} •{' '}
+															{vehicle.deleted_at
+																? new Date(vehicle.deleted_at).toLocaleString(
+																		'ru-RU',
+																	)
+																: 'Дата не указана'}
+														</div>
+
+														<div className='vehicle-delete-reason-box'>
+															<strong>
+																{getVehicleDeleteReasonTypeLabel(
+																	vehicle.delete_reason_type,
+																)}
+															</strong>
+															<span>
+																Комментарий: {vehicle.delete_reason || 'Причина не указана'}
+															</span>
+														</div>
+
+														{Number(vehicle.request_count || 0) > 0 && (
+															<div className='vehicle-card-meta'>
+																Исторических заявок: {vehicle.request_count}
+															</div>
+														)}
+													</div>
+
+													{canRestoreVehicle && (
+														<button
+															className='btn-details vehicle-restore-btn'
+															onClick={() => handleVehicleRestore(vehicle)}
+															disabled={clientActionLoading}
+														>
+															↩ Восстановить
+														</button>
+													)}
+												</div>
+											))}
+										</div>
+									)}
 								</div>
 							)}
 						</div>
@@ -2780,6 +3271,334 @@ export default function Clients() {
 								Сохранить
 							</button>
 						</div>
+					</div>
+				</div>
+			)}
+
+			{transferringVehicle && (
+				<div className='modal-overlay open' onClick={closeTransferVehicleModal}>
+					<div
+						className='modal-window vehicle-modal-window'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>
+								Перенос машины к другому клиенту
+							</span>
+							<button
+								className='modal-close'
+								onClick={closeTransferVehicleModal}
+								type='button'
+							>
+								&times;
+							</button>
+						</div>
+
+						<div className='vehicle-modal-body'>
+							<form
+								onSubmit={handleVehicleTransferSubmit}
+								id='vehicle-transfer-form'
+							>
+								<div className='vehicle-form-card'>
+									<div className='vehicle-form-section-title'>Машина</div>
+
+									<div className='vehicle-transfer-summary'>
+										<div>
+											<strong>
+												{transferringVehicle.brand} {transferringVehicle.model}
+											</strong>
+											<span>
+												<br />
+												Гос. номер: {transferringVehicle.plate_number ||
+													'б/н'}{' '}
+												<br />
+												VIN: {transferringVehicle.vin || '—'}
+											</span>
+										</div>
+
+										<div>
+											<strong>
+												<br />
+												Текущий клиент:{' '}
+											</strong>
+											<span>{getClientDisplayName(selectedClient)}</span>
+										</div>
+									</div>
+
+									<div className='vehicle-transfer-warning'>
+										<br />
+										Переносится только карточка машины. Старые заявки и
+										привязанное к ним оборудование останутся в истории текущего
+										клиента.
+									</div>
+								</div>
+
+								<div className='vehicle-form-card'>
+									<div className='vehicle-form-section-title'>Новый клиент</div>
+
+									<div className='vehicle-form-grid'>
+										<label className='vehicle-field vehicle-full'>
+											<span className='vehicle-label'>Поиск клиента</span>
+											<input
+												className='vehicle-input'
+												value={transferClientQuery}
+												onChange={e => setTransferClientQuery(e.target.value)}
+												placeholder='ФИО, компания, телефон, email...'
+											/>
+										</label>
+
+										<label className='vehicle-field vehicle-full'>
+											<span className='vehicle-label required'>
+												Выберите клиента
+											</span>
+											<select
+												className='vehicle-input'
+												value={transferVehicleForm.new_client_id}
+												onChange={e =>
+													setTransferVehicleForm(prev => ({
+														...prev,
+														new_client_id: e.target.value,
+													}))
+												}
+												required
+											>
+												<option value=''>— выберите нового клиента —</option>
+
+												{filteredTransferClients.map(client => (
+													<option key={client.id} value={client.id}>
+														{getClientDisplayName(client)}
+														{client.phone ? ` · ${client.phone}` : ''}
+													</option>
+												))}
+											</select>
+										</label>
+
+										<label className='vehicle-field vehicle-full'>
+											<span className='vehicle-label required'>
+												Причина переноса
+											</span>
+											<textarea
+												className='vehicle-input vehicle-transfer-textarea'
+												value={transferVehicleForm.reason}
+												onChange={e =>
+													setTransferVehicleForm(prev => ({
+														...prev,
+														reason: e.target.value,
+													}))
+												}
+												placeholder='Например: автомобиль продан другому клиенту / переоформление / ошибка привязки'
+												required
+											/>
+										</label>
+									</div>
+								</div>
+
+								<div className='vehicle-form-card'>
+									<div className='vehicle-form-section-title'>
+										История переносов
+									</div>
+
+									{transferVehicleHistoryLoading ? (
+										<div className='vehicle-transfer-empty'>
+											Загрузка истории...
+										</div>
+									) : transferVehicleHistory.length === 0 ? (
+										<div className='vehicle-transfer-empty'>
+											Истории переносов пока нет
+										</div>
+									) : (
+										<div className='vehicle-transfer-history-list'>
+											{transferVehicleHistory.map(row => (
+												<div
+													key={row.id}
+													className='vehicle-transfer-history-row'
+												>
+													<div>
+														<strong>
+															{row.old_client_display_name || row.old_client_id}{' '}
+															→{' '}
+															{row.new_client_display_name || row.new_client_id}
+														</strong>
+														<span>
+															<br />
+															Комментарий: {row.reason}
+														</span>
+													</div>
+
+													<div className='vehicle-transfer-history-meta'>
+														<span>
+															Перенес: {row.created_by_name || '—'}
+														</span>
+														<span>
+															<br />
+															{row.created_at
+																? new Date(row.created_at).toLocaleString(
+																		'ru-RU',
+																	)
+																: 'Дата не указана'}<br /><br />
+														</span>
+													</div>
+												</div>
+											))}
+										</div>
+									)}
+								</div>
+							</form>
+						</div>
+
+						<div className='modal-footer vehicle-modal-footer'>
+							<button
+								className='vehicle-cancel-btn'
+								type='button'
+								onClick={closeTransferVehicleModal}
+							>
+								Отмена
+							</button>
+
+							<button
+								className='vehicle-submit-btn'
+								type='submit'
+								form='vehicle-transfer-form'
+								disabled={
+									clientActionLoading ||
+									!transferVehicleForm.new_client_id ||
+									!transferVehicleForm.reason.trim()
+								}
+							>
+								{clientActionLoading ? 'Перенос...' : 'Перенести машину'}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{deletingVehicle && (
+				<div className='modal-overlay open' onClick={closeDeleteVehicleModal}>
+					<div
+						className='modal-window vehicle-modal-window'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>Удаление машины в корзину</span>
+							<button
+								className='modal-close'
+								onClick={closeDeleteVehicleModal}
+								type='button'
+							>
+								&times;
+							</button>
+						</div>
+
+						<form onSubmit={handleVehicleDeleteSubmit}>
+							<div className='vehicle-modal-body'>
+								<div className='vehicle-form-card'>
+									<div className='vehicle-form-section-title'>Машина</div>
+
+									<div className='vehicle-transfer-summary'>
+										<div>
+											<strong>
+												{deletingVehicle.brand} {deletingVehicle.model}
+											</strong>
+											<span>
+												<br />
+												Гос. номер: {deletingVehicle.plate_number || 'б/н'}
+												<br />
+												VIN: {deletingVehicle.vin || '—'}
+											</span>
+										</div>
+
+										<div>
+											<strong>
+												<br />
+												Клиент:{' '}
+											</strong>
+											<span>
+												{getClientDisplayName(selectedClient)} <br />
+												<br />
+											</span>
+										</div>
+									</div>
+
+									<div className='vehicle-transfer-warning danger'>
+										Машина будет скрыта из активного списка клиента. Старые
+										заявки и история оборудования не удаляются.
+									</div>
+								</div>
+
+								<div className='vehicle-form-card'>
+									<div className='vehicle-form-section-title'>
+										Причина удаления
+									</div>
+
+									<div className='vehicle-form-grid'>
+										<label className='vehicle-field vehicle-full'>
+											<span className='vehicle-label required'>
+												Тип удаления
+											</span>
+											<select
+												className='vehicle-input'
+												value={deleteVehicleForm.delete_reason_type}
+												onChange={e =>
+													setDeleteVehicleForm(prev => ({
+														...prev,
+														delete_reason_type: e.target.value,
+													}))
+												}
+												required
+											>
+												<option value='EQUIPMENT_REMOVED'>
+													Устройства сняты, машина удалена из GlonassSoft
+												</option>
+												<option value='SERVICE_STOPPED_SIM_BLOCKED'>
+													Устройства остались, SIM заблокированы
+												</option>
+												<option value='OTHER'>Другое</option>
+											</select>
+										</label>
+
+										<label className='vehicle-field vehicle-full'>
+											<span className='vehicle-label required'>
+												Комментарий
+											</span>
+											<textarea
+												className='vehicle-input vehicle-transfer-textarea'
+												value={deleteVehicleForm.delete_reason}
+												onChange={e =>
+													setDeleteVehicleForm(prev => ({
+														...prev,
+														delete_reason: e.target.value,
+													}))
+												}
+												placeholder='Например: устройство демонтировано / SIM заблокирована / клиент больше не обслуживается'
+												required
+											/>
+										</label>
+									</div>
+								</div>
+							</div>
+
+							<div className='modal-footer vehicle-modal-footer'>
+								<button
+									className='vehicle-cancel-btn'
+									type='button'
+									onClick={closeDeleteVehicleModal}
+								>
+									Отмена
+								</button>
+
+								<button
+									className='vehicle-submit-btn danger'
+									type='submit'
+									disabled={
+										clientActionLoading ||
+										!deleteVehicleForm.delete_reason_type ||
+										!deleteVehicleForm.delete_reason.trim()
+									}
+								>
+									{clientActionLoading ? 'Удаление...' : 'Удалить в корзину'}
+								</button>
+							</div>
+						</form>
 					</div>
 				</div>
 			)}
