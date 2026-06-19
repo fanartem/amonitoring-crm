@@ -252,7 +252,7 @@ export default function MyInventory() {
 				<h2>Мой инвентарь</h2>
 			</div>
 
-			<div className='filters-bar'>
+			<div className='filters-bar inventory-filters'>
 				<div className='filter-group filter-main'>
 					<label>Поиск</label>
 					<input
@@ -400,14 +400,6 @@ export default function MyInventory() {
 																	</div>
 
 																	<div className='inventory-item-badges'>
-																		<span
-																			className={`status-badge ${getStatusClassName(
-																				item.status,
-																			)}`}
-																		>
-																			{STATUSES[item.status] || item.status}
-																		</span>
-
 																		<span className='inventory-qty-badge'>
 																			{getItemQuantity(item)} шт.
 																		</span>

@@ -141,7 +141,8 @@ export default function Sidebar() {
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 						onClick={handleMenuClick}
 					>
-						Мой инвентарь
+						<i className='fa-solid fa-toolbox'></i>
+						<span className='link-text'>Мой инвентарь</span>
 					</NavLink>
 				)}
 
@@ -151,7 +152,8 @@ export default function Sidebar() {
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 						onClick={handleMenuClick}
 					>
-						Инвентарь
+						<i className='fa-solid fa-boxes-stacked'></i>
+						<span className='link-text'>Инвентарь</span>
 					</NavLink>
 				)}
 

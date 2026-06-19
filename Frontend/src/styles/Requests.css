@@ -1341,7 +1341,7 @@
 
 @media (max-width: 640px) {
   .status-badge {
-    width: 100px;
+    width: 115px;
   }
   .request-vehicle-header {
     flex-direction: column;

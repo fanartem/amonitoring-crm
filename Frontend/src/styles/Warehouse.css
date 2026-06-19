@@ -1189,6 +1189,55 @@
 	.form-grid {
 		grid-template-columns: 1fr;
 	}
+
+	/* --- Фильтры инвентаря: как на складе — вертикально и на всю ширину --- */
+	.inventory-filters {
+		flex-direction: column !important;
+		align-items: stretch !important;
+		gap: 12px !important;
+		padding: 14px !important;
+	}
+
+	.inventory-filters .filter-group {
+		width: 100% !important;
+		min-width: 100% !important;
+		flex: 1 1 auto !important;
+	}
+
+	.inventory-filters .my-requests-toggle {
+		width: 100%;
+		justify-content: flex-start;
+	}
+
+	.inventory-filters .btn-reset {
+		width: 100% !important;
+		justify-content: center;
+		margin-top: 2px;
+	}
+
+	/* Кнопка действия в шапке — на всю ширину */
+	.inventory-header-row .btn-green {
+		width: 100%;
+	}
+
+	/* Заголовки дерева: заголовок и счётчик могут переноситься */
+	.inventory-user-header,
+	.inventory-category-header,
+	.inventory-group-header {
+		flex-wrap: wrap;
+		gap: 6px 10px;
+	}
+
+	.inventory-group-count {
+		align-self: flex-start;
+	}
+
+	/* Действия карточки: растягиваем кнопки, удобнее тапать */
+	.inventory-card-actions > button {
+		flex: 1 1 calc(50% - 8px);
+		min-width: 120px;
+		text-align: center;
+	}
 }
 
 @media (max-width: 640px) {

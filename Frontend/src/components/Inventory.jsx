@@ -853,7 +853,7 @@ export default function Inventory() {
 				)}
 			</div>
 
-			<div className='filters-bar'>
+			<div className='filters-bar inventory-filters'>
 				<div className='filter-group filter-main'>
 					<label>Поиск</label>
 					<input
