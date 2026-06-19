@@ -180,6 +180,10 @@ export default function Inventory() {
 		'WAREHOUSE_MANAGER',
 		'SENIOR_TECHNICIAN',
 	].includes(userRole)
+	const canSeeHistory = [
+		'ADMIN',
+		'WAREHOUSE_MANAGER',
+	].includes(userRole)
 
 	const [inventory, setInventory] = useState([])
 	const [cities, setCities] = useState([])
@@ -188,9 +192,9 @@ export default function Inventory() {
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState('')
 
-    const [expandedUsers, setExpandedUsers] = useState({})
-    const [expandedUserCategories, setExpandedUserCategories] = useState({})
-    const [expandedGroups, setExpandedGroups] = useState({})
+	const [expandedUsers, setExpandedUsers] = useState({})
+	const [expandedUserCategories, setExpandedUserCategories] = useState({})
+	const [expandedGroups, setExpandedGroups] = useState({})
 
 	const [filters, setFilters] = useState({
 		search: '',
@@ -690,74 +694,74 @@ export default function Inventory() {
 				.map(normalizeKey)
 				.join('|')
 
-		;(source || []).forEach(category => {
-			;(category.groups || []).forEach(group => {
-				;(group.items || []).forEach(item => {
-					const itemQuantity = getItemQuantity(item)
-					const userKey = getUserKey(item)
+			; (source || []).forEach(category => {
+				; (category.groups || []).forEach(group => {
+					; (group.items || []).forEach(item => {
+						const itemQuantity = getItemQuantity(item)
+						const userKey = getUserKey(item)
 
-					if (!usersMap.has(userKey)) {
-						usersMap.set(userKey, {
-							user_key: userKey,
-							user_id: item.assigned_to_user_id || null,
-							user_name: item.assigned_to_user_name || 'Без монтажника',
-							user_city: item.assigned_to_user_city || item.city_name || '',
-							total_quantity: 0,
-							total_rows: 0,
-							categoriesMap: new Map(),
-						})
-					}
+						if (!usersMap.has(userKey)) {
+							usersMap.set(userKey, {
+								user_key: userKey,
+								user_id: item.assigned_to_user_id || null,
+								user_name: item.assigned_to_user_name || 'Без монтажника',
+								user_city: item.assigned_to_user_city || item.city_name || '',
+								total_quantity: 0,
+								total_rows: 0,
+								categoriesMap: new Map(),
+							})
+						}
 
-					const userGroup = usersMap.get(userKey)
+						const userGroup = usersMap.get(userKey)
 
-					userGroup.total_quantity += itemQuantity
-					userGroup.total_rows += 1
+						userGroup.total_quantity += itemQuantity
+						userGroup.total_rows += 1
 
-					const categoryKey = item.category || category.category || 'OTHER'
+						const categoryKey = item.category || category.category || 'OTHER'
 
-					if (!userGroup.categoriesMap.has(categoryKey)) {
-						userGroup.categoriesMap.set(categoryKey, {
-							category: categoryKey,
-							category_name: CATEGORIES[categoryKey] || categoryKey,
-							total_quantity: 0,
-							total_rows: 0,
-							groupsMap: new Map(),
-						})
-					}
+						if (!userGroup.categoriesMap.has(categoryKey)) {
+							userGroup.categoriesMap.set(categoryKey, {
+								category: categoryKey,
+								category_name: CATEGORIES[categoryKey] || categoryKey,
+								total_quantity: 0,
+								total_rows: 0,
+								groupsMap: new Map(),
+							})
+						}
 
-					const categoryGroup = userGroup.categoriesMap.get(categoryKey)
+						const categoryGroup = userGroup.categoriesMap.get(categoryKey)
 
-					categoryGroup.total_quantity += itemQuantity
-					categoryGroup.total_rows += 1
+						categoryGroup.total_quantity += itemQuantity
+						categoryGroup.total_rows += 1
 
-					const itemGroupKey = getItemGroupKey(item)
+						const itemGroupKey = getItemGroupKey(item)
 
-					if (!categoryGroup.groupsMap.has(itemGroupKey)) {
-						categoryGroup.groupsMap.set(itemGroupKey, {
-							group_key: itemGroupKey,
-							name: item.name || group.name || 'Без наименования',
-							manufacturer: item.manufacturer || null,
-							model: item.model || null,
-							is_consumable_group: !Boolean(item.is_serialized),
-							total_quantity: 0,
-							total_rows: 0,
-							items: [],
-						})
-					}
+						if (!categoryGroup.groupsMap.has(itemGroupKey)) {
+							categoryGroup.groupsMap.set(itemGroupKey, {
+								group_key: itemGroupKey,
+								name: item.name || group.name || 'Без наименования',
+								manufacturer: item.manufacturer || null,
+								model: item.model || null,
+								is_consumable_group: !Boolean(item.is_serialized),
+								total_quantity: 0,
+								total_rows: 0,
+								items: [],
+							})
+						}
 
-					const itemGroup = categoryGroup.groupsMap.get(itemGroupKey)
+						const itemGroup = categoryGroup.groupsMap.get(itemGroupKey)
 
-					itemGroup.total_quantity += itemQuantity
-					itemGroup.total_rows += 1
+						itemGroup.total_quantity += itemQuantity
+						itemGroup.total_rows += 1
 
-					if (Boolean(item.is_serialized)) {
-						itemGroup.is_consumable_group = false
-					}
+						if (Boolean(item.is_serialized)) {
+							itemGroup.is_consumable_group = false
+						}
 
-					itemGroup.items.push(item)
+						itemGroup.items.push(item)
+					})
 				})
 			})
-		})
 
 		return Array.from(usersMap.values())
 			.map(userGroup => {
@@ -1099,12 +1103,14 @@ export default function Inventory() {
 																				)}
 
 																				<div className='inventory-card-actions'>
-																					<button
-																						className='btn-details'
-																						onClick={() => fetchHistory(item)}
-																					>
-																						История
-																					</button>
+																					{canSeeHistory && (
+																						<button
+																							className='btn-details'
+																							onClick={() => fetchHistory(item)}
+																						>
+																							История
+																						</button>
+																					)}
 
 																					{canManageInventory && (
 																						<>
