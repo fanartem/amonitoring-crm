@@ -161,10 +161,67 @@ class WarehouseItemTransfer(BaseModel):
     quantity: int = 1
     reason: Optional[str] = None
 
+class WarehouseItemAssignToUser(BaseModel):
+    target_user_id: int
+    quantity: int = 1
+    reason: Optional[str] = None
+
+
+class WarehouseItemReturnToStock(BaseModel):
+    city_id: int
+    quantity: int = 1
+    reason: Optional[str] = None
+
+
+class WarehouseManualAddToUser(BaseModel):
+    category: str
+    name: str
+    manufacturer: str | None = None
+    model: str | None = None
+
+    identifier_type: str = "NONE"
+    identifier_value: str | None = None
+    serial_number: str | None = None
+
+    is_serialized: bool = True
+    quantity: int = 1
+
+    city_id: int
+    target_user_id: int
+
+    note: str | None = None
+    reason: str | None = None
+
+
+class WarehouseInventoryTransfer(BaseModel):
+    from_user_id: int | None = None
+    target_user_id: int | None = None
+    to_city_id: int | None = None
+    quantity: int = 1
+    reason: str | None = None
+
+
+class WarehouseConsumableThresholdUpdate(BaseModel):
+    city_id: int
+    category: str
+    name: str
+    manufacturer: str | None = None
+    model: str | None = None
+    threshold_quantity: int = 20
+
 class RequestEquipmentAttach(BaseModel):
     request_vehicle_id: int
     warehouse_item_id: int
     quantity: int = 1
+
+    # Необязательно.
+    # Нужно для ADMIN / WAREHOUSE_MANAGER, когда они добавляют оборудование
+    # за монтажника или напрямую со склада.
+    # Если не передать, backend сам определит:
+    # - assigned_to_user_id у предмета
+    # - либо current_user
+    installed_by_user_id: int | None = None
+
     note: str | None = None
 
 class PriceItemCreate(BaseModel):

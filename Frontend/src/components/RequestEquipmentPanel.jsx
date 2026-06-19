@@ -10,20 +10,27 @@ const CATEGORIES = {
 	WIRED_SENSOR: 'Проводной датчик',
 	RELAY: 'Реле',
 	CABLE: 'Кабель',
+	CONSUMABLE: 'Расходник',
+	TOOLS: 'Инструмент',
+	FIRST_AID: 'Аптечка',
 	OTHER: 'Другое',
 }
 
 const STATUSES = {
 	IN_STOCK: 'На складе',
 	RESERVED: 'В резерве',
+	ASSIGNED_TO_TECH: 'У монтажника',
 	INSTALLED: 'Установлено',
+	USED: 'Израсходовано',
+	REPAIR: 'В ремонте',
+	LOST: 'Потеряно',
 	WRITTEN_OFF: 'Списано',
 }
 
-const getUserRole = () => {
+const getTokenPayload = () => {
 	try {
 		const token = localStorage.getItem('access_token')
-		if (!token) return null
+		if (!token) return {}
 
 		const base64Url = token.split('.')[1]
 		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
@@ -34,9 +41,9 @@ const getUserRole = () => {
 				.join(''),
 		)
 
-		return JSON.parse(jsonPayload).role
+		return JSON.parse(jsonPayload)
 	} catch {
-		return null
+		return {}
 	}
 }
 
@@ -71,21 +78,75 @@ const getVehicleTitle = vehicle => {
 	return `${title}${plate}`
 }
 
+const getAvailableQuantity = item => {
+	if (!item) return 0
+
+	if (Boolean(item.is_serialized)) return 1
+
+	return Number(item.available_quantity || item.quantity || 0)
+}
+
+const getSourceLabel = item => {
+	if (!item) return ''
+
+	if (item.source_label) return item.source_label
+
+	if (item.assigned_to_user_id) {
+		return `Инвентарь: ${item.assigned_to_user_name || '—'}`
+	}
+
+	return `Склад: ${item.city_name || '—'}`
+}
+
+const getItemOptionTitle = item => {
+	const identifier = getItemIdentifier(item)
+	const availableQuantity = getAvailableQuantity(item)
+	const source = getSourceLabel(item)
+
+	const parts = [
+		CATEGORIES[item.category] || item.category,
+		getItemTitle(item),
+		identifier,
+		!item.is_serialized ? `доступно: ${availableQuantity}` : null,
+		source,
+	].filter(Boolean)
+
+	return parts.join(' — ')
+}
+
 export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
+	const payload = getTokenPayload()
+	const userRole = String(payload.role || '').toUpperCase()
+
+	const canManageEquipment = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
+
+	const canAttachEquipment = [
+		'ADMIN',
+		'WAREHOUSE_MANAGER',
+		'SENIOR_TECHNICIAN',
+		'TECHNICIAN',
+	].includes(userRole)
+
+	const canDetachEquipment = canManageEquipment
+
 	const [attachedItems, setAttachedItems] = useState([])
-	const [warehouseItems, setWarehouseItems] = useState([])
+	const [availableItems, setAvailableItems] = useState([])
+	const [technicians, setTechnicians] = useState([])
+
 	const [selectedRequestVehicleId, setSelectedRequestVehicleId] = useState('')
 	const [selectedItemId, setSelectedItemId] = useState('')
 	const [quantity, setQuantity] = useState(1)
 	const [note, setNote] = useState('')
 	const [search, setSearch] = useState('')
+
+	const [selectedTechnicianId, setSelectedTechnicianId] = useState('')
+	const [installedByUserId, setInstalledByUserId] = useState('')
+	const [includeStock, setIncludeStock] = useState(true)
+
 	const [loading, setLoading] = useState(false)
+	const [availableLoading, setAvailableLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState('')
-
-	const userRole = getUserRole()
-	const canManageEquipment =
-		userRole === 'ADMIN' || userRole === 'WAREHOUSE_MANAGER'
 
 	const vehiclesByRequestVehicleId = useMemo(() => {
 		const map = {}
@@ -97,13 +158,23 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 		return map
 	}, [vehicles])
 
+	const selectedItem = availableItems.find(
+		item => Number(item.id) === Number(selectedItemId),
+	)
+
+	const isSelectedSerialized = selectedItem
+		? Boolean(selectedItem.is_serialized)
+		: true
+
+	const selectedAvailableQuantity = getAvailableQuantity(selectedItem)
+
 	useEffect(() => {
 		if (!requestId) return
 
 		fetchAttachedItems()
 
 		if (canManageEquipment) {
-			fetchWarehouseItems()
+			fetchTechnicians()
 		}
 	}, [requestId, canManageEquipment])
 
@@ -114,14 +185,25 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 	}, [vehicles, selectedRequestVehicleId])
 
 	useEffect(() => {
-		if (!canManageEquipment) return
+		if (!canAttachEquipment) return
+		if (!selectedRequestVehicleId) {
+			setAvailableItems([])
+			setSelectedItemId('')
+			return
+		}
 
 		const timeout = setTimeout(() => {
-			fetchWarehouseItems()
+			fetchAvailableInventory()
 		}, 300)
 
 		return () => clearTimeout(timeout)
-	}, [search])
+	}, [
+		canAttachEquipment,
+		selectedRequestVehicleId,
+		search,
+		selectedTechnicianId,
+		includeStock,
+	])
 
 	const fetchAttachedItems = async () => {
 		setLoading(true)
@@ -151,38 +233,99 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 		}
 	}
 
-	const fetchWarehouseItems = async () => {
+	const fetchTechnicians = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/users/technicians`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) {
+				const data = await res.json()
+				setTechnicians(Array.isArray(data) ? data : [])
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки монтажников:', err)
+		}
+	}
+
+	const fetchAvailableInventory = async () => {
+		if (!selectedRequestVehicleId) return
+
+		setAvailableLoading(true)
+
 		try {
 			const params = new URLSearchParams()
-			params.append('status', 'IN_STOCK')
 
 			if (search.trim()) {
 				params.append('search', search.trim())
 			}
 
+			if (canManageEquipment) {
+				params.append('include_stock', includeStock ? 'true' : 'false')
+
+				if (selectedTechnicianId) {
+					params.append('assigned_to_user_id', selectedTechnicianId)
+				}
+			}
+
 			const res = await fetch(
-				`${API_BASE_URL}/warehouse/items?${params.toString()}`,
+				`${API_BASE_URL}/warehouse/request-vehicles/${selectedRequestVehicleId}/available-inventory?${params.toString()}`,
 				{
 					headers: getAuthHeaders(),
 				},
 			)
 
-			if (res.ok) {
-				const data = await res.json()
-				setWarehouseItems(Array.isArray(data) ? data : [])
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(
+					data?.detail || 'Не удалось загрузить доступное оборудование',
+				)
+			}
+
+			const data = await res.json()
+			const rows = Array.isArray(data) ? data : []
+
+			setAvailableItems(rows)
+
+			if (
+				selectedItemId &&
+				!rows.some(item => Number(item.id) === Number(selectedItemId))
+			) {
+				setSelectedItemId('')
+				setQuantity(1)
+				setInstalledByUserId('')
 			}
 		} catch (err) {
-			console.error('Ошибка загрузки склада:', err)
+			setError(err.message)
+			setAvailableItems([])
+		} finally {
+			setAvailableLoading(false)
 		}
 	}
 
-	const selectedItem = warehouseItems.find(
-		item => item.id === Number(selectedItemId),
-	)
+	const handleSelectItem = value => {
+		setSelectedItemId(value)
+		setQuantity(1)
 
-	const isSelectedSerialized = selectedItem
-		? Boolean(selectedItem.is_serialized)
-		: true
+		const item = availableItems.find(row => Number(row.id) === Number(value))
+
+		if (!item) {
+			setInstalledByUserId('')
+			return
+		}
+
+		if (item.assigned_to_user_id) {
+			setInstalledByUserId(String(item.assigned_to_user_id))
+			return
+		}
+
+		if (canManageEquipment && selectedTechnicianId) {
+			setInstalledByUserId(String(selectedTechnicianId))
+			return
+		}
+
+		setInstalledByUserId('')
+	}
 
 	const handleAttach = async () => {
 		if (!selectedRequestVehicleId) {
@@ -200,23 +343,36 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 			return
 		}
 
+		if (!isSelectedSerialized && Number(quantity) > selectedAvailableQuantity) {
+			setError(
+				`Недостаточно количества. Доступно: ${selectedAvailableQuantity}`,
+			)
+			return
+		}
+
 		setSaving(true)
 		setError('')
 
 		try {
 			const requestVehicleId = Number(selectedRequestVehicleId)
 
+			const body = {
+				request_vehicle_id: requestVehicleId,
+				warehouse_item_id: Number(selectedItemId),
+				quantity: isSelectedSerialized ? 1 : Number(quantity),
+				note: note.trim() || null,
+			}
+
+			if (canManageEquipment && installedByUserId) {
+				body.installed_by_user_id = Number(installedByUserId)
+			}
+
 			const res = await fetch(
 				`${API_BASE_URL}/warehouse/request-vehicles/${requestVehicleId}/equipment`,
 				{
 					method: 'POST',
 					headers: getJsonAuthHeaders(),
-					body: JSON.stringify({
-						request_vehicle_id: requestVehicleId,
-						warehouse_item_id: Number(selectedItemId),
-						quantity: isSelectedSerialized ? 1 : Number(quantity),
-						note: note.trim() || null,
-					}),
+					body: JSON.stringify(body),
 				},
 			)
 
@@ -228,9 +384,10 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 			setSelectedItemId('')
 			setQuantity(1)
 			setNote('')
+			setInstalledByUserId('')
 
 			await fetchAttachedItems()
-			await fetchWarehouseItems()
+			await fetchAvailableInventory()
 		} catch (err) {
 			setError(err.message)
 		} finally {
@@ -263,7 +420,7 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 			}
 
 			await fetchAttachedItems()
-			await fetchWarehouseItems()
+			await fetchAvailableInventory()
 		} catch (err) {
 			setError(err.message)
 		} finally {
@@ -302,7 +459,7 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 					type='button'
 					onClick={() => {
 						fetchAttachedItems()
-						if (canManageEquipment) fetchWarehouseItems()
+						if (canAttachEquipment) fetchAvailableInventory()
 					}}
 				>
 					Обновить
@@ -311,7 +468,7 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 			{error && <div className='equipment-error'>{error}</div>}
 
-			{canManageEquipment && (
+			{canAttachEquipment && (
 				<div className='equipment-attach-card'>
 					<div className='equipment-section-title'>Привязать оборудование</div>
 
@@ -321,7 +478,12 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 							<select
 								className='equipment-input'
 								value={selectedRequestVehicleId}
-								onChange={e => setSelectedRequestVehicleId(e.target.value)}
+								onChange={e => {
+									setSelectedRequestVehicleId(e.target.value)
+									setSelectedItemId('')
+									setQuantity(1)
+									setInstalledByUserId('')
+								}}
 							>
 								<option value=''>— выберите автомобиль —</option>
 
@@ -336,14 +498,61 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 							</select>
 						</label>
 
+						{canManageEquipment && (
+							<>
+								<label className='equipment-field'>
+									<span>Монтажник / инвентарь</span>
+									<select
+										className='equipment-input'
+										value={selectedTechnicianId}
+										onChange={e => {
+											setSelectedTechnicianId(e.target.value)
+											setSelectedItemId('')
+											setQuantity(1)
+											setInstalledByUserId(e.target.value)
+										}}
+									>
+										<option value=''>Все монтажники</option>
+
+										{technicians.map(user => (
+											<option key={user.id} value={user.id}>
+												{user.name} {user.city ? `· ${user.city}` : ''}
+											</option>
+										))}
+									</select>
+								</label>
+
+								<label className='equipment-field'>
+									<span>Источник</span>
+									<label className='equipment-checkbox-row'>
+										<input
+											type='checkbox'
+											checked={includeStock}
+											onChange={e => {
+												setIncludeStock(e.target.checked)
+												setSelectedItemId('')
+												setQuantity(1)
+											}}
+										/>
+										<span>Показывать склад IN_STOCK</span>
+									</label>
+								</label>
+							</>
+						)}
+
 						<label className='equipment-field equipment-full'>
-							<span>Поиск на складе</span>
+							<span>
+								{canManageEquipment
+									? 'Поиск по складу и инвентарю'
+									: 'Поиск по моему инвентарю'}
+							</span>
 							<input
 								className='equipment-input'
 								type='text'
 								value={search}
 								onChange={e => setSearch(e.target.value)}
 								placeholder='IMEI, MAC, модель, название...'
+								disabled={!selectedRequestVehicleId}
 							/>
 						</label>
 
@@ -352,25 +561,45 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 							<select
 								className='equipment-input'
 								value={selectedItemId}
-								onChange={e => {
-									setSelectedItemId(e.target.value)
-									setQuantity(1)
-								}}
+								onChange={e => handleSelectItem(e.target.value)}
+								disabled={!selectedRequestVehicleId || availableLoading}
 							>
-								<option value=''>— выберите оборудование —</option>
+								<option value=''>
+									{!selectedRequestVehicleId
+										? '— сначала выберите автомобиль —'
+										: availableLoading
+											? 'Загрузка оборудования...'
+											: '— выберите оборудование —'}
+								</option>
 
-								{warehouseItems.map(item => (
+								{availableItems.map(item => (
 									<option key={item.id} value={item.id}>
-										{CATEGORIES[item.category] || item.category} —{' '}
-										{getItemTitle(item)}
-										{getItemIdentifier(item)
-											? ` — ${getItemIdentifier(item)}`
-											: ''}
-										{!item.is_serialized ? ` — доступно: ${item.quantity}` : ''}
+										{getItemOptionTitle(item)}
 									</option>
 								))}
 							</select>
 						</label>
+
+						{canManageEquipment && (
+							<label className='equipment-field equipment-full'>
+								<span>Кто установил / монтажник для истории</span>
+								<select
+									className='equipment-input'
+									value={installedByUserId}
+									onChange={e => setInstalledByUserId(e.target.value)}
+								>
+									<option value=''>
+										— не указывать, backend определит автоматически —
+									</option>
+
+									{technicians.map(user => (
+										<option key={user.id} value={user.id}>
+											{user.name} {user.city ? `· ${user.city}` : ''}
+										</option>
+									))}
+								</select>
+							</label>
+						)}
 
 						<label className='equipment-field'>
 							<span>Количество</span>
@@ -378,6 +607,7 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 								className='equipment-input'
 								type='number'
 								min='1'
+								max={selectedItem ? selectedAvailableQuantity : undefined}
 								value={isSelectedSerialized ? 1 : quantity}
 								disabled={!selectedItemId || isSelectedSerialized}
 								onChange={e => setQuantity(e.target.value)}
@@ -427,8 +657,11 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 								const title = vehicle
 									? getVehicleTitle(vehicle)
-									: `${fallbackVehicle.brand || ''} ${fallbackVehicle.vehicle_model || ''} ${fallbackVehicle.plate_number ? `· ${fallbackVehicle.plate_number}` : ''}`.trim() ||
-										'Автомобиль'
+									: `${fallbackVehicle.brand || ''} ${fallbackVehicle.vehicle_model || ''} ${
+											fallbackVehicle.plate_number
+												? `· ${fallbackVehicle.plate_number}`
+												: ''
+										}`.trim() || 'Автомобиль'
 
 								return (
 									<div
@@ -480,7 +713,7 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 														)}
 													</div>
 
-													{canManageEquipment && (
+													{canDetachEquipment && (
 														<button
 															className='equipment-detach-btn'
 															type='button'

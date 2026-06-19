@@ -9,6 +9,11 @@ from app.schemas import (
     WarehouseItemCreate,
     WarehouseItemUpdate,
     WarehouseItemTransfer,
+    WarehouseItemAssignToUser,
+    WarehouseItemReturnToStock,
+    WarehouseManualAddToUser,
+    WarehouseInventoryTransfer,
+    WarehouseConsumableThresholdUpdate,
     RequestEquipmentAttach,
 )
 
@@ -16,8 +21,14 @@ router = APIRouter(prefix="/warehouse", tags=["Warehouse"])
 
 WAREHOUSE_MANAGE_ROLES = ["ADMIN", "WAREHOUSE_MANAGER"]
 
+INVENTORY_FULL_READ_ROLES = [
+    "ADMIN",
+    "WAREHOUSE_MANAGER",
+    "SENIOR_TECHNICIAN",
+]
+
 # Полноценный доступ к странице склада: список, группировка, история, корзина
-WAREHOUSE_FULL_READ_ROLES = ["ADMIN", "ROP", "WAREHOUSE_MANAGER"]
+WAREHOUSE_FULL_READ_ROLES = ["ADMIN", "WAREHOUSE_MANAGER"]
 
 # Просмотр оборудования только внутри заявки/автомобиля
 REQUEST_EQUIPMENT_READ_ROLES = [
@@ -37,6 +48,9 @@ ALLOWED_CATEGORIES = [
     "WIRED_SENSOR",
     "RELAY",
     "CABLE",
+    "CONSUMABLE",
+    "TOOLS",
+    "FIRST_AID",
     "OTHER",
 ]
 
@@ -51,7 +65,11 @@ ALLOWED_IDENTIFIER_TYPES = [
 ALLOWED_STATUSES = [
     "IN_STOCK",
     "RESERVED",
+    "ASSIGNED_TO_TECH",
     "INSTALLED",
+    "USED",
+    "REPAIR",
+    "LOST",
     "WRITTEN_OFF",
 ]
 
@@ -67,6 +85,18 @@ def require_request_equipment_read(current_user: dict):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра оборудования заявки"
+        )
+
+def require_request_equipment_attach(current_user: dict):
+    if current_user["role"] not in [
+        "ADMIN",
+        "WAREHOUSE_MANAGER",
+        "SENIOR_TECHNICIAN",
+        "TECHNICIAN",
+    ]:
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для добавления оборудования в заявку"
         )
     
 def normalize_city(value):
@@ -97,20 +127,35 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
         )
 
     if role == "TECHNICIAN":
+        assigned_to = request.get("assigned_to")
+
+        # Если заявка уже назначена этому монтажнику — даём доступ к оборудованию,
+        # даже если оплата/город отличаются. Он уже исполнитель заявки.
+        if assigned_to is not None:
+            return int(assigned_to) == user_id
+
+        # Если заявка ещё свободная — монтажник может видеть оборудование
+        # только для оплаченной заявки своего города.
         if not request.get("is_paid"):
             return False
 
         if normalize_city(request.get("city")) != normalize_city(current_user.get("city")):
             return False
 
-        assigned_to = request.get("assigned_to")
-        return assigned_to is None or int(assigned_to) == user_id
+        return True
 
     return False
 
 def require_warehouse_manage(current_user: dict):
     if current_user["role"] not in WAREHOUSE_MANAGE_ROLES:
         raise HTTPException(status_code=403, detail="Недостаточно прав для управления складом")
+    
+def require_inventory_full_read(current_user: dict):
+    if current_user["role"] not in INVENTORY_FULL_READ_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для просмотра инвентаря монтажников"
+        )
 
 def validate_warehouse_item(data: dict):
     category = data.get("category")
@@ -182,12 +227,7 @@ def normalize_group_key(value):
     return " ".join(str(value or "").strip().lower().split())
 
 def empty_status_counts():
-    return {
-        "IN_STOCK": 0,
-        "RESERVED": 0,
-        "INSTALLED": 0,
-        "WRITTEN_OFF": 0,
-    }
+    return {status: 0 for status in ALLOWED_STATUSES}
 
 def add_status_count(counts: dict, status: str, quantity: int):
     status_key = status if status in ALLOWED_STATUSES else "IN_STOCK"
@@ -238,6 +278,7 @@ def add_warehouse_movement(
     vehicle_id: int | None = None,
     request_equipment_id: int | None = None,
     target_user_id: int | None = None,
+    from_user_id: int | None = None,
     quantity: int | None = None,
     old_status: str | None = None,
     new_status: str | None = None,
@@ -257,6 +298,7 @@ def add_warehouse_movement(
             vehicle_id,
             request_equipment_id,
             target_user_id,
+            from_user_id,
             quantity,
             old_status,
             new_status,
@@ -265,7 +307,7 @@ def add_warehouse_movement(
             reason,
             created_by
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             warehouse_item_id,
@@ -277,6 +319,7 @@ def add_warehouse_movement(
             vehicle_id,
             request_equipment_id,
             target_user_id,
+            from_user_id,
             quantity,
             old_status,
             new_status,
@@ -303,6 +346,8 @@ def find_consumable_in_city(cursor, item: dict, city_id: int):
         FROM warehouse_items
         WHERE is_deleted = 0
           AND is_serialized = 0
+          AND status = 'IN_STOCK'
+          AND assigned_to_user_id IS NULL
           AND category = %s
           AND LOWER(TRIM(name)) = LOWER(TRIM(%s))
           AND COALESCE(LOWER(TRIM(manufacturer)), '') = COALESCE(LOWER(TRIM(%s)), '')
@@ -336,6 +381,1565 @@ def find_serialized_by_identifier(cursor, identifier_type: str, identifier_value
     )
 
     return cursor.fetchone()
+
+def require_inventory_target_user(cursor, target_user_id: int):
+    cursor.execute(
+        """
+        SELECT id, name, role, city, is_approved
+        FROM users
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (target_user_id,)
+    )
+
+    user = cursor.fetchone()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Монтажник не найден")
+
+    if user["role"] not in ["TECHNICIAN", "SENIOR_TECHNICIAN"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Инвентарь можно выдавать только монтажнику или старшему монтажнику"
+        )
+
+    if not user["is_approved"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя выдать инвентарь неутверждённому пользователю"
+        )
+
+    return user
+
+
+def find_assigned_consumable_for_user(
+    cursor,
+    item: dict,
+    city_id: int,
+    target_user_id: int,
+):
+    cursor.execute(
+        """
+        SELECT *
+        FROM warehouse_items
+        WHERE is_deleted = 0
+          AND is_serialized = 0
+          AND status = 'ASSIGNED_TO_TECH'
+          AND assigned_to_user_id = %s
+          AND category = %s
+          AND LOWER(TRIM(name)) = LOWER(TRIM(%s))
+          AND COALESCE(LOWER(TRIM(manufacturer)), '') = COALESCE(LOWER(TRIM(%s)), '')
+          AND COALESCE(LOWER(TRIM(model)), '') = COALESCE(LOWER(TRIM(%s)), '')
+          AND city_id = %s
+        LIMIT 1
+        """,
+        (
+            target_user_id,
+            item.get("category"),
+            item.get("name"),
+            item.get("manufacturer"),
+            item.get("model"),
+            city_id,
+        )
+    )
+
+    return cursor.fetchone()
+
+
+def get_consumable_threshold(cursor, item: dict, city_id: int) -> int:
+    cursor.execute(
+        """
+        SELECT threshold_quantity
+        FROM warehouse_consumable_thresholds
+        WHERE city_id = %s
+          AND category = %s
+          AND LOWER(TRIM(name)) = LOWER(TRIM(%s))
+          AND LOWER(TRIM(manufacturer)) = COALESCE(LOWER(TRIM(%s)), '')
+          AND LOWER(TRIM(model)) = COALESCE(LOWER(TRIM(%s)), '')
+        LIMIT 1
+        """,
+        (
+            city_id,
+            item.get("category"),
+            item.get("name"),
+            item.get("manufacturer"),
+            item.get("model"),
+        )
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return 20
+
+    return int(row["threshold_quantity"] or 20)
+
+
+def fetch_inventory_rows(
+    cursor,
+    user_id: int | None = None,
+    city_id: int | None = None,
+    category: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
+    low_stock: bool = False,
+):
+    conditions = [
+        "wi.is_deleted = 0",
+        "wi.assigned_to_user_id IS NOT NULL",
+    ]
+    values = []
+
+    if user_id:
+        conditions.append("wi.assigned_to_user_id = %s")
+        values.append(user_id)
+
+    if city_id:
+        conditions.append("wi.city_id = %s")
+        values.append(city_id)
+
+    if category:
+        conditions.append("wi.category = %s")
+        values.append(category)
+
+    if status:
+        conditions.append("wi.status = %s")
+        values.append(status)
+
+    if search:
+        conditions.append(
+            """
+            (
+                wi.name LIKE %s OR
+                wi.manufacturer LIKE %s OR
+                wi.model LIKE %s OR
+                wi.identifier_value LIKE %s OR
+                wi.serial_number LIKE %s OR
+                wi.note LIKE %s OR
+                assigned_user.name LIKE %s
+            )
+            """
+        )
+        like_value = f"%{search}%"
+        values.extend([
+            like_value,
+            like_value,
+            like_value,
+            like_value,
+            like_value,
+            like_value,
+            like_value,
+        ])
+
+    where_clause = " AND ".join(conditions)
+
+    cursor.execute(
+        f"""
+        SELECT
+            wi.id,
+            wi.category,
+            wi.name,
+            wi.manufacturer,
+            wi.model,
+            wi.identifier_type,
+            wi.identifier_value,
+            wi.serial_number,
+            wi.is_serialized,
+            wi.quantity,
+            wi.city_id,
+            city.name AS city_name,
+            wi.assigned_to_user_id,
+            assigned_user.name AS assigned_to_user_name,
+            assigned_user.role AS assigned_to_user_role,
+            assigned_user.city AS assigned_to_user_city,
+            wi.assigned_at,
+            assigned_by_user.name AS assigned_by_name,
+            wi.status,
+            wi.note,
+            wi.created_at,
+            wi.updated_at,
+            creator.name AS created_by_name,
+
+            COALESCE(thresholds.threshold_quantity, 20) AS threshold_quantity
+
+        FROM warehouse_items wi
+
+        LEFT JOIN cities city ON wi.city_id = city.id
+        LEFT JOIN users assigned_user ON wi.assigned_to_user_id = assigned_user.id
+        LEFT JOIN users assigned_by_user ON wi.assigned_by = assigned_by_user.id
+        LEFT JOIN users creator ON wi.created_by = creator.id
+
+        LEFT JOIN warehouse_consumable_thresholds thresholds
+            ON thresholds.city_id = wi.city_id
+            AND thresholds.category = wi.category
+            AND LOWER(TRIM(thresholds.name)) = LOWER(TRIM(wi.name))
+            AND LOWER(TRIM(thresholds.manufacturer)) = COALESCE(LOWER(TRIM(wi.manufacturer)), '')
+            AND LOWER(TRIM(thresholds.model)) = COALESCE(LOWER(TRIM(wi.model)), '')
+
+        WHERE {where_clause}
+
+        ORDER BY
+            city.name ASC,
+            assigned_user.name ASC,
+            wi.category ASC,
+            wi.name ASC,
+            wi.status ASC,
+            wi.created_at DESC
+        """,
+        tuple(values),
+    )
+
+    rows = cursor.fetchall()
+
+    for row in rows:
+        quantity = get_warehouse_item_quantity(row)
+        threshold_quantity = int(row.get("threshold_quantity") or 20)
+
+        row["is_low_stock"] = (
+            not bool(row.get("is_serialized"))
+            and quantity <= threshold_quantity
+        )
+
+    if low_stock:
+        rows = [row for row in rows if row.get("is_low_stock")]
+
+    return rows
+
+
+def group_inventory_rows(rows: list[dict]) -> list[dict]:
+    categories_map = {}
+
+    for row in rows:
+        item_quantity = get_warehouse_item_quantity(row)
+        category_key = row.get("category") or "OTHER"
+        category_name = category_key
+
+        if category_key not in categories_map:
+            categories_map[category_key] = {
+                "category": category_key,
+                "category_name": category_name,
+                "counts": empty_status_counts(),
+                "total_quantity": 0,
+                "total_rows": 0,
+                "groups": {},
+            }
+
+        category_group = categories_map[category_key]
+
+        add_status_count(
+            category_group["counts"],
+            row.get("status"),
+            item_quantity,
+        )
+
+        category_group["total_quantity"] += item_quantity
+        category_group["total_rows"] += 1
+
+        item_group_name = get_item_group_name(row)
+        item_group_key = normalize_group_key(
+            f"{item_group_name}|{row.get('manufacturer') or ''}|{row.get('model') or ''}"
+        )
+
+        if item_group_key not in category_group["groups"]:
+            category_group["groups"][item_group_key] = {
+                "group_key": item_group_key,
+                "name": item_group_name,
+                "manufacturer": row.get("manufacturer"),
+                "model": row.get("model"),
+                "is_consumable_group": not bool(row.get("is_serialized")),
+                "counts": empty_status_counts(),
+                "total_quantity": 0,
+                "total_rows": 0,
+                "items": [],
+            }
+
+        item_group = category_group["groups"][item_group_key]
+
+        add_status_count(
+            item_group["counts"],
+            row.get("status"),
+            item_quantity,
+        )
+
+        item_group["total_quantity"] += item_quantity
+        item_group["total_rows"] += 1
+
+        if bool(row.get("is_serialized")):
+            item_group["is_consumable_group"] = False
+
+        item_group["items"].append(row)
+
+    result = []
+
+    for category_data in categories_map.values():
+        groups = list(category_data["groups"].values())
+
+        groups.sort(
+            key=lambda group: (
+                group["name"].lower(),
+                group["manufacturer"] or "",
+                group["model"] or "",
+            )
+        )
+
+        for group in groups:
+            group["items"].sort(
+                key=lambda item: (
+                    item.get("assigned_to_user_name") or "",
+                    item.get("status") or "",
+                    item.get("identifier_value") or "",
+                    item.get("serial_number") or "",
+                    -int(item.get("id") or 0),
+                )
+            )
+
+        category_data["groups"] = groups
+        result.append(category_data)
+
+    result.sort(key=lambda item: item["category"])
+
+    return result
+
+@router.get("/inventory/my")
+def get_my_inventory(
+    category: str | None = Query(None),
+    status: str | None = Query(None),
+    search: str | None = Query(None),
+    low_stock: bool = Query(False),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user["role"] not in ["TECHNICIAN", "SENIOR_TECHNICIAN"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Этот раздел доступен только монтажникам"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            rows = fetch_inventory_rows(
+                cursor=cursor,
+                user_id=current_user["id"],
+                category=category,
+                status=status,
+                search=search,
+                low_stock=low_stock,
+            )
+
+            return group_inventory_rows(rows)
+
+    finally:
+        connection.close()
+
+@router.get("/inventory")
+def get_inventory(
+    city_id: int | None = Query(None),
+    user_id: int | None = Query(None),
+    category: str | None = Query(None),
+    status: str | None = Query(None),
+    search: str | None = Query(None),
+    low_stock: bool = Query(False),
+    current_user: dict = Depends(get_current_user),
+):
+    require_inventory_full_read(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            rows = fetch_inventory_rows(
+                cursor=cursor,
+                user_id=user_id,
+                city_id=city_id,
+                category=category,
+                status=status,
+                search=search,
+                low_stock=low_stock,
+            )
+
+            return group_inventory_rows(rows)
+
+    finally:
+        connection.close()
+
+@router.post("/items/{item_id}/assign-to-user")
+def assign_warehouse_item_to_user(
+    item_id: int,
+    data: WarehouseItemAssignToUser,
+    current_user: dict = Depends(get_current_user),
+):
+    require_warehouse_manage(current_user)
+
+    if data.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Количество должно быть больше 0")
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            target_user = require_inventory_target_user(cursor, data.target_user_id)
+
+            cursor.execute(
+                """
+                SELECT *
+                FROM warehouse_items
+                WHERE id = %s
+                  AND is_deleted = 0
+                FOR UPDATE
+                """,
+                (item_id,)
+            )
+
+            item = cursor.fetchone()
+
+            if not item:
+                raise HTTPException(status_code=404, detail="Оборудование не найдено")
+
+            if item["status"] != "IN_STOCK" or item.get("assigned_to_user_id"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Выдать можно только предмет со статусом 'На складе'"
+                )
+
+            is_serialized = bool(item["is_serialized"])
+
+            if is_serialized:
+                if data.quantity != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Для серийного оборудования количество должно быть 1"
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET status = 'ASSIGNED_TO_TECH',
+                        assigned_to_user_id = %s,
+                        assigned_at = NOW(),
+                        assigned_by = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        data.target_user_id,
+                        current_user["id"],
+                        item_id,
+                    )
+                )
+
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="ASSIGNED_TO_TECH",
+                    current_user=current_user,
+                    from_city_id=item.get("city_id"),
+                    to_city_id=item.get("city_id"),
+                    target_user_id=data.target_user_id,
+                    quantity=1,
+                    old_status=item.get("status"),
+                    new_status="ASSIGNED_TO_TECH",
+                    reason=data.reason or f"Выдано монтажнику: {target_user['name']}",
+                )
+
+                connection.commit()
+
+                return {
+                    "message": "Оборудование выдано монтажнику",
+                    "item_id": item_id,
+                    "target_user_id": data.target_user_id,
+                    "target_user_name": target_user["name"],
+                    "quantity": 1,
+                }
+
+            available_quantity = int(item["quantity"] or 0)
+
+            if data.quantity > available_quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Недостаточно количества на складе. Доступно: {available_quantity}"
+                )
+
+            target_item = find_assigned_consumable_for_user(
+                cursor=cursor,
+                item=item,
+                city_id=item["city_id"],
+                target_user_id=data.target_user_id,
+            )
+
+            if target_item:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = quantity + %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (data.quantity, target_item["id"])
+                )
+
+                target_item_id = target_item["id"]
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO warehouse_items (
+                        category,
+                        name,
+                        manufacturer,
+                        model,
+                        identifier_type,
+                        identifier_value,
+                        serial_number,
+                        is_serialized,
+                        quantity,
+                        city_id,
+                        assigned_to_user_id,
+                        assigned_at,
+                        assigned_by,
+                        status,
+                        note,
+                        created_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                    """,
+                    (
+                        item["category"],
+                        item["name"],
+                        item["manufacturer"],
+                        item["model"],
+                        "NONE",
+                        None,
+                        None,
+                        False,
+                        data.quantity,
+                        item["city_id"],
+                        data.target_user_id,
+                        current_user["id"],
+                        "ASSIGNED_TO_TECH",
+                        item.get("note"),
+                        current_user["id"],
+                    )
+                )
+
+                target_item_id = cursor.lastrowid
+
+            new_source_quantity = available_quantity - data.quantity
+
+            cursor.execute(
+                """
+                UPDATE warehouse_items
+                SET quantity = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_source_quantity, item_id)
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=item_id,
+                action="CONSUMABLE_ASSIGNED_OUT",
+                current_user=current_user,
+                from_city_id=item.get("city_id"),
+                to_city_id=item.get("city_id"),
+                target_user_id=data.target_user_id,
+                quantity=data.quantity,
+                old_status="IN_STOCK",
+                new_status="IN_STOCK",
+                reason=data.reason or f"Выдача расходника монтажнику: {target_user['name']}",
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=target_item_id,
+                action="CONSUMABLE_ASSIGNED_TO_TECH",
+                current_user=current_user,
+                from_city_id=item.get("city_id"),
+                to_city_id=item.get("city_id"),
+                target_user_id=data.target_user_id,
+                quantity=data.quantity,
+                old_status="ASSIGNED_TO_TECH",
+                new_status="ASSIGNED_TO_TECH",
+                reason=data.reason or f"Получено монтажником: {target_user['name']}",
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Расходник выдан монтажнику",
+                "source_item_id": item_id,
+                "target_item_id": target_item_id,
+                "target_user_id": data.target_user_id,
+                "target_user_name": target_user["name"],
+                "quantity": data.quantity,
+                "source_quantity_left": new_source_quantity,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.post("/items/{item_id}/return-to-stock")
+def return_inventory_item_to_stock(
+    item_id: int,
+    data: WarehouseItemReturnToStock,
+    current_user: dict = Depends(get_current_user),
+):
+    require_warehouse_manage(current_user)
+
+    if data.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Количество должно быть больше 0")
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            target_city = require_city(cursor, data.city_id)
+
+            cursor.execute(
+                """
+                SELECT *
+                FROM warehouse_items
+                WHERE id = %s
+                  AND is_deleted = 0
+                FOR UPDATE
+                """,
+                (item_id,)
+            )
+
+            item = cursor.fetchone()
+
+            if not item:
+                raise HTTPException(status_code=404, detail="Предмет инвентаря не найден")
+
+            if item["status"] != "ASSIGNED_TO_TECH" or not item.get("assigned_to_user_id"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Вернуть на склад можно только предмет из инвентаря монтажника"
+                )
+
+            is_serialized = bool(item["is_serialized"])
+
+            if is_serialized:
+                if data.quantity != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Для серийного оборудования количество должно быть 1"
+                    )
+
+                old_user_id = item.get("assigned_to_user_id")
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET status = 'IN_STOCK',
+                        city_id = %s,
+                        assigned_to_user_id = NULL,
+                        assigned_at = NULL,
+                        assigned_by = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        data.city_id,
+                        item_id,
+                    )
+                )
+
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="RETURNED_TO_STOCK",
+                    current_user=current_user,
+                    from_city_id=item.get("city_id"),
+                    to_city_id=data.city_id,
+                    from_user_id=old_user_id,
+                    quantity=1,
+                    old_status="ASSIGNED_TO_TECH",
+                    new_status="IN_STOCK",
+                    reason=data.reason or f"Возвращено на склад: {target_city['name']}",
+                )
+
+                connection.commit()
+
+                return {
+                    "message": "Оборудование возвращено на склад",
+                    "item_id": item_id,
+                    "city_id": data.city_id,
+                    "city_name": target_city["name"],
+                    "quantity": 1,
+                }
+
+            available_quantity = int(item["quantity"] or 0)
+
+            if data.quantity > available_quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Недостаточно количества у монтажника. Доступно: {available_quantity}"
+                )
+
+            stock_item = find_consumable_in_city(
+                cursor=cursor,
+                item=item,
+                city_id=data.city_id,
+            )
+
+            if stock_item:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = quantity + %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (data.quantity, stock_item["id"])
+                )
+
+                stock_item_id = stock_item["id"]
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO warehouse_items (
+                        category,
+                        name,
+                        manufacturer,
+                        model,
+                        identifier_type,
+                        identifier_value,
+                        serial_number,
+                        is_serialized,
+                        quantity,
+                        city_id,
+                        status,
+                        note,
+                        created_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["category"],
+                        item["name"],
+                        item["manufacturer"],
+                        item["model"],
+                        "NONE",
+                        None,
+                        None,
+                        False,
+                        data.quantity,
+                        data.city_id,
+                        "IN_STOCK",
+                        item.get("note"),
+                        current_user["id"],
+                    )
+                )
+
+                stock_item_id = cursor.lastrowid
+
+            new_inventory_quantity = available_quantity - data.quantity
+
+            cursor.execute(
+                """
+                UPDATE warehouse_items
+                SET quantity = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_inventory_quantity, item_id)
+            )
+
+            if new_inventory_quantity == 0:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET is_deleted = 1,
+                        deleted_at = NOW(),
+                        deleted_by = %s
+                    WHERE id = %s
+                    """,
+                    (current_user["id"], item_id)
+                )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=item_id,
+                action="CONSUMABLE_RETURNED_FROM_TECH_OUT",
+                current_user=current_user,
+                from_city_id=item.get("city_id"),
+                to_city_id=data.city_id,
+                from_user_id=item.get("assigned_to_user_id"),
+                quantity=data.quantity,
+                old_status="ASSIGNED_TO_TECH",
+                new_status="ASSIGNED_TO_TECH",
+                reason=data.reason or "Расходник возвращён монтажником",
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=stock_item_id,
+                action="CONSUMABLE_RETURNED_TO_STOCK",
+                current_user=current_user,
+                from_city_id=item.get("city_id"),
+                to_city_id=data.city_id,
+                from_user_id=item.get("assigned_to_user_id"),
+                quantity=data.quantity,
+                old_status="IN_STOCK",
+                new_status="IN_STOCK",
+                reason=data.reason or f"Расходник возвращён на склад: {target_city['name']}",
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Расходник возвращён на склад",
+                "inventory_item_id": item_id,
+                "stock_item_id": stock_item_id,
+                "city_id": data.city_id,
+                "city_name": target_city["name"],
+                "quantity": data.quantity,
+                "inventory_quantity_left": new_inventory_quantity,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.post("/inventory/manual-add-to-user")
+def manual_add_item_to_user_inventory(
+    data: WarehouseManualAddToUser,
+    current_user: dict = Depends(get_current_user),
+):
+    require_warehouse_manage(current_user)
+
+    item_data = data.dict()
+    item_data["city_id"] = data.city_id
+
+    validate_warehouse_item(item_data)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            city = require_city(cursor, data.city_id)
+            target_user = require_inventory_target_user(cursor, data.target_user_id)
+
+            if data.is_serialized:
+                identifier_value = data.identifier_value.strip() if data.identifier_value else None
+
+                if identifier_value:
+                    existing = find_serialized_by_identifier(
+                        cursor,
+                        data.identifier_type,
+                        identifier_value,
+                    )
+
+                    if existing:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Оборудование с таким идентификатором уже существует"
+                        )
+
+                cursor.execute(
+                    """
+                    INSERT INTO warehouse_items (
+                        category,
+                        name,
+                        manufacturer,
+                        model,
+                        identifier_type,
+                        identifier_value,
+                        serial_number,
+                        is_serialized,
+                        quantity,
+                        city_id,
+                        assigned_to_user_id,
+                        assigned_at,
+                        assigned_by,
+                        status,
+                        note,
+                        created_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                    """,
+                    (
+                        data.category,
+                        data.name,
+                        data.manufacturer,
+                        data.model,
+                        data.identifier_type,
+                        identifier_value,
+                        data.serial_number,
+                        True,
+                        1,
+                        data.city_id,
+                        data.target_user_id,
+                        current_user["id"],
+                        "ASSIGNED_TO_TECH",
+                        data.note,
+                        current_user["id"],
+                    )
+                )
+
+                item_id = cursor.lastrowid
+
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="MANUAL_ADDED_TO_TECH",
+                    current_user=current_user,
+                    from_city_id=None,
+                    to_city_id=data.city_id,
+                    target_user_id=data.target_user_id,
+                    quantity=1,
+                    old_status=None,
+                    new_status="ASSIGNED_TO_TECH",
+                    reason=data.reason or f"Ручное добавление в инвентарь монтажника: {target_user['name']}",
+                )
+
+                connection.commit()
+
+                return {
+                    "message": "Предмет вручную добавлен в инвентарь монтажника",
+                    "item_id": item_id,
+                    "city_id": data.city_id,
+                    "city_name": city["name"],
+                    "target_user_id": data.target_user_id,
+                    "target_user_name": target_user["name"],
+                    "quantity": 1,
+                }
+
+            item_for_search = {
+                "category": data.category,
+                "name": data.name,
+                "manufacturer": data.manufacturer,
+                "model": data.model,
+            }
+
+            target_item = find_assigned_consumable_for_user(
+                cursor=cursor,
+                item=item_for_search,
+                city_id=data.city_id,
+                target_user_id=data.target_user_id,
+            )
+
+            if target_item:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = quantity + %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (data.quantity, target_item["id"])
+                )
+
+                item_id = target_item["id"]
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO warehouse_items (
+                        category,
+                        name,
+                        manufacturer,
+                        model,
+                        identifier_type,
+                        identifier_value,
+                        serial_number,
+                        is_serialized,
+                        quantity,
+                        city_id,
+                        assigned_to_user_id,
+                        assigned_at,
+                        assigned_by,
+                        status,
+                        note,
+                        created_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                    """,
+                    (
+                        data.category,
+                        data.name,
+                        data.manufacturer,
+                        data.model,
+                        "NONE",
+                        None,
+                        None,
+                        False,
+                        data.quantity,
+                        data.city_id,
+                        data.target_user_id,
+                        current_user["id"],
+                        "ASSIGNED_TO_TECH",
+                        data.note,
+                        current_user["id"],
+                    )
+                )
+
+                item_id = cursor.lastrowid
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=item_id,
+                action="MANUAL_CONSUMABLE_ADDED_TO_TECH",
+                current_user=current_user,
+                from_city_id=None,
+                to_city_id=data.city_id,
+                target_user_id=data.target_user_id,
+                quantity=data.quantity,
+                old_status=None,
+                new_status="ASSIGNED_TO_TECH",
+                reason=data.reason or f"Ручное добавление расходника монтажнику: {target_user['name']}",
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Расходник вручную добавлен в инвентарь монтажника",
+                "item_id": item_id,
+                "city_id": data.city_id,
+                "city_name": city["name"],
+                "target_user_id": data.target_user_id,
+                "target_user_name": target_user["name"],
+                "quantity": data.quantity,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.post("/inventory/items/{item_id}/transfer")
+def transfer_inventory_item(
+    item_id: int,
+    data: WarehouseInventoryTransfer,
+    current_user: dict = Depends(get_current_user),
+):
+    require_warehouse_manage(current_user)
+
+    if data.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Количество должно быть больше 0")
+
+    if not data.target_user_id and not data.to_city_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Нужно указать target_user_id или to_city_id"
+        )
+
+    if data.target_user_id and data.to_city_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя одновременно указать target_user_id и to_city_id"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM warehouse_items
+                WHERE id = %s
+                  AND is_deleted = 0
+                FOR UPDATE
+                """,
+                (item_id,)
+            )
+
+            item = cursor.fetchone()
+
+            if not item:
+                raise HTTPException(status_code=404, detail="Предмет инвентаря не найден")
+
+            if item["status"] != "ASSIGNED_TO_TECH" or not item.get("assigned_to_user_id"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Переносить можно только предмет из инвентаря монтажника"
+                )
+
+            old_user_id = int(item["assigned_to_user_id"])
+
+            if data.from_user_id and int(data.from_user_id) != old_user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Предмет находится не у выбранного монтажника-отправителя"
+                )
+
+            is_serialized = bool(item["is_serialized"])
+
+            if data.target_user_id:
+                target_user = require_inventory_target_user(cursor, data.target_user_id)
+
+                if int(data.target_user_id) == old_user_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Нельзя перенести предмет тому же самому монтажнику"
+                    )
+
+                if is_serialized:
+                    if data.quantity != 1:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Для серийного оборудования количество должно быть 1"
+                        )
+
+                    cursor.execute(
+                        """
+                        UPDATE warehouse_items
+                        SET assigned_to_user_id = %s,
+                            assigned_at = NOW(),
+                            assigned_by = %s,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (
+                            data.target_user_id,
+                            current_user["id"],
+                            item_id,
+                        )
+                    )
+
+                    add_warehouse_movement(
+                        cursor=cursor,
+                        warehouse_item_id=item_id,
+                        action="INVENTORY_TRANSFERRED_TO_USER",
+                        current_user=current_user,
+                        from_city_id=item.get("city_id"),
+                        to_city_id=item.get("city_id"),
+                        from_user_id=old_user_id,
+                        target_user_id=data.target_user_id,
+                        quantity=1,
+                        old_status="ASSIGNED_TO_TECH",
+                        new_status="ASSIGNED_TO_TECH",
+                        reason=data.reason or f"Передано монтажнику: {target_user['name']}",
+                    )
+
+                    connection.commit()
+
+                    return {
+                        "message": "Предмет передан другому монтажнику",
+                        "item_id": item_id,
+                        "from_user_id": old_user_id,
+                        "target_user_id": data.target_user_id,
+                        "target_user_name": target_user["name"],
+                        "quantity": 1,
+                    }
+
+                available_quantity = int(item["quantity"] or 0)
+
+                if data.quantity > available_quantity:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Недостаточно количества у монтажника. Доступно: {available_quantity}"
+                    )
+
+                target_item = find_assigned_consumable_for_user(
+                    cursor=cursor,
+                    item=item,
+                    city_id=item["city_id"],
+                    target_user_id=data.target_user_id,
+                )
+
+                if target_item:
+                    cursor.execute(
+                        """
+                        UPDATE warehouse_items
+                        SET quantity = quantity + %s,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (data.quantity, target_item["id"])
+                    )
+
+                    target_item_id = target_item["id"]
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO warehouse_items (
+                            category,
+                            name,
+                            manufacturer,
+                            model,
+                            identifier_type,
+                            identifier_value,
+                            serial_number,
+                            is_serialized,
+                            quantity,
+                            city_id,
+                            assigned_to_user_id,
+                            assigned_at,
+                            assigned_by,
+                            status,
+                            note,
+                            created_by
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                        """,
+                        (
+                            item["category"],
+                            item["name"],
+                            item["manufacturer"],
+                            item["model"],
+                            "NONE",
+                            None,
+                            None,
+                            False,
+                            data.quantity,
+                            item["city_id"],
+                            data.target_user_id,
+                            current_user["id"],
+                            "ASSIGNED_TO_TECH",
+                            item.get("note"),
+                            current_user["id"],
+                        )
+                    )
+
+                    target_item_id = cursor.lastrowid
+
+                new_source_quantity = available_quantity - data.quantity
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (new_source_quantity, item_id)
+                )
+
+                if new_source_quantity == 0:
+                    cursor.execute(
+                        """
+                        UPDATE warehouse_items
+                        SET is_deleted = 1,
+                            deleted_at = NOW(),
+                            deleted_by = %s
+                        WHERE id = %s
+                        """,
+                        (current_user["id"], item_id)
+                    )
+
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="CONSUMABLE_INVENTORY_TRANSFERRED_OUT",
+                    current_user=current_user,
+                    from_city_id=item.get("city_id"),
+                    to_city_id=item.get("city_id"),
+                    from_user_id=old_user_id,
+                    target_user_id=data.target_user_id,
+                    quantity=data.quantity,
+                    old_status="ASSIGNED_TO_TECH",
+                    new_status="ASSIGNED_TO_TECH",
+                    reason=data.reason or "Передача расходника другому монтажнику",
+                )
+
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=target_item_id,
+                    action="CONSUMABLE_INVENTORY_TRANSFERRED_IN",
+                    current_user=current_user,
+                    from_city_id=item.get("city_id"),
+                    to_city_id=item.get("city_id"),
+                    from_user_id=old_user_id,
+                    target_user_id=data.target_user_id,
+                    quantity=data.quantity,
+                    old_status="ASSIGNED_TO_TECH",
+                    new_status="ASSIGNED_TO_TECH",
+                    reason=data.reason or f"Получено от другого монтажника: {target_user['name']}",
+                )
+
+                connection.commit()
+
+                return {
+                    "message": "Расходник передан другому монтажнику",
+                    "source_item_id": item_id,
+                    "target_item_id": target_item_id,
+                    "from_user_id": old_user_id,
+                    "target_user_id": data.target_user_id,
+                    "target_user_name": target_user["name"],
+                    "quantity": data.quantity,
+                    "source_quantity_left": new_source_quantity,
+                }
+
+            # Если указан to_city_id — возвращаем на склад.
+            target_city = require_city(cursor, data.to_city_id)
+
+            if is_serialized:
+                if data.quantity != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Для серийного оборудования количество должно быть 1"
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET status = 'IN_STOCK',
+                        city_id = %s,
+                        assigned_to_user_id = NULL,
+                        assigned_at = NULL,
+                        assigned_by = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        data.to_city_id,
+                        item_id,
+                    )
+                )
+
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="INVENTORY_TRANSFERRED_TO_STOCK",
+                    current_user=current_user,
+                    from_city_id=item.get("city_id"),
+                    to_city_id=data.to_city_id,
+                    from_user_id=old_user_id,
+                    quantity=1,
+                    old_status="ASSIGNED_TO_TECH",
+                    new_status="IN_STOCK",
+                    reason=data.reason or f"Возврат на склад: {target_city['name']}",
+                )
+
+                connection.commit()
+
+                return {
+                    "message": "Предмет возвращён на склад",
+                    "item_id": item_id,
+                    "from_user_id": old_user_id,
+                    "to_city_id": data.to_city_id,
+                    "to_city_name": target_city["name"],
+                    "quantity": 1,
+                }
+
+            available_quantity = int(item["quantity"] or 0)
+
+            if data.quantity > available_quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Недостаточно количества у монтажника. Доступно: {available_quantity}"
+                )
+
+            stock_item = find_consumable_in_city(
+                cursor=cursor,
+                item=item,
+                city_id=data.to_city_id,
+            )
+
+            if stock_item:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = quantity + %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (data.quantity, stock_item["id"])
+                )
+
+                stock_item_id = stock_item["id"]
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO warehouse_items (
+                        category,
+                        name,
+                        manufacturer,
+                        model,
+                        identifier_type,
+                        identifier_value,
+                        serial_number,
+                        is_serialized,
+                        quantity,
+                        city_id,
+                        status,
+                        note,
+                        created_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        item["category"],
+                        item["name"],
+                        item["manufacturer"],
+                        item["model"],
+                        "NONE",
+                        None,
+                        None,
+                        False,
+                        data.quantity,
+                        data.to_city_id,
+                        "IN_STOCK",
+                        item.get("note"),
+                        current_user["id"],
+                    )
+                )
+
+                stock_item_id = cursor.lastrowid
+
+            new_source_quantity = available_quantity - data.quantity
+
+            cursor.execute(
+                """
+                UPDATE warehouse_items
+                SET quantity = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_source_quantity, item_id)
+            )
+
+            if new_source_quantity == 0:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET is_deleted = 1,
+                        deleted_at = NOW(),
+                        deleted_by = %s
+                    WHERE id = %s
+                    """,
+                    (current_user["id"], item_id)
+                )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=item_id,
+                action="CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_OUT",
+                current_user=current_user,
+                from_city_id=item.get("city_id"),
+                to_city_id=data.to_city_id,
+                from_user_id=old_user_id,
+                quantity=data.quantity,
+                old_status="ASSIGNED_TO_TECH",
+                new_status="ASSIGNED_TO_TECH",
+                reason=data.reason or "Расходник возвращён на склад",
+            )
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=stock_item_id,
+                action="CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_IN",
+                current_user=current_user,
+                from_city_id=item.get("city_id"),
+                to_city_id=data.to_city_id,
+                from_user_id=old_user_id,
+                quantity=data.quantity,
+                old_status="IN_STOCK",
+                new_status="IN_STOCK",
+                reason=data.reason or f"Расходник возвращён на склад: {target_city['name']}",
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Расходник возвращён на склад",
+                "source_item_id": item_id,
+                "stock_item_id": stock_item_id,
+                "from_user_id": old_user_id,
+                "to_city_id": data.to_city_id,
+                "to_city_name": target_city["name"],
+                "quantity": data.quantity,
+                "source_quantity_left": new_source_quantity,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.patch("/consumable-thresholds")
+def upsert_consumable_threshold(
+    data: WarehouseConsumableThresholdUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    require_warehouse_manage(current_user)
+
+    if data.threshold_quantity < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Порог остатка не может быть отрицательным"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            city = require_city(cursor, data.city_id)
+
+            manufacturer = data.manufacturer or ""
+            model = data.model or ""
+
+            cursor.execute(
+                """
+                INSERT INTO warehouse_consumable_thresholds (
+                    city_id,
+                    category,
+                    name,
+                    manufacturer,
+                    model,
+                    threshold_quantity,
+                    created_by,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                ON DUPLICATE KEY UPDATE
+                    threshold_quantity = VALUES(threshold_quantity),
+                    updated_at = NOW()
+                """,
+                (
+                    data.city_id,
+                    data.category,
+                    data.name,
+                    manufacturer,
+                    model,
+                    data.threshold_quantity,
+                    current_user["id"],
+                )
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Порог расходника обновлён",
+                "city_id": data.city_id,
+                "city_name": city["name"],
+                "category": data.category,
+                "name": data.name,
+                "manufacturer": manufacturer,
+                "model": model,
+                "threshold_quantity": data.threshold_quantity,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
 
 @router.get("/template")
 def download_warehouse_template(current_user: dict = Depends(get_current_user)):
@@ -997,6 +2601,7 @@ def get_warehouse_items_grouped(
             LEFT JOIN vehicles v ON rv.vehicle_id = v.id
 
             WHERE wi.is_deleted = 0
+                AND wi.assigned_to_user_id IS NULL
             """
             values = []
 
@@ -1211,6 +2816,7 @@ def get_warehouse_items(
             LEFT JOIN vehicles v ON rv.vehicle_id = v.id
 
             WHERE wi.is_deleted = 0
+                AND wi.assigned_to_user_id IS NULL
             """
             values = []
 
@@ -1293,6 +2899,8 @@ def get_warehouse_item_history(
                     wh.request_equipment_id,
                     wh.target_user_id,
                     target_user.name AS target_user_name,
+                    wh.from_user_id,
+                    from_user.name AS from_user_name,
 
                     wh.quantity,
                     wh.old_status,
@@ -1317,6 +2925,7 @@ def get_warehouse_item_history(
                 LEFT JOIN cities to_city ON wh.to_city_id = to_city.id
                 LEFT JOIN users actor ON wh.created_by = actor.id
                 LEFT JOIN users target_user ON wh.target_user_id = target_user.id
+                LEFT JOIN users from_user ON wh.from_user_id = from_user.id
                 LEFT JOIN requests r ON wh.request_id = r.id
                 LEFT JOIN vehicles v ON wh.vehicle_id = v.id
                 WHERE wh.warehouse_item_id = %s
@@ -2171,12 +3780,15 @@ def detach_equipment_from_request(
                     (link["warehouse_item_id"],)
                 )
             else:
-                new_quantity = int(link["current_quantity"]) + int(link["quantity"])
+                new_quantity = int(link["current_quantity"] or 0) + int(link["quantity"] or 0)
 
                 cursor.execute(
                     """
                     UPDATE warehouse_items
                     SET quantity = %s,
+                        is_deleted = 0,
+                        deleted_at = NULL,
+                        deleted_by = NULL,
                         updated_at = NOW()
                     WHERE id = %s
                     """,
@@ -2256,6 +3868,224 @@ def detach_equipment_from_request(
     finally:
         connection.close()
 
+@router.get("/request-vehicles/{request_vehicle_id}/available-inventory")
+def get_available_inventory_for_request_vehicle(
+    request_vehicle_id: int,
+    category: str | None = Query(None),
+    search: str | None = Query(None),
+    assigned_to_user_id: int | None = Query(None),
+    include_stock: bool = Query(True),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Список оборудования для селектора в панели "Оборудование" внутри заявки.
+
+    TECHNICIAN / SENIOR_TECHNICIAN:
+    - видит только свой инвентарь со статусом ASSIGNED_TO_TECH.
+
+    ADMIN / WAREHOUSE_MANAGER:
+    - видит инвентарь монтажников;
+    - может дополнительно видеть складские позиции IN_STOCK.
+    """
+    require_request_equipment_attach(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    rv.id,
+                    rv.request_id,
+                    r.is_deleted,
+                    r.city,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+                    c.responsible_manager_id
+                FROM request_vehicles rv
+                INNER JOIN requests r ON rv.request_id = r.id
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE rv.id = %s
+                """,
+                (request_vehicle_id,)
+            )
+            request_vehicle = cursor.fetchone()
+
+            if not request_vehicle:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Автомобиль в заявке не найден"
+                )
+
+            if request_vehicle["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Заявка удалена"
+                )
+
+            if not can_user_access_request_equipment(request_vehicle, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра оборудования этой заявки"
+                )
+
+            conditions = [
+                "wi.is_deleted = 0",
+                "wi.quantity > 0",
+                """
+                (
+                    wi.is_serialized = 0
+                    OR NOT EXISTS (
+                        SELECT 1
+                        FROM request_equipment re_check
+                        WHERE re_check.warehouse_item_id = wi.id
+                    )
+                )
+                """
+            ]
+            values = []
+
+            role = current_user["role"]
+
+            if role in WAREHOUSE_MANAGE_ROLES:
+                availability_clauses = []
+
+                if assigned_to_user_id:
+                    availability_clauses.append(
+                        """
+                        (
+                            wi.status = 'ASSIGNED_TO_TECH'
+                            AND wi.assigned_to_user_id = %s
+                        )
+                        """
+                    )
+                    values.append(assigned_to_user_id)
+                else:
+                    availability_clauses.append(
+                        """
+                        (
+                            wi.status = 'ASSIGNED_TO_TECH'
+                            AND wi.assigned_to_user_id IS NOT NULL
+                        )
+                        """
+                    )
+
+                if include_stock:
+                    availability_clauses.append(
+                        """
+                        (
+                            wi.status = 'IN_STOCK'
+                            AND wi.assigned_to_user_id IS NULL
+                        )
+                        """
+                    )
+
+                conditions.append("(" + " OR ".join(availability_clauses) + ")")
+
+            else:
+                # Монтажник / старший монтажник видит только свой инвентарь.
+                conditions.append(
+                    """
+                    wi.status = 'ASSIGNED_TO_TECH'
+                    AND wi.assigned_to_user_id = %s
+                    """
+                )
+                values.append(current_user["id"])
+
+            if category:
+                conditions.append("wi.category = %s")
+                values.append(category)
+
+            if search:
+                conditions.append(
+                    """
+                    (
+                        wi.name LIKE %s OR
+                        wi.manufacturer LIKE %s OR
+                        wi.model LIKE %s OR
+                        wi.identifier_value LIKE %s OR
+                        wi.serial_number LIKE %s OR
+                        assigned_user.name LIKE %s OR
+                        city.name LIKE %s
+                    )
+                    """
+                )
+                like_value = f"%{search}%"
+                values.extend([
+                    like_value,
+                    like_value,
+                    like_value,
+                    like_value,
+                    like_value,
+                    like_value,
+                    like_value,
+                ])
+
+            where_clause = " AND ".join(conditions)
+
+            cursor.execute(
+                f"""
+                SELECT
+                    wi.id,
+                    wi.category,
+                    wi.name,
+                    wi.manufacturer,
+                    wi.model,
+                    wi.identifier_type,
+                    wi.identifier_value,
+                    wi.serial_number,
+                    wi.is_serialized,
+                    wi.quantity,
+                    wi.city_id,
+                    city.name AS city_name,
+                    wi.status,
+                    wi.note,
+
+                    wi.assigned_to_user_id,
+                    assigned_user.name AS assigned_to_user_name,
+                    assigned_user.role AS assigned_to_user_role,
+                    assigned_user.city AS assigned_to_user_city,
+
+                    CASE
+                        WHEN wi.assigned_to_user_id IS NULL THEN 'STOCK'
+                        ELSE 'TECH_INVENTORY'
+                    END AS source_type
+
+                FROM warehouse_items wi
+                LEFT JOIN cities city ON wi.city_id = city.id
+                LEFT JOIN users assigned_user ON wi.assigned_to_user_id = assigned_user.id
+
+                WHERE {where_clause}
+
+                ORDER BY
+                    source_type ASC,
+                    assigned_user.name ASC,
+                    city.name ASC,
+                    wi.category ASC,
+                    wi.name ASC,
+                    wi.identifier_value ASC,
+                    wi.id DESC
+                """,
+                tuple(values)
+            )
+
+            rows = cursor.fetchall()
+
+            for row in rows:
+                row["available_quantity"] = get_warehouse_item_quantity(row)
+
+                if row.get("assigned_to_user_id"):
+                    row["source_label"] = f"Инвентарь: {row.get('assigned_to_user_name') or '—'}"
+                else:
+                    row["source_label"] = f"Склад: {row.get('city_name') or '—'}"
+
+            return rows
+
+    finally:
+        connection.close()
+
 @router.post("/request-vehicles/{request_vehicle_id}/equipment")
 def attach_equipment_to_request_vehicle(
     request_vehicle_id: int,
@@ -2264,9 +4094,15 @@ def attach_equipment_to_request_vehicle(
 ):
     """
     Привязать оборудование к конкретному авто внутри заявки.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
+
+    TECHNICIAN / SENIOR_TECHNICIAN:
+    - может добавить только своё оборудование из инвентаря.
+
+    ADMIN / WAREHOUSE_MANAGER:
+    - может добавить оборудование из инвентаря любого монтажника;
+    - может добавить оборудование напрямую со склада IN_STOCK.
     """
-    require_warehouse_manage(current_user)
+    require_request_equipment_attach(current_user)
 
     if data.quantity <= 0:
         raise HTTPException(status_code=400, detail="Количество должно быть больше 0")
@@ -2281,7 +4117,6 @@ def attach_equipment_to_request_vehicle(
 
     try:
         with connection.cursor() as cursor:
-            # Проверяем авто внутри заявки
             cursor.execute(
                 """
                 SELECT
@@ -2291,12 +4126,19 @@ def attach_equipment_to_request_vehicle(
 
                     r.status,
                     r.is_deleted,
+                    r.city,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+
+                    c.responsible_manager_id,
 
                     v.brand,
                     v.model,
                     v.plate_number
                 FROM request_vehicles rv
                 INNER JOIN requests r ON rv.request_id = r.id
+                LEFT JOIN clients c ON r.client_id = c.id
                 LEFT JOIN vehicles v ON rv.vehicle_id = v.id
                 WHERE rv.id = %s
                 """,
@@ -2316,12 +4158,17 @@ def attach_equipment_to_request_vehicle(
                     detail="Нельзя привязать оборудование к удалённой заявке"
                 )
 
+            if not can_user_access_request_equipment(request_vehicle, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для добавления оборудования в эту заявку"
+                )
+
             request_id = request_vehicle["request_id"]
 
-            # Проверяем оборудование
             cursor.execute(
                 """
-                SELECT 
+                SELECT
                     wi.id,
                     wi.category,
                     wi.name,
@@ -2329,15 +4176,20 @@ def attach_equipment_to_request_vehicle(
                     wi.model,
                     wi.identifier_type,
                     wi.identifier_value,
+                    wi.serial_number,
                     wi.is_serialized,
                     wi.quantity,
                     wi.city_id,
                     city.name AS city_name,
                     wi.status,
-                    wi.is_deleted
+                    wi.is_deleted,
+                    wi.assigned_to_user_id,
+                    assigned_user.name AS assigned_to_user_name
                 FROM warehouse_items wi
                 LEFT JOIN cities city ON wi.city_id = city.id
+                LEFT JOIN users assigned_user ON wi.assigned_to_user_id = assigned_user.id
                 WHERE wi.id = %s
+                FOR UPDATE
                 """,
                 (data.warehouse_item_id,)
             )
@@ -2352,11 +4204,64 @@ def attach_equipment_to_request_vehicle(
                     detail="Нельзя привязать оборудование из корзины"
                 )
 
-            if item["status"] != "IN_STOCK":
+            role = current_user["role"]
+            is_warehouse_manager = role in WAREHOUSE_MANAGE_ROLES
+
+            item_assigned_user_id = item.get("assigned_to_user_id")
+            item_is_from_inventory = (
+                item["status"] == "ASSIGNED_TO_TECH"
+                and item_assigned_user_id is not None
+            )
+            item_is_from_stock = (
+                item["status"] == "IN_STOCK"
+                and item_assigned_user_id is None
+            )
+
+            if not item_is_from_inventory and not item_is_from_stock:
                 raise HTTPException(
                     status_code=400,
-                    detail="Оборудование недоступно на складе"
+                    detail="Оборудование недоступно для добавления в заявку"
                 )
+
+            if not is_warehouse_manager:
+                if not item_is_from_inventory:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Монтажник может добавить только оборудование из своего инвентаря"
+                    )
+
+                if int(item_assigned_user_id) != int(current_user["id"]):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Нельзя добавить оборудование из чужого инвентаря"
+                    )
+
+            if item_is_from_stock and not is_warehouse_manager:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Добавлять оборудование напрямую со склада может только админ или заведующий складом"
+                )
+
+            installed_by_user_id = None
+
+            if data.installed_by_user_id:
+                if not is_warehouse_manager and int(data.installed_by_user_id) != int(current_user["id"]):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Нельзя указать другого монтажника как установившего"
+                    )
+
+                target_user = require_inventory_target_user(
+                    cursor,
+                    data.installed_by_user_id
+                )
+                installed_by_user_id = int(target_user["id"])
+
+            elif item_is_from_inventory:
+                installed_by_user_id = int(item_assigned_user_id)
+
+            else:
+                installed_by_user_id = int(current_user["id"])
 
             is_serialized = bool(item["is_serialized"])
 
@@ -2383,26 +4288,42 @@ def attach_equipment_to_request_vehicle(
                         detail="Это серийное оборудование уже привязано к заявке"
                     )
 
+                old_status = item.get("status")
+                from_user_id = int(item_assigned_user_id) if item_assigned_user_id else None
+
                 cursor.execute(
                     """
                     UPDATE warehouse_items
                     SET status = 'INSTALLED',
+                        assigned_to_user_id = NULL,
+                        assigned_at = NULL,
+                        assigned_by = NULL,
                         updated_at = NOW()
                     WHERE id = %s
                     """,
                     (data.warehouse_item_id,)
                 )
 
+                movement_action = (
+                    "INSTALLED_FROM_TECH"
+                    if item_is_from_inventory
+                    else "INSTALLED_FROM_STOCK"
+                )
+
+                new_status_for_history = "INSTALLED"
+
             else:
-                available_quantity = int(item["quantity"])
+                available_quantity = int(item["quantity"] or 0)
 
                 if data.quantity > available_quantity:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Недостаточно оборудования на складе. Доступно: {available_quantity}"
+                        detail=f"Недостаточно количества. Доступно: {available_quantity}"
                     )
 
                 new_quantity = available_quantity - data.quantity
+                old_status = item.get("status")
+                from_user_id = int(item_assigned_user_id) if item_assigned_user_id else None
 
                 cursor.execute(
                     """
@@ -2413,6 +4334,29 @@ def attach_equipment_to_request_vehicle(
                     """,
                     (new_quantity, data.warehouse_item_id)
                 )
+
+                if item_is_from_inventory and new_quantity == 0:
+                    cursor.execute(
+                        """
+                        UPDATE warehouse_items
+                        SET is_deleted = 1,
+                            deleted_at = NOW(),
+                            deleted_by = %s
+                        WHERE id = %s
+                        """,
+                        (
+                            current_user["id"],
+                            data.warehouse_item_id,
+                        )
+                    )
+
+                movement_action = (
+                    "CONSUMABLE_USED_FROM_TECH"
+                    if item_is_from_inventory
+                    else "CONSUMABLE_USED_FROM_STOCK"
+                )
+
+                new_status_for_history = old_status
 
             cursor.execute(
                 """
@@ -2441,7 +4385,7 @@ def attach_equipment_to_request_vehicle(
             add_warehouse_movement(
                 cursor=cursor,
                 warehouse_item_id=data.warehouse_item_id,
-                action="ATTACHED_TO_REQUEST",
+                action=movement_action,
                 current_user=current_user,
                 from_city_id=item.get("city_id"),
                 to_city_id=None,
@@ -2449,21 +4393,29 @@ def attach_equipment_to_request_vehicle(
                 request_vehicle_id=request_vehicle_id,
                 vehicle_id=request_vehicle.get("vehicle_id"),
                 request_equipment_id=link_id,
+                target_user_id=installed_by_user_id,
+                from_user_id=from_user_id,
                 quantity=data.quantity,
-                old_status=item.get("status"),
-                new_status="INSTALLED" if is_serialized else item.get("status"),
-                reason=data.note or "Привязано к автомобилю в заявке"
+                old_status=old_status,
+                new_status=new_status_for_history,
+                reason=data.note or "Оборудование добавлено в заявку"
             )
 
             item_title = f"{item['name']}"
-            if item["model"]:
+            if item.get("model"):
                 item_title += f" {item['model']}"
-            if item["identifier_value"]:
+            if item.get("identifier_value"):
                 item_title += f" ({item['identifier_type']}: {item['identifier_value']})"
 
             vehicle_title = f"{request_vehicle['brand'] or ''} {request_vehicle['model'] or ''}".strip()
             if request_vehicle["plate_number"]:
                 vehicle_title += f" ({request_vehicle['plate_number']})"
+
+            source_title = (
+                f"инвентарь: {item.get('assigned_to_user_name') or '—'}"
+                if item_is_from_inventory
+                else f"склад: {item.get('city_name') or '—'}"
+            )
 
             cursor.execute(
                 """
@@ -2481,7 +4433,7 @@ def attach_equipment_to_request_vehicle(
                     current_user["id"],
                     "EQUIPMENT_ATTACHED",
                     None,
-                    f"{item_title}, quantity={data.quantity}, vehicle={vehicle_title}"
+                    f"{item_title}, quantity={data.quantity}, vehicle={vehicle_title}, source={source_title}, installed_by_user_id={installed_by_user_id}"
                 )
             )
 
@@ -2492,7 +4444,10 @@ def attach_equipment_to_request_vehicle(
                 "link_id": link_id,
                 "request_id": request_id,
                 "request_vehicle_id": request_vehicle_id,
-                "warehouse_item_id": data.warehouse_item_id
+                "warehouse_item_id": data.warehouse_item_id,
+                "source": "TECH_INVENTORY" if item_is_from_inventory else "STOCK",
+                "installed_by_user_id": installed_by_user_id,
+                "quantity": data.quantity,
             }
 
     except HTTPException:

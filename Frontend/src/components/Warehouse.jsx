@@ -13,21 +13,34 @@ const CATEGORIES = {
 	WIRED_SENSOR: 'Пров. датчик',
 	RELAY: 'Реле',
 	CABLE: 'Кабель',
+	CONSUMABLE: 'Расходники',
+	TOOLS: 'Инструменты',
+	FIRST_AID: 'Аптечки',
 	OTHER: 'Другое',
 }
 
 const STATUSES = {
 	IN_STOCK: 'На складе',
 	RESERVED: 'Резерв',
+	ASSIGNED_TO_TECH: 'У монтажника',
 	INSTALLED: 'Установлено',
+	USED: 'Израсходовано',
+	REPAIR: 'В ремонте',
+	LOST: 'Потеряно',
 	WRITTEN_OFF: 'Списано',
 }
+
 const STATUS_COLORS = {
 	IN_STOCK: '#5e9424',
 	RESERVED: '#f57c00',
+	ASSIGNED_TO_TECH: '#7b1fa2',
 	INSTALLED: '#1976d2',
+	USED: '#455a64',
+	REPAIR: '#f57c00',
+	LOST: '#c62828',
 	WRITTEN_OFF: '#c62828',
 }
+
 const HISTORY_ACTIONS = {
 	CREATED: 'Добавлено на склад',
 	UPDATED: 'Изменено',
@@ -52,6 +65,46 @@ const HISTORY_ACTIONS = {
 
 	ISSUED_TO_USER: 'Выдано сотруднику',
 	RETURNED_FROM_USER: 'Возвращено от сотрудника',
+
+	ASSIGNED_TO_TECH: 'Выдано монтажнику',
+	CONSUMABLE_ASSIGNED_OUT: 'Расходник выдан со склада',
+	CONSUMABLE_ASSIGNED_TO_TECH: 'Расходник получен монтажником',
+
+	RETURNED_TO_STOCK: 'Возвращено на склад',
+	CONSUMABLE_RETURNED_FROM_TECH_OUT: 'Расходник возвращён монтажником',
+	CONSUMABLE_RETURNED_TO_STOCK: 'Расходник возвращён на склад',
+
+	MANUAL_ADDED_TO_TECH: 'Ручное добавление монтажнику',
+	MANUAL_CONSUMABLE_ADDED_TO_TECH: 'Ручное добавление расходника монтажнику',
+
+	INVENTORY_TRANSFERRED_TO_USER: 'Передано другому монтажнику',
+	INVENTORY_TRANSFERRED_TO_STOCK: 'Возвращено на склад из инвентаря',
+
+	CONSUMABLE_INVENTORY_TRANSFERRED_OUT: 'Расходник передан другому монтажнику',
+	CONSUMABLE_INVENTORY_TRANSFERRED_IN: 'Расходник получен от другого монтажника',
+
+	CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_OUT: 'Расходник списан из инвентаря на склад',
+	CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_IN: 'Расходник принят на склад из инвентаря',
+}
+
+const getUserRole = () => {
+	try {
+		const token = localStorage.getItem('access_token')
+		if (!token) return null
+
+		const base64Url = token.split('.')[1]
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+		const jsonPayload = decodeURIComponent(
+			atob(base64)
+				.split('')
+				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+				.join(''),
+		)
+
+		return JSON.parse(jsonPayload).role
+	} catch {
+		return null
+	}
 }
 
 export default function Warehouse() {
@@ -68,6 +121,7 @@ export default function Warehouse() {
 	})
 	const [viewMode, setViewMode] = useState('active') // active | trash
 	const [cities, setCities] = useState([])
+	const [technicians, setTechnicians] = useState([])
 	const [transferItem, setTransferItem] = useState(null)
 	const [transferForm, setTransferForm] = useState({
 		from_city_id: '',
@@ -76,6 +130,13 @@ export default function Warehouse() {
 		reason: '',
 	})
 	const [transferLoading, setTransferLoading] = useState(false)
+	const [assignItem, setAssignItem] = useState(null)
+	const [assignForm, setAssignForm] = useState({
+		target_user_id: '',
+		quantity: 1,
+		reason: '',
+	})
+	const [assignLoading, setAssignLoading] = useState(false)
 
 	const [historyItem, setHistoryItem] = useState(null)
 	const [historyRows, setHistoryRows] = useState([])
@@ -96,6 +157,8 @@ export default function Warehouse() {
 	const fileInputRef = useRef(null)
 
 	const location = useLocation()
+	const userRole = getUserRole()
+	const canManageWarehouse = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
 	const itemRefs = useRef({})
 	const [highlightedItemId, setHighlightedItemId] = useState(null)
 	const [pendingHighlightItemId, setPendingHighlightItemId] = useState(null)
@@ -110,6 +173,10 @@ export default function Warehouse() {
 
 	useEffect(() => {
 		fetchCities()
+
+		if (canManageWarehouse) {
+			fetchTechnicians()
+		}
 	}, [])
 
 	useEffect(() => {
@@ -173,6 +240,21 @@ export default function Warehouse() {
 			}
 		} catch (err) {
 			console.error('Ошибка загрузки городов:', err)
+		}
+	}
+
+	const fetchTechnicians = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/users/technicians`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) {
+				const data = await res.json()
+				setTechnicians(Array.isArray(data) ? data : [])
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки монтажников:', err)
 		}
 	}
 
@@ -1006,6 +1088,91 @@ export default function Warehouse() {
 		})
 	}
 
+	const openAssignModal = item => {
+		setAssignItem(item)
+		setAssignForm({
+			target_user_id: '',
+			quantity: item.is_serialized ? 1 : 1,
+			reason: '',
+		})
+	}
+
+	const closeAssignModal = () => {
+		setAssignItem(null)
+		setAssignForm({
+			target_user_id: '',
+			quantity: 1,
+			reason: '',
+		})
+	}
+
+	const handleAssignChange = e => {
+		const { name, value } = e.target
+
+		setAssignForm(prev => ({
+			...prev,
+			[name]: value,
+		}))
+	}
+
+	const handleAssignSubmit = async e => {
+		e.preventDefault()
+
+		if (!assignItem) return
+
+		if (!assignForm.target_user_id) {
+			alert('Выберите монтажника')
+			return
+		}
+
+		const quantity = assignItem.is_serialized
+			? 1
+			: Number(assignForm.quantity || 0)
+
+		if (quantity <= 0) {
+			alert('Количество должно быть больше 0')
+			return
+		}
+
+		if (
+			!assignItem.is_serialized &&
+			quantity > Number(assignItem.quantity || 0)
+		) {
+			alert(`Недостаточно количества. Доступно: ${assignItem.quantity || 0}`)
+			return
+		}
+
+		setAssignLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/warehouse/items/${assignItem.id}/assign-to-user`,
+				{
+					method: 'POST',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						target_user_id: Number(assignForm.target_user_id),
+						quantity,
+						reason: assignForm.reason.trim() || null,
+					}),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Ошибка выдачи монтажнику')
+			}
+
+			closeAssignModal()
+			fetchItems()
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setAssignLoading(false)
+		}
+	}
+
 	const handleTransferChange = e => {
 		const { name, value } = e.target
 
@@ -1295,29 +1462,43 @@ export default function Warehouse() {
 									🕘
 								</button>
 
-								<button
-									className='warehouse-action-btn warehouse-transfer-btn'
-									onClick={() => openTransferModal(item)}
-									title='Перенести в другой город'
-								>
-									↔
-								</button>
+								{canManageWarehouse && item.status === 'IN_STOCK' && (
+									<button
+										className='warehouse-action-btn warehouse-assign-btn'
+										onClick={() => openAssignModal(item)}
+										title='Выдать монтажнику'
+									>
+										👤
+									</button>
+								)}
 
-								<button
-									className='warehouse-action-btn warehouse-edit-btn'
-									onClick={() => openEdit(item)}
-									title='Редактировать'
-								>
-									✎
-								</button>
+								{canManageWarehouse && (
+									<>
+										<button
+											className='warehouse-action-btn warehouse-transfer-btn'
+											onClick={() => openTransferModal(item)}
+											title='Перенести в другой город'
+										>
+											↔
+										</button>
 
-								<button
-									className='warehouse-action-btn warehouse-delete-btn'
-									onClick={() => handleDelete(item.id)}
-									title='Переместить в корзину'
-								>
-									🗑
-								</button>
+										<button
+											className='warehouse-action-btn warehouse-edit-btn'
+											onClick={() => openEdit(item)}
+											title='Редактировать'
+										>
+											✎
+										</button>
+
+										<button
+											className='warehouse-action-btn warehouse-delete-btn'
+											onClick={() => handleDelete(item.id)}
+											title='Переместить в корзину'
+										>
+											🗑
+										</button>
+									</>
+								)}
 							</div>
 						) : (
 							<div className='warehouse-actions'>
@@ -1371,7 +1552,7 @@ export default function Warehouse() {
 			>
 				<h2>Склад оборудования</h2>
 				<div className='warehouse-header-actions'>
-					{viewMode === 'active' && (
+					{viewMode === 'active' && canManageWarehouse && (
 						<>
 							<button
 								onClick={downloadTemplate}
@@ -1956,6 +2137,124 @@ export default function Warehouse() {
 				</div>
 			)}
 
+			{assignItem && (
+				<div className='modal-overlay open' onClick={closeAssignModal}>
+					<div
+						className='modal-window warehouse-transfer-modal'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>Выдать монтажнику</span>
+							<button
+								className='modal-close'
+								type='button'
+								onClick={closeAssignModal}
+							>
+								&times;
+							</button>
+						</div>
+
+						<form onSubmit={handleAssignSubmit}>
+							<div className='warehouse-transfer-body'>
+								<div className='warehouse-transfer-item-card'>
+									<div className='warehouse-transfer-item-title'>
+										{assignItem.name}
+										{assignItem.model ? ` ${assignItem.model}` : ''}
+									</div>
+
+									<div className='warehouse-transfer-item-meta'>
+										{assignItem.is_serialized ? (
+											<>
+												{assignItem.identifier_type}:{' '}
+												{assignItem.identifier_value}
+											</>
+										) : (
+											<>Расходник · доступно: {assignItem.quantity} шт.</>
+										)}
+
+										<span> · </span>
+
+										<span>
+											{assignItem.city_name || getCityName(assignItem.city_id)}
+										</span>
+									</div>
+								</div>
+
+								<div className='warehouse-form-grid'>
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>Монтажник</span>
+										<select
+											className='warehouse-input'
+											name='target_user_id'
+											value={assignForm.target_user_id}
+											onChange={handleAssignChange}
+											required
+										>
+											<option value=''>Выберите монтажника</option>
+
+											{technicians.map(tech => (
+												<option key={tech.id} value={tech.id}>
+													{tech.name} {tech.city ? `· ${tech.city}` : ''}
+												</option>
+											))}
+										</select>
+									</label>
+
+									<label className='warehouse-field'>
+										<span className='warehouse-label required'>Количество</span>
+										<input
+											className={`warehouse-input ${
+												assignItem.is_serialized
+													? 'warehouse-disabled-input'
+													: ''
+											}`}
+											type='number'
+											name='quantity'
+											min='1'
+											max={assignItem.is_serialized ? 1 : assignItem.quantity}
+											value={assignItem.is_serialized ? 1 : assignForm.quantity}
+											disabled={assignItem.is_serialized}
+											onChange={handleAssignChange}
+										/>
+									</label>
+
+									<label className='warehouse-field warehouse-field-full'>
+										<span className='warehouse-label'>Причина</span>
+										<input
+											className='warehouse-input'
+											type='text'
+											name='reason'
+											value={assignForm.reason}
+											onChange={handleAssignChange}
+											placeholder='Например: выдано монтажнику для работы'
+										/>
+									</label>
+								</div>
+							</div>
+
+							<div className='modal-footer warehouse-modal-footer'>
+								<button
+									className='modal-cancel-btn'
+									type='button'
+									onClick={closeAssignModal}
+									disabled={assignLoading}
+								>
+									Отмена
+								</button>
+
+								<button
+									className='warehouse-submit-btn'
+									type='submit'
+									disabled={assignLoading}
+								>
+									{assignLoading ? 'Выдача...' : 'Выдать'}
+								</button>
+							</div>
+						</form>
+					</div>
+				</div>
+			)}
+
 			{transferItem && (
 				<div className='modal-overlay open' onClick={closeTransferModal}>
 					<div
@@ -2210,9 +2509,16 @@ export default function Warehouse() {
 															</div>
 														)}
 
+														{row.from_user_name && (
+															<div>
+																<strong>От сотрудника:</strong>{' '}
+																{row.from_user_name}
+															</div>
+														)}
+
 														{row.target_user_name && (
 															<div>
-																<strong>Сотрудник:</strong>{' '}
+																<strong>Кому сотруднику:</strong>{' '}
 																{row.target_user_name}
 															</div>
 														)}

@@ -119,9 +119,9 @@
   background: #fff;
   color: #5e9424;
   padding: 10px 16px;
-  border-radius: 20px;
+  border-radius: 10px;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .equipment-attach-btn:hover {
@@ -223,6 +223,205 @@
   font-size: 13px;
   font-weight: 700;
   margin-bottom: 10px;
+}
+
+/* ==========================================================================
+   Request Equipment Panel — inventory selector update
+   ========================================================================== */
+
+.equipment-attach-card {
+  background: #ffffff;
+  border: 1px solid #e2e8dc;
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.equipment-list-card {
+  background: #ffffff;
+  border: 1px solid #e2e8dc;
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.equipment-form-grid {
+  align-items: end;
+}
+
+.equipment-field {
+  min-width: 0;
+}
+
+.equipment-field span {
+  line-height: 1.25;
+}
+
+.equipment-input {
+  min-height: 38px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.equipment-input option {
+  font-size: 13px;
+}
+
+.equipment-checkbox-row {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #d8d8d8;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #444;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.equipment-checkbox-row:hover {
+  background: #f8fbf4;
+  border-color: #c8e6c9;
+}
+
+.equipment-checkbox-row input {
+  margin: 0;
+  accent-color: #5e9424;
+  cursor: pointer;
+}
+
+.equipment-checkbox-row span {
+  color: #444;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.equipment-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.equipment-attach-btn:disabled:hover {
+  background: #ffffff;
+  color: #5e9424;
+}
+
+.equipment-item {
+  border-color: #e2e8dc;
+  background: #ffffff;
+  border-radius: 10px;
+}
+
+.equipment-vehicle-group {
+  border-color: #e2e8dc;
+  background: #fafcf7;
+  border-radius: 10px;
+}
+
+.equipment-vehicle-title {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e6ecdf;
+}
+
+.equipment-item-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f3f5;
+  color: #555;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.equipment-item-note {
+  background: #f8fbf4;
+  border-color: #e2e8dc;
+}
+
+.equipment-detach-btn {
+  border-radius: 8px;
+}
+
+/* Длинный селектор оборудования */
+.equipment-field select.equipment-input {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Состояние загрузки */
+.equipment-input:disabled,
+.equipment-checkbox-row:has(input:disabled) {
+  background: #f4f4f4;
+  color: #777;
+  cursor: not-allowed;
+}
+
+/* Блок ошибки */
+.equipment-error {
+  border-radius: 10px;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .equipment-panel-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .equipment-refresh-btn {
+    width: 100%;
+    min-height: 38px;
+  }
+
+  .equipment-attach-card,
+  .equipment-list-card {
+    padding: 14px;
+  }
+
+  .equipment-form-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .equipment-attach-btn {
+    width: 100%;
+  }
+
+  .equipment-item {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .equipment-item-main {
+    width: 100%;
+  }
+
+  .equipment-item-meta {
+    gap: 6px;
+  }
+
+  .equipment-detach-btn {
+    width: 100%;
+  }
 }
 
 @media (max-width: 640px) {

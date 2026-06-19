@@ -12,6 +12,8 @@ import Trash from './components/Trash'
 import Warehouse from './components/Warehouse'
 import Settings from './components/Settings'
 import Prices from './components/Prices'
+import MyInventory from './components/MyInventory'
+import Inventory from './components/Inventory'
 
 const isTokenExpired = token => {
 	try {
@@ -87,6 +89,8 @@ export default function App() {
 							<Route path='/employees' element={<Employees />} />
 							<Route path='/settings' element={<Settings />} />
 							<Route path='/prices' element={<Prices />} />
+							<Route path='/my-inventory' element={<MyInventory />} />
+							<Route path='/inventory' element={<Inventory />} />
 
 							<Route path='*' element={<Navigate to='/requests' replace />} />
 						</Routes>

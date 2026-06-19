@@ -13,7 +13,14 @@ export default function Sidebar() {
 	const isManager = userRole === 'MANAGER'
 	const isTechSupport = userRole === 'TECH_SUPPORT'
 	const isTechnician = userRole === 'TECHNICIAN'
+	const isSeniorTechnician = userRole === 'SENIOR_TECHNICIAN'
 	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
+
+	const canViewFullInventory = [
+		'ADMIN',
+		'WAREHOUSE_MANAGER',
+		'SENIOR_TECHNICIAN',
+	].includes(userRole)
 
 	const handleLogout = () => {
 		localStorage.removeItem('access_token')
@@ -125,6 +132,26 @@ export default function Sidebar() {
 					>
 						<i className='fa-solid fa-warehouse'></i>
 						<span className='link-text'>Склад</span>
+					</NavLink>
+				)}
+
+				{isTechnician && (
+					<NavLink
+						to='/my-inventory'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
+					>
+						Мой инвентарь
+					</NavLink>
+				)}
+
+				{canViewFullInventory && (
+					<NavLink
+						to='/inventory'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
+					>
+						Инвентарь
 					</NavLink>
 				)}
 
