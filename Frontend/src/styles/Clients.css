@@ -31,6 +31,89 @@
   margin-bottom: 25px;
 }
 
+.clients-filters-bar {
+  margin: 6px 0 18px;
+}
+
+/* Выпадающий навигатор по клиентам */
+.client-picker {
+  position: relative;
+  flex: 1.6;
+  min-width: 220px;
+}
+
+/* Поле-автодополнение (например, фильтр по ответственному) */
+.filter-typeahead {
+  position: relative;
+}
+
+.client-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #d8e8c6;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+}
+
+.client-picker-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.client-picker-option:hover {
+  background: #f1f8e9;
+}
+
+.client-picker-option-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.client-picker-option-meta {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.client-picker-status {
+  font-weight: 600;
+}
+
+.client-picker-status.client-status-active {
+  color: #2e7d32;
+}
+
+.client-picker-status.client-status-debtor {
+  color: #b26a00;
+}
+
+.client-picker-status.client-status-blocked {
+  color: #c62828;
+}
+
+.client-picker-empty {
+  padding: 14px 12px;
+  font-size: 13px;
+  color: #9ca3af;
+  text-align: center;
+}
+
 .clients-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -555,13 +638,13 @@
 	gap: 8px;
 	margin-top: 10px;
 	padding-left: 22px;
-	border-left: 2px solid #d8e8c6;
+	border-left: 3px solid #8bbf5a;
 }
 
 .client-tree-children-list.root {
 	margin-top: 12px;
 	padding: 12px 0 0 22px;
-	border-left: 2px solid #d8e8c6;
+	border-left: 3px solid #8bbf5a;
 	background: transparent;
 	border-radius: 0;
 }
@@ -579,10 +662,18 @@
 	align-items: center;
 	gap: 16px;
 	padding: 12px 14px;
-	border: 1px solid #e5e7eb;
+	border: 1px solid #cfe3b5;
+	border-left: 4px solid #6fae3a;
 	border-radius: 10px;
-	background: #fbfdf8;
+	background: #eef6e2;
+	box-shadow: 0 1px 3px rgba(80, 120, 40, 0.08);
   overflow: visible;
+}
+
+.client-tree-row:hover {
+	background: #e6f1d6;
+	border-color: #b7d49b;
+	border-left-color: #5e9424;
 }
 
 .client-tree-row-left {
@@ -595,15 +686,15 @@
 .client-tree-branch-line {
 	width: 18px;
 	height: 2px;
-	background: #b7d49b;
+	background: #6fae3a;
 	flex: 0 0 auto;
 }
 
 .client-tree-dot {
-	width: 8px;
-	height: 8px;
+	width: 9px;
+	height: 9px;
 	border-radius: 999px;
-	background: #b7d49b;
+	background: #6fae3a;
 	flex: 0 0 auto;
 }
 

@@ -35,6 +35,21 @@ export default function Clients() {
 	const [clientGroupsTotal, setClientGroupsTotal] = useState(0)
 	const [clientGroupsPage, setClientGroupsPage] = useState(1)
 	const [clientGroupsPageSize, setClientGroupsPageSize] = useState(20)
+
+	// Фильтры вкладки клиентов (как в заявках, но адаптированы):
+	// статус клиента и ответственный. Они сужают список-навигатор.
+	const [clientFilters, setClientFilters] = useState({
+		status: '',
+		responsible: '',
+	})
+
+	// Выпадающий список-навигатор по всем клиентам (замена нерабочего поиска).
+	const [pickerQuery, setPickerQuery] = useState('')
+	const [isPickerOpen, setIsPickerOpen] = useState(false)
+
+	// Автодополнение фильтра по ответственному (ввод имени → список совпадений).
+	const [responsibleQuery, setResponsibleQuery] = useState('')
+	const [isResponsibleOpen, setIsResponsibleOpen] = useState(false)
 	const [expandedGroups, setExpandedGroups] = useState({})
 	const [expandedClientNodes, setExpandedClientNodes] = useState({})
 	const [loading, setLoading] = useState(true)
@@ -94,6 +109,101 @@ export default function Clients() {
 		return client?.responsible_manager_name || 'Не назначен'
 	}
 
+	// --- Фильтры клиентов + выпадающий навигатор ---
+
+	const handleClientFilterChange = e =>
+		setClientFilters(prev => ({ ...prev, [e.target.name]: e.target.value }))
+
+	const resetClientFilters = () => {
+		setClientFilters({ status: '', responsible: '' })
+		setPickerQuery('')
+		setIsPickerOpen(false)
+		setResponsibleQuery('')
+		setIsResponsibleOpen(false)
+	}
+
+	// Менеджеры, подходящие под введённый текст (для автодополнения).
+	const filteredResponsibleManagers = (responsibleManagers || []).filter(m => {
+		const q = responsibleQuery.trim().toLowerCase()
+
+		if (!q) return true
+
+		return [m.name, m.role]
+			.filter(Boolean)
+			.some(field => String(field).toLowerCase().includes(q))
+	})
+
+	const handleResponsibleQueryChange = e => {
+		const value = e.target.value
+
+		setResponsibleQuery(value)
+		setIsResponsibleOpen(true)
+
+		// Очистили поле — снимаем фильтр по ответственному.
+		if (!value.trim()) {
+			setClientFilters(prev => ({ ...prev, responsible: '' }))
+		}
+	}
+
+	const handlePickResponsible = manager => {
+		setClientFilters(prev => ({ ...prev, responsible: String(manager.id) }))
+		setResponsibleQuery(manager.name)
+		setIsResponsibleOpen(false)
+	}
+
+	const getPickerClientName = client => {
+		const company = client.company_name
+		const person = client.name || client.client_name
+
+		if (company && person && company !== person) {
+			return `${company} · ${person}`
+		}
+
+		return company || person || `Клиент #${client.id}`
+	}
+
+	// Полный список клиентов (из /clients), отфильтрованный по статусу,
+	// ответственному и тексту — это опции выпадающего навигатора.
+	const filteredPickerClients = (clients || [])
+		.filter(c => {
+			if (clientFilters.status && c.status !== clientFilters.status) {
+				return false
+			}
+
+			if (
+				clientFilters.responsible &&
+				Number(c.responsible_manager_id) !== Number(clientFilters.responsible)
+			) {
+				return false
+			}
+
+			const q = pickerQuery.trim().toLowerCase()
+
+			if (!q) return true
+
+			return [c.name, c.company_name, c.client_name, c.phone, c.email]
+				.filter(Boolean)
+				.some(field => String(field).toLowerCase().includes(q))
+		})
+		.slice(0, 50)
+
+	// Переход к клиенту: используем существующий механизм навигации
+	// (прокрутка к нужной группе/строке и подсветка).
+	const handlePickClient = client => {
+		if (!client) return
+
+		setIsPickerOpen(false)
+		setPickerQuery(getPickerClientName(client))
+
+		setSelectedClient(null)
+		setSelectedRequestId(null)
+		setActiveDropdown(null)
+		setEditingVehicle(null)
+		setPendingOpenClientId(null)
+		setPendingHighlightVehicleId(null)
+		setPendingListClientId(Number(client.id))
+	}
+
 	const renderClientBadges = client => {
 		if (!client) return null
 
@@ -136,9 +246,13 @@ export default function Clients() {
 	const selectedClientRef = useRef(null)
 	const clientGroupsPageRef = useRef(clientGroupsPage)
 	const clientGroupsPageSizeRef = useRef(clientGroupsPageSize)
+	// Оптимизация пагинации: отмена устаревших запросов и защита от гонок.
+	const groupsAbortRef = useRef(null)
+	const groupsRequestSeqRef = useRef(0)
 
 	useEffect(() => {
 		fetchTechnicians()
+		fetchClients() // полный список клиентов для выпадающего навигатора
 
 		if (['ADMIN', 'ROP'].includes(userRole)) {
 			fetchResponsibleManagers()
@@ -187,7 +301,11 @@ export default function Clients() {
 	}, [selectedClient])
 
 	useEffect(() => {
-		const handleClickOutside = () => setActiveDropdown(null)
+		const handleClickOutside = () => {
+			setActiveDropdown(null)
+			setIsPickerOpen(false)
+			setIsResponsibleOpen(false)
+		}
 		document.addEventListener('click', handleClickOutside)
 		return () => document.removeEventListener('click', handleClickOutside)
 	}, [])
@@ -468,6 +586,18 @@ export default function Clients() {
 		page = clientGroupsPageRef.current,
 		pageSize = clientGroupsPageSizeRef.current,
 	} = {}) => {
+		// Отменяем предыдущий незавершённый запрос групп —
+		// при быстрой смене страниц/поиске не тратим сеть и не ловим гонки.
+		if (groupsAbortRef.current) {
+			groupsAbortRef.current.abort()
+		}
+
+		const controller = new AbortController()
+		groupsAbortRef.current = controller
+
+		const requestSeq = ++groupsRequestSeqRef.current
+		const isLatestRequest = () => requestSeq === groupsRequestSeqRef.current
+
 		if (!silent) {
 			setLoading(true)
 			setError('')
@@ -483,14 +613,21 @@ export default function Clients() {
 				`${API_BASE_URL}/clients/grouped?${params}`,
 				{
 					headers: getAuthHeaders(),
+					signal: controller.signal,
 				},
 			)
+
+			// Ответ устарел (пришёл новый запрос) — игнорируем результат.
+			if (!isLatestRequest()) return
 
 			if (!response.ok) {
 				throw new Error('Не удалось загрузить группы клиентов')
 			}
 
 			const data = await response.json()
+
+			// Повторная проверка: пока читали тело ответа, мог стартовать новый запрос.
+			if (!isLatestRequest()) return
 
 			const groups = Array.isArray(data)
 				? data
@@ -567,13 +704,22 @@ export default function Clients() {
 				setExpandedGroups(initialExpanded)
 			}
 		} catch (err) {
-			if (!silent) {
+			// Запрос отменён более новым — это не ошибка, тихо выходим.
+			if (err.name === 'AbortError') {
+				return
+			}
+
+			if (!silent && isLatestRequest()) {
 				setError(err.message)
 			}
 
 			console.error('Ошибка загрузки групп клиентов:', err)
 		} finally {
-			if (!silent) {
+			if (groupsAbortRef.current === controller) {
+				groupsAbortRef.current = null
+			}
+
+			if (!silent && isLatestRequest()) {
 				setLoading(false)
 			}
 		}
@@ -1744,6 +1890,127 @@ export default function Clients() {
 								</button>
 							)}
 						</div>
+					</div>
+
+					<div className='filters-bar clients-filters-bar'>
+						<div
+							className='filter-group filter-main client-picker'
+							onClick={e => e.stopPropagation()}
+						>
+							<label>Найти клиента</label>
+							<input
+								className={`filter-input ${pickerQuery ? 'filter-active' : ''}`}
+								type='text'
+								placeholder='ФИО, компания, телефон, email...'
+								value={pickerQuery}
+								onFocus={() => setIsPickerOpen(true)}
+								onChange={e => {
+									setPickerQuery(e.target.value)
+									setIsPickerOpen(true)
+								}}
+							/>
+
+							{isPickerOpen && (
+								<div className='client-picker-dropdown'>
+									{filteredPickerClients.length === 0 ? (
+										<div className='client-picker-empty'>
+											Ничего не найдено
+										</div>
+									) : (
+										filteredPickerClients.map(c => (
+											<button
+												key={c.id}
+												type='button'
+												className='client-picker-option'
+												onClick={() => handlePickClient(c)}
+											>
+												<span className='client-picker-option-name'>
+													{getPickerClientName(c)}
+												</span>
+												<span className='client-picker-option-meta'>
+													<span
+														className={`client-picker-status client-status-${String(
+															c.status || 'ACTIVE',
+														).toLowerCase()}`}
+													>
+														{getClientStatusLabel(c.status || 'ACTIVE')}
+													</span>
+													{c.phone ? ` · ${c.phone}` : ''}
+												</span>
+											</button>
+										))
+									)}
+								</div>
+							)}
+						</div>
+
+						<div className='filter-group'>
+							<label>Статус клиента</label>
+							<select
+								className={`filter-select ${
+									clientFilters.status ? 'filter-active' : ''
+								}`}
+								name='status'
+								value={clientFilters.status}
+								onChange={handleClientFilterChange}
+							>
+								<option value=''>Все статусы</option>
+								<option value='ACTIVE'>Активный</option>
+								<option value='DEBTOR'>Должник</option>
+								<option value='BLOCKED'>Заблокирован</option>
+							</select>
+						</div>
+
+						{['ADMIN', 'ROP'].includes(userRole) && (
+							<div
+								className='filter-group filter-typeahead'
+								onClick={e => e.stopPropagation()}
+							>
+								<label>Ответственный</label>
+								<input
+									className={`filter-input ${
+										clientFilters.responsible ? 'filter-active' : ''
+									}`}
+									type='text'
+									placeholder='Введите имя...'
+									value={responsibleQuery}
+									onFocus={() => setIsResponsibleOpen(true)}
+									onChange={handleResponsibleQueryChange}
+								/>
+
+								{isResponsibleOpen && (
+									<div className='client-picker-dropdown'>
+										{filteredResponsibleManagers.length === 0 ? (
+											<div className='client-picker-empty'>
+												Ничего не найдено
+											</div>
+										) : (
+											filteredResponsibleManagers.map(manager => (
+												<button
+													key={manager.id}
+													type='button'
+													className='client-picker-option'
+													onClick={() => handlePickResponsible(manager)}
+												>
+													<span className='client-picker-option-name'>
+														{manager.name}
+													</span>
+													{manager.role && (
+														<span className='client-picker-option-meta'>
+															{manager.role}
+														</span>
+													)}
+												</button>
+											))
+										)}
+									</div>
+								)}
+							</div>
+						)}
+
+						<button className='btn-reset' onClick={resetClientFilters}>
+							Сбросить
+						</button>
 					</div>
 
 					{loading ? (
