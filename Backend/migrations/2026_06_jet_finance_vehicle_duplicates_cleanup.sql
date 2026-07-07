@@ -5,7 +5,7 @@
 --   - Физически машины НЕ удаляются.
 --   - Ставится is_deleted = 1.
 --   - Старые заявки и оборудование не трогаются.
---   - Скрипт рассчитан на JET-FINANCE client_id = 489.
+--   - Скрипт рассчитан на JET-FINANCE client_id = 494.
 --   - Скрипт должен удалить 2424 дубля.
 -- ============================================================
 
@@ -14,7 +14,7 @@
 -- 0. Настройки
 -- ============================================================
 
-SET @target_client_id = 489;
+SET @target_client_id = 494;
 SET @target_company_name = 'JET-FINANCE';
 
 -- Ожидаемое количество кандидатов на удаление.
@@ -107,10 +107,10 @@ WITH normalized_vehicles AS (
         LOWER(CONCAT_WS(' ', v.brand, v.model, v.plate_number)) AS vehicle_text
 
     FROM vehicles v
-    INNER JOIN tmp_cleanup_target_client tc ON tc.client_id = v.client_id
     WHERE v.is_deleted = 0
-      AND v.plate_number IS NOT NULL
-      AND TRIM(v.plate_number) != ''
+        AND v.client_id = @target_client_id
+        AND v.plate_number IS NOT NULL
+        AND TRIM(v.plate_number) != ''
 ),
 
 vehicle_links AS (
