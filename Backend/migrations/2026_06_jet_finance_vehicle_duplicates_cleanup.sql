@@ -19,7 +19,7 @@ SET @target_company_name = 'JET-FINANCE';
 
 -- Ожидаемое количество кандидатов на удаление.
 -- Если на сервере число отличается, скрипт НЕ выполнит UPDATE.
-SET @expected_candidates_to_delete = 2424;
+SET @expected_candidates_to_delete = 2425;
 
 -- По локальной проверке заблокированных дублей быть не должно.
 SET @expected_blocked_by_requests_or_equipment = 0;
@@ -216,11 +216,45 @@ FROM tmp_cleanup_jet_ranked;
 -- 4. Формирование списка машин на soft delete
 -- ============================================================
 
+DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_jet_keepers;
+
+CREATE TEMPORARY TABLE tmp_cleanup_jet_keepers AS
+SELECT
+    id AS keep_vehicle_id,
+    plate_key,
+    brand AS keep_brand,
+    model AS keep_model,
+    plate_number AS keep_plate_number,
+    vin AS keep_vin
+FROM tmp_cleanup_jet_ranked
+WHERE keep_rank = 1;
+
+
+DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_jet_delete_candidates_raw;
+
+CREATE TEMPORARY TABLE tmp_cleanup_jet_delete_candidates_raw AS
+SELECT
+    id AS vehicle_id,
+    client_id,
+    plate_key,
+    brand,
+    model,
+    plate_number,
+    vin,
+    request_count,
+    equipment_link_count,
+    bad_label_score
+FROM tmp_cleanup_jet_ranked
+WHERE keep_rank > 1
+  AND request_count = 0
+  AND equipment_link_count = 0;
+
+
 DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_jet_delete_candidates;
 
 CREATE TEMPORARY TABLE tmp_cleanup_jet_delete_candidates AS
 SELECT
-    r.id AS vehicle_id,
+    r.vehicle_id,
     r.client_id,
     r.plate_key,
     r.brand,
@@ -231,19 +265,15 @@ SELECT
     r.equipment_link_count,
     r.bad_label_score,
 
-    k.id AS keep_vehicle_id,
-    k.brand AS keep_brand,
-    k.model AS keep_model,
-    k.plate_number AS keep_plate_number,
-    k.vin AS keep_vin
+    k.keep_vehicle_id,
+    k.keep_brand,
+    k.keep_model,
+    k.keep_plate_number,
+    k.keep_vin
 
-FROM tmp_cleanup_jet_ranked r
-INNER JOIN tmp_cleanup_jet_ranked k
-    ON k.plate_key = r.plate_key
-   AND k.keep_rank = 1
-WHERE r.keep_rank > 1
-  AND r.request_count = 0
-  AND r.equipment_link_count = 0;
+FROM tmp_cleanup_jet_delete_candidates_raw r
+INNER JOIN tmp_cleanup_jet_keepers k
+    ON k.plate_key = r.plate_key;
 
 
 -- ============================================================
@@ -450,6 +480,8 @@ LIMIT 50;
 
 DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_guard;
 DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_jet_delete_candidates;
+DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_jet_delete_candidates_raw;
+DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_jet_keepers;
 DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_jet_ranked;
 DROP TEMPORARY TABLE IF EXISTS tmp_cleanup_target_client;
 
