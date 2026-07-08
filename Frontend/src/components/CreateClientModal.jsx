@@ -203,6 +203,7 @@ export default function CreateClientModal({
 		type: 'TOO',
 		name: '',
 		company_name: '',
+		bin_iin: '',
 		phone: '',
 		email: '',
 
@@ -274,6 +275,7 @@ export default function CreateClientModal({
 				type: editClient.type || 'TOO',
 				name: editClient.name || '',
 				company_name: editClient.company_name || '',
+				bin_iin: editClient.bin_iin || '',
 				phone: editClient.phone || '',
 				email: editClient.email || '',
 
@@ -288,6 +290,7 @@ export default function CreateClientModal({
 			setFormData({
 				type: 'TOO',
 				name: '',
+				bin_iin: '',
 				company_name: '',
 				phone: '',
 				email: '',
@@ -315,6 +318,12 @@ export default function CreateClientModal({
 		}))
 	}
 
+	const isIndividualClient = formData.type === 'INDIVIDUAL'
+
+	const getIdentifierLabel = () => {
+		return isIndividualClient ? 'ИИН' : 'БИН'
+	}
+
 	const getClientLabel = client => {
 		if (!client) return ''
 
@@ -333,6 +342,7 @@ export default function CreateClientModal({
 		return [
 			client.company_name,
 			client.name,
+			client.bin_iin,
 			client.phone,
 			client.email,
 			client.source_client_name,
@@ -383,6 +393,7 @@ export default function CreateClientModal({
 			type: 'TOO',
 			name: '',
 			company_name: '',
+			bin_iin: '',
 			phone: '',
 			email: '',
 
@@ -407,6 +418,11 @@ export default function CreateClientModal({
 
 		if (!formData.name.trim()) {
 			setError('ФИО представителя обязательно')
+			return
+		}
+
+		if (!isIndividualClient && !formData.bin_iin.trim()) {
+			setError('Для ТОО и ИП поле БИН обязательно')
 			return
 		}
 
@@ -439,6 +455,7 @@ export default function CreateClientModal({
 			const payload = {
 				type: formData.type,
 				name: formData.name.trim(),
+				bin_iin: formData.bin_iin.trim() || null,
 				company_name:
 					formData.type === 'INDIVIDUAL'
 						? null
@@ -554,6 +571,27 @@ export default function CreateClientModal({
 										/>
 									</label>
 								)}
+
+								<label className='create-client-field'>
+									<span
+										className={`create-client-label ${!isIndividualClient ? 'required' : ''}`}
+									>
+										{getIdentifierLabel()}
+									</span>
+
+									<input
+										type='text'
+										name='bin_iin'
+										value={formData.bin_iin}
+										onChange={handleChange}
+										className='create-client-input'
+										placeholder={
+											isIndividualClient
+												? 'Введите ИИН, если есть'
+												: 'Введите БИН'
+										}
+									/>
+								</label>
 							</div>
 
 							{!isEditMode && (

@@ -250,6 +250,7 @@ export default function CreateRequestModal({
 		client_id: '',
 		client_type: 'Физ. лицо',
 		client_name: '',
+		bin_iin: '',
 		phone: '',
 		email: '',
 		city: '',
@@ -280,6 +281,7 @@ export default function CreateRequestModal({
 		client_id: '',
 		client_type: 'Физ. лицо',
 		client_name: '',
+		bin_iin: '',
 		phone: '',
 		email: '',
 		city: '',
@@ -501,6 +503,7 @@ export default function CreateRequestModal({
 		return [
 			client.company_name,
 			client.name,
+			client.bin_iin,
 			client.phone,
 			client.email,
 			client.source_client_name,
@@ -572,6 +575,7 @@ export default function CreateRequestModal({
 				client_id: client.id,
 				client_type: mapTypeToUI(client.type || client.client_type),
 				client_name: client.name || '',
+				bin_iin: client.bin_iin || '',
 				phone: client.phone || '',
 				email: client.email || '',
 				company_name: client.company_name || '',
@@ -581,7 +585,7 @@ export default function CreateRequestModal({
 			setRequestVehicles([createEmptyRequestVehicle()])
 
 			setMissingFields(prev =>
-				prev.filter(f => !['client_name', 'phone'].includes(f)),
+				prev.filter(f => !['client_name', 'phone', 'bin_iin'].includes(f)),
 			)
 		} else {
 			setFormData(prev => ({
@@ -589,6 +593,7 @@ export default function CreateRequestModal({
 				client_id: '',
 				client_type: 'Физ. лицо',
 				client_name: '',
+				bin_iin: '',
 				phone: '',
 				email: '',
 				company_name: '',
@@ -838,6 +843,14 @@ export default function CreateRequestModal({
 
 		if (
 			clientKind === 'new' &&
+			(formData.client_type === 'ТОО' || formData.client_type === 'ИП') &&
+			!formData.bin_iin.trim()
+		) {
+			required.push('bin_iin')
+		}
+
+		if (
+			clientKind === 'new' &&
 			formData.is_subclient &&
 			!formData.parent_client_id
 		) {
@@ -1069,6 +1082,7 @@ export default function CreateRequestModal({
 							formData.client_type === 'Физ. лицо'
 								? null
 								: formData.company_name.trim(),
+						bin_iin: formData.bin_iin.trim() || null,
 						phone: formData.phone.trim(),
 						email: formData.email.trim() || null,
 
@@ -1108,6 +1122,7 @@ export default function CreateRequestModal({
 							formData.client_type === 'Физ. лицо'
 								? null
 								: formData.company_name.trim(),
+						bin_iin: formData.bin_iin.trim() || null,
 						phone: formData.phone.trim(),
 						email: formData.email.trim() || null,
 						source_system: formData.is_subclient ? 'CRM' : null,
@@ -1248,6 +1263,12 @@ export default function CreateRequestModal({
 		return missingFields.includes(fieldName)
 			? 'request-modal-input request-field-error'
 			: 'request-modal-input'
+	}
+
+	const isIndividualClient = formData.client_type === 'Физ. лицо'
+
+	const getClientIdentifierLabel = () => {
+		return isIndividualClient ? 'ИИН' : 'БИН'
 	}
 
 	const getWorkTypeForApi = () => {
@@ -1654,6 +1675,28 @@ export default function CreateRequestModal({
 											<option>ИП</option>
 											<option>ТОО</option>
 										</select>
+									</label>
+
+									<label className='request-modal-field'>
+										<span
+											className={`request-modal-label ${!isIndividualClient ? 'required' : ''}`}
+										>
+											{getClientIdentifierLabel()}
+										</span>
+
+										<input
+											className={fieldClass('bin_iin')}
+											type='text'
+											name='bin_iin'
+											value={formData.bin_iin}
+											onChange={handleChange}
+											readOnly={isClientLocked}
+											placeholder={
+												isIndividualClient
+													? 'Введите ИИН, если есть'
+													: 'Введите БИН'
+											}
+										/>
 									</label>
 
 									{(formData.client_type === 'ТОО' ||

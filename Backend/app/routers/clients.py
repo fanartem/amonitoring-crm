@@ -85,6 +85,33 @@ def normalize_optional_str(value):
     value = str(value).strip()
     return value or None
 
+def normalize_client_bin_iin(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    value = str(value).strip()
+    return value or None
+
+
+def is_individual_client_type(client_type: str | None) -> bool:
+    return str(client_type or "").strip().upper() == "INDIVIDUAL"
+
+
+def validate_client_bin_iin(client_type: str | None, bin_iin: str | None):
+    """
+    Для ТОО/ИП БИН обязателен.
+    Для физлиц ИИН необязателен.
+    """
+    normalized_bin_iin = normalize_client_bin_iin(bin_iin)
+
+    if not is_individual_client_type(client_type) and not normalized_bin_iin:
+        raise HTTPException(
+            status_code=400,
+            detail="Для ТОО и ИП поле БИН обязательно"
+        )
+
+    return normalized_bin_iin
+
 def get_client_status(value: str | None) -> str:
     status = str(value or "ACTIVE").strip().upper()
 
@@ -470,6 +497,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
             SELECT 
                 c.id,
                 c.type,
+                c.bin_iin,
                 c.name,
                 c.company_name,
                 c.phone,
@@ -508,6 +536,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
             GROUP BY 
                 c.id,
                 c.type,
+                c.bin_iin,
                 c.name,
                 c.company_name,
                 c.phone,
@@ -579,9 +608,12 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
             responsible_manager_id = get_default_responsible_manager_id(data, current_user)
             ensure_responsible_user_allowed(cursor, responsible_manager_id)
 
+            client_bin_iin = validate_client_bin_iin(data.type, getattr(data, "bin_iin", None))
+
             sql = """
                 INSERT INTO clients (
                     type,
+                    bin_iin,
                     name,
                     company_name,
                     phone,
@@ -596,7 +628,7 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                     responsible_changed_at,
                     responsible_changed_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
             """
 
             cursor.execute(
@@ -604,6 +636,7 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                 (
                     (
                         data.type,
+                        client_bin_iin,
                         data.name,
                         data.company_name,
                         data.phone,
@@ -661,6 +694,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
             SELECT 
                 c.id,
                 c.type,
+                c.bin_iin,
                 c.name,
                 c.company_name,
                 c.phone,
@@ -690,6 +724,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
             GROUP BY 
                 c.id,
                 c.type,
+                c.bin_iin,
                 c.name,
                 c.company_name,
                 c.phone,
@@ -734,7 +769,6 @@ def collect_client_ids_from_group(group: dict) -> list[int]:
         walk(client)
 
     return ids
-
 
 def apply_counts_to_group(group: dict, request_counts: dict[int, int], vehicle_counts: dict[int, int]):
     def walk(client: dict | None):
@@ -785,6 +819,7 @@ def get_clients_grouped(
                 SELECT
                     c.id,
                     c.type,
+                    c.bin_iin,
                     c.name,
                     c.company_name,
                     c.phone,
@@ -1035,6 +1070,7 @@ def get_client_grouped_position(
                 SELECT
                     c.id,
                     c.type,
+                    c.bin_iin,
                     c.name,
                     c.company_name,
                     c.phone,
@@ -1239,6 +1275,7 @@ def get_client_by_id(
                 SELECT
                     c.id,
                     c.type,
+                    c.bin_iin,
                     c.name,
                     c.company_name,
                     c.phone,
@@ -1357,7 +1394,7 @@ def update_client(
             
             cursor.execute(
                 """
-                SELECT type, name, company_name, phone
+                SELECT type, name, company_name, phone, bin_iin
                 FROM clients
                 WHERE id = %s
                 """,
@@ -1372,6 +1409,11 @@ def update_client(
                 current_client_data["company_name"]
             )
             next_phone = update_data.get("phone", current_client_data["phone"])
+            next_bin_iin = update_data.get("bin_iin", current_client_data.get("bin_iin"))
+            next_bin_iin = validate_client_bin_iin(next_type, next_bin_iin)
+
+            if "bin_iin" in update_data:
+                update_data["bin_iin"] = next_bin_iin
 
             duplicate = find_duplicate_client(
                 cursor=cursor,
@@ -1391,6 +1433,7 @@ def update_client(
                 "company_name",
                 "phone",
                 "email",
+                "bin_iin",
                 "source_system",
                 "source_client_name",
                 "source_parent_client_name",

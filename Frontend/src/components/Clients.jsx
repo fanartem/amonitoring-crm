@@ -217,7 +217,14 @@ export default function Clients() {
 
 			if (!q) return true
 
-			return [c.name, c.company_name, c.client_name, c.phone, c.email]
+			return [
+				c.name,
+				c.company_name,
+				c.client_name,
+				c.bin_iin,
+				c.phone,
+				c.email,
+			]
 				.filter(Boolean)
 				.some(field => String(field).toLowerCase().includes(q))
 		})
@@ -550,6 +557,7 @@ export default function Clients() {
 			id: client.id,
 			name: client.name,
 			company_name: client.company_name,
+			bin_iin: client.bin_iin,
 			phone: client.phone,
 			email: client.email,
 			status: client.status,
@@ -870,6 +878,16 @@ export default function Clients() {
 
 	const getClientTypeLabel = type => {
 		return clientTypeLabels[type] || type || '—'
+	}
+
+	const getClientIdentifierLabel = client => {
+		const type = client?.client_type || client?.type
+
+		return type === 'INDIVIDUAL' ? 'ИИН' : 'БИН'
+	}
+
+	const getClientIdentifierValue = client => {
+		return client?.bin_iin || '—'
 	}
 
 	const getClientDisplayName = client => {
@@ -2529,6 +2547,14 @@ export default function Clients() {
 							</span>
 						</div>
 						<div className='info-row'>
+							<span className='info-key'>
+								{getClientIdentifierLabel(selectedClient)}
+							</span>
+							<span className='info-val'>
+								{getClientIdentifierValue(selectedClient)}
+							</span>
+						</div>
+						<div className='info-row'>
 							<span className='info-key'>Телефон</span>
 							<span className='info-val'>{selectedClient.phone}</span>
 						</div>
@@ -2842,7 +2868,8 @@ export default function Clients() {
 																)}
 															</strong>
 															<span>
-																Комментарий: {vehicle.delete_reason || 'Причина не указана'}
+																Комментарий:{' '}
+																{vehicle.delete_reason || 'Причина не указана'}
 															</span>
 														</div>
 
@@ -3426,16 +3453,16 @@ export default function Clients() {
 													</div>
 
 													<div className='vehicle-transfer-history-meta'>
-														<span>
-															Перенес: {row.created_by_name || '—'}
-														</span>
+														<span>Перенес: {row.created_by_name || '—'}</span>
 														<span>
 															<br />
 															{row.created_at
 																? new Date(row.created_at).toLocaleString(
 																		'ru-RU',
 																	)
-																: 'Дата не указана'}<br /><br />
+																: 'Дата не указана'}
+															<br />
+															<br />
 														</span>
 													</div>
 												</div>

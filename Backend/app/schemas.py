@@ -50,6 +50,7 @@ class ClientCreate(BaseModel):
     type: str
     name: str
     company_name: str | None = None
+    bin_iin: str | None = None
     phone: str
     email: str | None = None
 
@@ -61,10 +62,12 @@ class ClientCreate(BaseModel):
     source_parent_client_name: str | None = None
     source_inn: str | None = None
 
+
 class ClientUpdate(BaseModel):
     type: Optional[str] = None
     name: Optional[str] = None
     company_name: Optional[str] = None
+    bin_iin: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
 
