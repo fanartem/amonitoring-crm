@@ -63,6 +63,7 @@ export default function Clients() {
 	const [vehiclesPageSize, setVehiclesPageSize] = useState(20)
 	const [vehiclesTotal, setVehiclesTotal] = useState(0)
 	const [technicians, setTechnicians] = useState([])
+	const [techniciansLookup, setTechniciansLookup] = useState([])
 	const [vehicleEquipmentMap, setVehicleEquipmentMap] = useState({})
 
 	const [responsibleManagers, setResponsibleManagers] = useState([])
@@ -295,6 +296,7 @@ export default function Clients() {
 
 	useEffect(() => {
 		fetchTechnicians()
+		fetchTechniciansLookup()
 		fetchClients() // полный список клиентов для выпадающего навигатора
 
 		if (['ADMIN', 'ROP'].includes(userRole)) {
@@ -846,6 +848,18 @@ export default function Clients() {
 		}
 	}
 
+	const fetchTechniciansLookup = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/users/technicians/lookup`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) setTechniciansLookup(await res.json())
+		} catch (err) {
+			console.error(err)
+		}
+	}
+
 	const fetchResponsibleManagers = async () => {
 		try {
 			const res = await fetch(`${API_BASE_URL}/users/responsible-managers`, {
@@ -866,8 +880,16 @@ export default function Clients() {
 
 	const getTechName = techId => {
 		if (!techId) return null
-		const tech = technicians.find(t => t.id === techId)
-		return tech ? tech.name : `ID: ${techId}`
+
+		const tech = techniciansLookup.find(t => Number(t.id) === Number(techId))
+
+		if (!tech) return `ID: ${techId}`
+
+		if (tech.deleted_at || tech.is_active === 0 || tech.is_approved === 0) {
+			return `${tech.name} (удалён)`
+		}
+
+		return tech.name
 	}
 
 	const clientTypeLabels = {
@@ -3046,7 +3068,6 @@ export default function Clients() {
 											{req.visit_type === 'ON_SITE' ? (
 												<>
 													Выезд к клиенту
-													{/* --- НОВОЕ: Вывод адреса при выезде --- */}
 													{req.address && (
 														<div
 															style={{

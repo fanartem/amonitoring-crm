@@ -90,6 +90,7 @@ export default function RequestDetailModal({
 	const [history, setHistory] = useState([])
 	const [newComment, setNewComment] = useState('')
 	const [technicians, setTechnicians] = useState([])
+	const [techniciansLookup, setTechniciansLookup] = useState([])
 	const [selectedTech, setSelectedTech] = useState('')
 	const [techSearchTerm, setTechSearchTerm] = useState('')
 	const [isTechDropdownOpen, setTechDropdownOpen] = useState(false)
@@ -145,6 +146,7 @@ export default function RequestDetailModal({
 			fetchRequestDetails()
 			fetchComments()
 			fetchTechnicians()
+			fetchTechniciansLookup()
 		}
 	}, [isOpen, requestId, initialTab, userRole])
 
@@ -221,6 +223,18 @@ export default function RequestDetailModal({
 				const data = await res.json()
 				setTechnicians(data)
 			}
+		} catch (err) {
+			console.error(err)
+		}
+	}
+
+	const fetchTechniciansLookup = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/users/technicians/lookup`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) setTechniciansLookup(await res.json())
 		} catch (err) {
 			console.error(err)
 		}
@@ -402,11 +416,10 @@ export default function RequestDetailModal({
 		const id = parseInt(strVal, 10)
 		if (isNaN(id)) return strVal
 
-		const tech = technicians.find(t => t.id === id)
+		const tech = techniciansLookup.find(t => t.id === id)
 		return tech ? tech.name : `Сотрудник ID: ${id}`
 	}
 
-	// === НОВЫЙ УМНЫЙ ПЕРЕВОДЧИК ИСТОРИИ ===
 	const renderHistoryMessage = h => {
 		const extractId = str => {
 			if (!str) return null

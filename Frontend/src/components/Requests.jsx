@@ -54,6 +54,7 @@ export default function Requests() {
 	const [requests, setRequests] = useState([])
 	const [filteredRequests, setFilteredRequests] = useState([])
 	const [technicians, setTechnicians] = useState([])
+	const [techniciansLookup, setTechniciansLookup] = useState([])
 	const [cities, setCities] = useState([])
 
 	const [isCreateModalOpen, setCreateModalOpen] = useState(false)
@@ -110,6 +111,7 @@ export default function Requests() {
 		fetchRequests({ initial: true })
 		fetchCities()
 		fetchTechnicians()
+		fetchTechniciansLookup()
 	}, [])
 
 	useEffect(() => {
@@ -245,6 +247,18 @@ export default function Requests() {
 		}
 	}
 
+	const fetchTechniciansLookup = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/users/technicians/lookup`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (res.ok) setTechniciansLookup(await res.json())
+		} catch (err) {
+			console.error(err)
+		}
+	}
+
 	const fetchCities = async () => {
 		try {
 			const res = await fetch(`${API_BASE_URL}/cities`)
@@ -260,8 +274,16 @@ export default function Requests() {
 
 	const getTechName = techId => {
 		if (!techId) return null
-		const tech = technicians.find(t => t.id === techId)
-		return tech ? tech.name : `ID: ${techId}`
+
+		const tech = techniciansLookup.find(t => Number(t.id) === Number(techId))
+
+		if (!tech) return `ID: ${techId}`
+
+		if (tech.deleted_at || tech.is_active === 0 || tech.is_approved === 0) {
+			return `${tech.name} (удалён)`
+		}
+
+		return tech.name
 	}
 
 	const clientTypeLabels = {
