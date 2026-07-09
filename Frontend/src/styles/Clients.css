@@ -1160,6 +1160,253 @@
 	border-color: #b71c1c;
 }
 
+/* --- Client hierarchy visual improvements --- */
+
+.client-card-parent {
+	border-color: #cfe3b5;
+	border-left: 5px solid #6fae3a;
+	background: linear-gradient(90deg, #f7fbf1 0%, #ffffff 42%);
+}
+
+.client-card-parent:hover {
+	border-color: #abc98d;
+	box-shadow: 0 6px 16px rgba(94, 148, 36, 0.1);
+}
+
+.client-card-expanded {
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.08);
+}
+
+.client-card-standalone {
+	border-left: 5px solid transparent;
+}
+
+.client-card-title-text {
+	padding-right: 10px;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.client-hierarchy-badge {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	white-space: nowrap;
+	border-radius: 999px;
+	padding: 4px 9px;
+	font-size: 11px;
+	font-weight: 800;
+	line-height: 1;
+}
+
+.client-hierarchy-badge.parent {
+	background: #e8f3d8;
+	color: #3f7b18;
+	border: 1px solid #c7e3aa;
+}
+
+.client-hierarchy-badge.child {
+	background: #f3f4f6;
+	color: #4b5563;
+	border: 1px solid #e5e7eb;
+}
+
+.client-children-stat {
+	display: inline-flex;
+	align-items: center;
+}
+
+.client-children-count-badge {
+	margin-left: 8px;
+	background: #e8f3d8 !important;
+	color: #3f7b18 !important;
+	border: 1px solid #c7e3aa;
+}
+
+.client-tree-row-wrapper-nested {
+	position: relative;
+}
+
+.client-tree-row-wrapper-nested::before {
+	content: '';
+	position: absolute;
+	left: -24px;
+	top: 0;
+	bottom: -8px;
+	width: 1px;
+	border-left: 1px dashed #b6d598;
+}
+
+.client-tree-row-wrapper-nested:last-child::before {
+	bottom: 50%;
+}
+
+.client-tree-row {
+	position: relative;
+}
+
+.client-tree-row.is-leaf {
+	background: #ffffff;
+	border-color: #e5e7eb;
+	border-left-color: #b6d598;
+	box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.client-tree-row.is-leaf:hover {
+	background: #fafafa;
+	border-color: #d1d5db;
+	border-left-color: #8bbf5a;
+}
+
+.client-tree-row.has-children {
+	background: #f4faec;
+	border-color: #cfe3b5;
+	border-left-color: #5e9424;
+}
+
+.client-tree-row.has-children:hover {
+	background: #edf6e2;
+	border-color: #b7d49b;
+}
+
+.client-tree-row-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.client-tree-row-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.client-tree-row.is-leaf .client-tree-dot {
+	background: #c4d7b2;
+}
+
+.client-tree-row.has-children .client-tree-dot,
+.client-tree-row.has-children .client-tree-branch-line {
+	background: #5e9424;
+}
+
+.client-level-2 .client-tree-row {
+	margin-left: 8px;
+}
+
+.client-level-3 .client-tree-row {
+	margin-left: 16px;
+}
+
+.client-level-4 .client-tree-row {
+	margin-left: 24px;
+}
+
+/* --- Stronger visual hierarchy for client groups --- */
+
+.client-group-block {
+	border-radius: 14px;
+	overflow: visible;
+}
+
+.client-group-header.client-group-parent {
+	border-left: 6px solid #5e9424;
+	background: linear-gradient(90deg, #edf8e4 0%, #f7fbf1 38%, #ffffff 100%);
+	border-bottom: 1px solid #d9ebc7;
+}
+
+.client-group-header.client-group-parent:hover {
+	background: linear-gradient(90deg, #e4f4d7 0%, #f3faec 42%, #ffffff 100%);
+}
+
+.client-group-header.client-group-expanded {
+	box-shadow: inset 0 0 0 1px rgba(94, 148, 36, 0.18);
+}
+
+.client-group-header.client-group-standalone {
+	border-left: 6px solid transparent;
+	background: #ffffff;
+}
+
+.client-group-title-with-badge {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.client-group-parent .client-group-title {
+	color: #163b05;
+}
+
+.client-group-parent .client-group-subtitle {
+	color: #4b6b32;
+	font-weight: 500;
+}
+
+.client-group-parent .client-group-arrow {
+	color: #2e5902;
+	font-weight: 800;
+}
+
+/* Контейнер открытых подклиентов */
+.client-group-parent + .client-group-tree-list,
+.client-group-header.client-group-parent ~ .client-group-tree-list {
+	background: #fbfdf8;
+	border-top: 1px solid #d9ebc7;
+	padding-left: 22px;
+}
+
+/* Подклиенты внутри раскрытого родителя */
+.client-tree-row-wrapper-nested::before,
+.client-tree-children-list.root {
+	border-left-color: #b7d49b;
+}
+
+/* Сделаем обычных подклиентов спокойнее, а не такими же зелёными как родители */
+.client-tree-row.is-leaf {
+	background: #ffffff;
+	border: 1px solid #e1e7dc;
+	border-left: 5px solid #d6e7c8;
+	box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+}
+
+.client-tree-row.is-leaf:hover {
+	background: #fbfdf8;
+	border-color: #c9dfb7;
+	border-left-color: #8bbf5a;
+}
+
+/* Подклиент, у которого тоже есть свои подклиенты */
+.client-tree-row.has-children {
+	background: linear-gradient(90deg, #f4faec 0%, #ffffff 75%);
+	border: 1px solid #cfe3b5;
+	border-left: 5px solid #5e9424;
+	box-shadow: 0 2px 7px rgba(94, 148, 36, 0.08);
+}
+
+.client-tree-row.has-children:hover {
+	background: linear-gradient(90deg, #edf6e2 0%, #ffffff 75%);
+	border-color: #b7d49b;
+}
+
+/* Бейджи родитель/подклиент делаем заметнее */
+.client-hierarchy-badge.parent {
+	background: #dff0ce;
+	color: #2e5902;
+	border: 1px solid #a9cf86;
+}
+
+.client-hierarchy-badge.child {
+	background: #f3f6f0;
+	color: #5b6b4f;
+	border: 1px solid #dce8d2;
+}
+
 @media (max-width: 768px) {
 	.vehicle-trash-card {
 		flex-direction: column;
@@ -1308,4 +1555,27 @@
     width: 100%;
     text-align: center;
   }
+
+  .client-hierarchy-badge {
+	font-size: 10px;
+	padding: 3px 7px;
+}
+
+.client-tree-row-title {
+	flex-wrap: wrap;
+}
+
+.client-card-title-text {
+	white-space: normal;
+}
+
+.client-tree-row-wrapper-nested::before {
+	left: -14px;
+}
+
+.client-level-2 .client-tree-row,
+.client-level-3 .client-tree-row,
+.client-level-4 .client-tree-row {
+	margin-left: 0;
+}
 }

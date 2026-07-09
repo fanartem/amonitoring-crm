@@ -268,6 +268,28 @@ export default function Clients() {
 		)
 	}
 
+	const getClientChildrenCount = client => {
+		return Number(client?.children_count || client?.children?.length || 0)
+	}
+
+	const getClientHierarchyBadgeText = (client, level = 0) => {
+		const childrenCount = getClientChildrenCount(client)
+
+		if (level > 0 && childrenCount > 0) {
+			return `Подклиент · ${childrenCount} подкл.`
+		}
+
+		if (level > 0) {
+			return 'Подклиент'
+		}
+
+		if (childrenCount > 0) {
+			return `Родитель · ${childrenCount} подкл.`
+		}
+
+		return null
+	}
+
 	// Состояние для навигации из строки поиска
 	const [pendingOpenClientId, setPendingOpenClientId] = useState(null)
 	const [pendingListClientId, setPendingListClientId] = useState(null)
@@ -1873,9 +1895,11 @@ export default function Clients() {
 	}
 
 	const renderClientCard = (client, level = 0) => {
-		const hasChildren = client.children && client.children.length > 0
+		const childrenCount = getClientChildrenCount(client)
+		const hasChildren = childrenCount > 0
 		const isExpanded = Boolean(expandedClientNodes[client.id])
 		const isNested = level > 0
+		const hierarchyBadgeText = getClientHierarchyBadgeText(client, level)
 
 		if (isNested) {
 			return (
@@ -1884,13 +1908,19 @@ export default function Clients() {
 					ref={el => {
 						clientRefs.current[Number(client.id)] = el
 					}}
-					className={`client-tree-row-wrapper ${
+					className={`client-tree-row-wrapper client-tree-row-wrapper-nested client-level-${Math.min(level, 4)} ${
+						hasChildren
+							? 'client-tree-row-wrapper-parent'
+							: 'client-tree-row-wrapper-leaf'
+					} ${
 						Number(highlightedClientId) === Number(client.id)
 							? 'client-highlighted'
 							: ''
 					} ${autoHighlightedClients[String(client.id)] || ''}`}
 				>
-					<div className='client-tree-row'>
+					<div
+						className={`client-tree-row ${hasChildren ? 'has-children' : 'is-leaf'}`}
+					>
 						<div className='client-tree-row-left'>
 							<div className='client-tree-branch-line' />
 
@@ -1914,7 +1944,19 @@ export default function Clients() {
 
 							<div className='client-tree-row-info'>
 								<div className='client-tree-row-title'>
-									{client.company_name || client.name}
+									<span className='client-tree-row-name'>
+										{client.company_name || client.name}
+									</span>
+
+									{hierarchyBadgeText && (
+										<span
+											className={`client-hierarchy-badge ${
+												hasChildren ? 'parent' : 'child'
+											}`}
+										>
+											{hierarchyBadgeText}
+										</span>
+									)}
 								</div>
 
 								<div className='client-tree-row-meta'>
@@ -2023,7 +2065,9 @@ export default function Clients() {
 				} ${autoHighlightedClients[String(client.id)] || ''}`}
 			>
 				<div
-					className='client-card'
+					className={`client-card ${
+						hasChildren ? 'client-card-parent' : 'client-card-standalone'
+					} ${isExpanded ? 'client-card-expanded' : ''}`}
 					style={{
 						cursor: 'default',
 						position: 'relative',
@@ -2063,9 +2107,15 @@ export default function Clients() {
 								</button>
 							)}
 
-							<span style={{ paddingRight: '10px' }}>
+							<span className='client-card-title-text'>
 								{client.company_name || client.name}
 							</span>
+
+							{hierarchyBadgeText && (
+								<span className='client-hierarchy-badge parent'>
+									{hierarchyBadgeText}
+								</span>
+							)}
 						</div>
 
 						{(canEditClient(client) || canDeleteClient) && (
@@ -2193,13 +2243,10 @@ export default function Clients() {
 							</div>
 
 							{hasChildren && (
-								<div>
+								<div className='client-children-stat'>
 									<span className='request-count-label'>Подклиентов:</span>
-									<span
-										className='request-count-badge active'
-										style={{ marginLeft: '8px' }}
-									>
-										{client.children_count || client.children.length}
+									<span className='request-count-badge active client-children-count-badge'>
+										{childrenCount}
 									</span>
 								</div>
 							)}
@@ -2446,7 +2493,17 @@ export default function Clients() {
 												ref={el => {
 													groupRefs.current[group.group_name] = el
 												}}
-												className={`client-group-header ${hasSubclients ? 'clickable' : 'not-clickable'} ${
+												className={`client-group-header ${
+													hasSubclients ? 'clickable' : 'not-clickable'
+												} ${
+													group.parent_client
+														? 'client-group-parent'
+														: 'client-group-standalone'
+												} ${
+													hasSubclients && isExpanded
+														? 'client-group-expanded'
+														: ''
+												} ${
 													highlightedGroupName === group.group_name
 														? 'client-group-highlighted'
 														: ''
@@ -2471,8 +2528,25 @@ export default function Clients() {
 													)}
 
 													<div>
-														<div className='client-group-title'>
-															{group.group_name}
+														<div className='client-group-title client-group-title-with-badge'>
+															<span>{group.group_name}</span>
+
+															{group.parent_client &&
+																Number(
+																	group.subclients_count ||
+																		group.parent_client.children_count ||
+																		0,
+																) > 0 && (
+																	<span className='client-hierarchy-badge parent'>
+																		Родитель ·{' '}
+																		{Number(
+																			group.subclients_count ||
+																				group.parent_client.children_count ||
+																				0,
+																		)}{' '}
+																		подкл.
+																	</span>
+																)}
 														</div>
 
 														<div className='client-group-subtitle'>
