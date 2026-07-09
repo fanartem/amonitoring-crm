@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { API_BASE_URL } from '../api'
+import { API_BASE_URL, clearAuthData } from '../api'
 
 export default function Entrance() {
 	const [isLoginMode, setIsLoginMode] = useState(true)
@@ -17,6 +17,21 @@ export default function Entrance() {
 
 	useEffect(() => {
 		fetchCities()
+	}, [])
+
+	useEffect(() => {
+		const params = new URLSearchParams(window.location.search)
+		const reason = params.get('reason')
+
+		if (reason === 'session_expired') {
+			clearAuthData()
+			setIsLoginMode(true)
+			setError(
+				'Сессия истекла или сервер был обновлён. Пожалуйста, войдите заново.',
+			)
+
+			window.history.replaceState({}, document.title, window.location.pathname)
+		}
 	}, [])
 
 	const fetchCities = async () => {
@@ -58,6 +73,9 @@ export default function Entrance() {
 			if (!response.ok) {
 				throw new Error(data.detail || 'Неверный логин или пароль')
 			}
+
+			setError('')
+			setSuccess('')
 
 			localStorage.setItem('access_token', data.access_token)
 			localStorage.setItem('user_data', JSON.stringify(data.user))

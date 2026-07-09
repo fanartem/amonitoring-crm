@@ -64,13 +64,31 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id, email, name, role, is_approved, client_access_scope FROM users WHERE id = %s", (user_id,))
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    email,
+                    name,
+                    role,
+                    city,
+                    is_approved,
+                    is_active,
+                    deleted_at,
+                    client_access_scope
+                FROM users
+                WHERE id = %s
+                """,
+                (user_id,)
+            )
             user = cursor.fetchone()
             
             if user is None:
                 raise credentials_exception
             if not user["is_approved"]:
                 raise HTTPException(status_code=403, detail="User not approved")
+            if user.get("is_active") == 0 or user.get("deleted_at") is not None:
+                raise credentials_exception
             
             return user # Возвращаем инфо о юзере (id, role и т.д.)
     finally:
