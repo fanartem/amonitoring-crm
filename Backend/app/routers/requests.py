@@ -4,6 +4,7 @@ from app.schemas import (
     RequestCreate,
     RequestUpdate,
     AssignRequest,
+    RequestExecutorsAssign,
     CommentCreate,
     RequestScheduleApproval,
 )
@@ -22,6 +23,7 @@ from app.permissions import (
     can_edit_all_requests,
     can_edit_payment_info,
     can_change_request_status,
+    can_manage_request_executors,
     can_delete_any_request,
     can_delete_own_request_with_time_limit,
     can_view_price_fields,
@@ -40,6 +42,7 @@ from app.notification_service import (
     notify_request_assigned,
     notify_request_self_accepted,
     notify_request_payment_changed,
+    notify_request_executors_assigned,
 )
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
@@ -241,7 +244,13 @@ def user_can_access_request(
                 return False
 
             assigned_to = request.get("assigned_to")
-            return assigned_to is None or int(assigned_to) == user_id
+            current_user_is_executor = bool(request.get("current_user_is_executor"))
+
+            return (
+                assigned_to is None
+                or int(assigned_to) == user_id
+                or current_user_is_executor
+            )
 
         return False
 
@@ -335,6 +344,244 @@ def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
             req["vehicles_summary"] = ""
 
     return requests
+
+def get_request_executors(cursor, request_id: int) -> list[dict]:
+    cursor.execute(
+        """
+        SELECT
+            re.id,
+            re.request_id,
+            re.user_id,
+            re.assigned_by,
+            re.assigned_at,
+
+            u.name AS user_name,
+            u.email AS user_email,
+            u.role AS user_role,
+            u.city AS user_city,
+
+            assigned_by_user.name AS assigned_by_name
+        FROM request_executors re
+        LEFT JOIN users u ON re.user_id = u.id
+        LEFT JOIN users assigned_by_user ON re.assigned_by = assigned_by_user.id
+        WHERE re.request_id = %s
+        ORDER BY re.id ASC
+        """,
+        (request_id,)
+    )
+
+    return cursor.fetchall()
+
+
+def attach_executors_to_requests(cursor, requests: list[dict]) -> list[dict]:
+    if not requests:
+        return requests
+
+    request_ids = [r["id"] for r in requests]
+    placeholders = ", ".join(["%s"] * len(request_ids))
+
+    cursor.execute(
+        f"""
+        SELECT
+            re.id,
+            re.request_id,
+            re.user_id,
+            re.assigned_by,
+            re.assigned_at,
+
+            u.name AS user_name,
+            u.email AS user_email,
+            u.role AS user_role,
+            u.city AS user_city,
+
+            assigned_by_user.name AS assigned_by_name
+        FROM request_executors re
+        LEFT JOIN users u ON re.user_id = u.id
+        LEFT JOIN users assigned_by_user ON re.assigned_by = assigned_by_user.id
+        WHERE re.request_id IN ({placeholders})
+        ORDER BY re.id ASC
+        """,
+        tuple(request_ids)
+    )
+
+    rows = cursor.fetchall()
+
+    grouped = {}
+
+    for row in rows:
+        grouped.setdefault(row["request_id"], []).append(row)
+
+    for request in requests:
+        executors = grouped.get(request["id"], [])
+        request["executors"] = executors
+        request["executors_count"] = len(executors)
+        request["executors_summary"] = ", ".join(
+            executor.get("user_name") or f"ID {executor.get('user_id')}"
+            for executor in executors
+        )
+
+    return requests
+
+
+def user_is_request_executor(cursor, request_id: int, user_id: int) -> bool:
+    cursor.execute(
+        """
+        SELECT id
+        FROM request_executors
+        WHERE request_id = %s
+          AND user_id = %s
+        LIMIT 1
+        """,
+        (request_id, user_id)
+    )
+
+    return cursor.fetchone() is not None
+
+
+def validate_request_executor_ids(cursor, executor_ids: list[int]) -> list[dict]:
+    unique_executor_ids = []
+
+    for executor_id in executor_ids:
+        if executor_id is None:
+            continue
+
+        executor_id = int(executor_id)
+
+        if executor_id not in unique_executor_ids:
+            unique_executor_ids.append(executor_id)
+
+    if not unique_executor_ids:
+        return []
+
+    placeholders = ", ".join(["%s"] * len(unique_executor_ids))
+
+    cursor.execute(
+        f"""
+        SELECT
+            id,
+            name,
+            role,
+            city,
+            is_approved,
+            is_active,
+            deleted_at
+        FROM users
+        WHERE id IN ({placeholders})
+        """,
+        tuple(unique_executor_ids)
+    )
+
+    users = cursor.fetchall()
+    users_map = {int(user["id"]): user for user in users}
+
+    for executor_id in unique_executor_ids:
+        user = users_map.get(executor_id)
+
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Пользователь {executor_id} не найден"
+            )
+
+        if user["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Пользователь {user['name']} не является монтажником"
+            )
+
+        if not user["is_approved"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Пользователь {user['name']} не подтверждён"
+            )
+
+        if not user["is_active"] or user["deleted_at"] is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Пользователь {user['name']} удалён или неактивен"
+            )
+
+    return [users_map[executor_id] for executor_id in unique_executor_ids]
+
+
+def replace_request_executors(
+    cursor,
+    request_id: int,
+    executor_ids: list[int],
+    assigned_by: int,
+):
+    unique_executor_ids = []
+
+    for executor_id in executor_ids:
+        if executor_id is None:
+            continue
+
+        executor_id = int(executor_id)
+
+        if executor_id not in unique_executor_ids:
+            unique_executor_ids.append(executor_id)
+
+    cursor.execute(
+        """
+        SELECT user_id
+        FROM request_executors
+        WHERE request_id = %s
+        """,
+        (request_id,)
+    )
+
+    old_rows = cursor.fetchall()
+    old_executor_ids = [int(row["user_id"]) for row in old_rows]
+
+    to_add = [
+        executor_id
+        for executor_id in unique_executor_ids
+        if executor_id not in old_executor_ids
+    ]
+
+    to_remove = [
+        executor_id
+        for executor_id in old_executor_ids
+        if executor_id not in unique_executor_ids
+    ]
+
+    if to_remove:
+        placeholders = ", ".join(["%s"] * len(to_remove))
+
+        cursor.execute(
+            f"""
+            DELETE FROM request_executors
+            WHERE request_id = %s
+              AND user_id IN ({placeholders})
+            """,
+            tuple([request_id] + to_remove)
+        )
+
+    for executor_id in to_add:
+        cursor.execute(
+            """
+            INSERT INTO request_executors (
+                request_id,
+                user_id,
+                assigned_by,
+                assigned_at
+            )
+            VALUES (%s, %s, %s, %s)
+            """,
+            (
+                request_id,
+                executor_id,
+                assigned_by,
+                almaty_now(),
+            )
+        )
+
+    return {
+        "executor_ids": unique_executor_ids,
+        "old_executor_ids": old_executor_ids,
+        "added_executor_ids": to_add,
+        "removed_executor_ids": to_remove,
+    }
 
 @router.post("")
 def create_request(data: RequestCreate, current_user: dict = Depends(get_current_user)):
@@ -796,8 +1043,21 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 conditions.append("r.is_paid = 1")
                 conditions.append("r.city = %s")
                 values.append(user_city)
-                conditions.append("(r.assigned_to IS NULL OR r.assigned_to = %s)")
-                values.append(current_user["id"])
+                conditions.append(
+                    """
+                    (
+                        r.assigned_to IS NULL
+                        OR r.assigned_to = %s
+                        OR EXISTS (
+                            SELECT 1
+                            FROM request_executors re
+                            WHERE re.request_id = r.id
+                            AND re.user_id = %s
+                        )
+                    )
+                    """
+                )
+                values.extend([current_user["id"], current_user["id"]])
 
             elif role in [SENIOR_TECHNICIAN, ADMIN, ROP, ACCOUNTANT]:
                 pass
@@ -857,6 +1117,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
 
             requests = cursor.fetchall()
             requests = attach_vehicles_to_requests(cursor, requests)
+            requests = attach_executors_to_requests(cursor, requests)
             requests = attach_requests_permissions(requests, current_user)
 
             if not can_view_price_fields(current_user):
@@ -954,12 +1215,19 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
-                    c.responsible_manager_id
+                    c.responsible_manager_id,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re
+                        WHERE re.request_id = r.id
+                          AND re.user_id = %s
+                    ) AS current_user_is_executor
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 WHERE r.id = %s AND r.is_deleted = 0
                 """,
-                (data.request_id,)
+                (current_user["id"], data.request_id)
             )
             request = cursor.fetchone()
 
@@ -983,6 +1251,238 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
             )
             connection.commit()
         return {"message": "comment added"}
+    finally:
+        connection.close()
+
+@router.patch("/{request_id}/executors/assign")
+def assign_request_executors(
+    request_id: int,
+    data: RequestExecutorsAssign,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Массовое назначение исполнителей заявки.
+
+    Логика:
+    - ADMIN / ROP / SENIOR_TECHNICIAN выбирают одного или нескольких исполнителей.
+    - После нажатия frontend-кнопки "Назначить" backend заменяет список исполнителей.
+    - assigned_to остаётся основным/первым исполнителем для старой логики.
+    - Если список исполнителей пустой — назначение снимается, заявка возвращается в NEW.
+    """
+    if not can_manage_request_executors(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Только Старший монтажник, РОП или Админ могут назначать исполнителей"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    status,
+                    assigned_to,
+                    schedule_approval_status
+                FROM requests
+                WHERE id = %s
+                  AND is_deleted = 0
+                """,
+                (request_id,)
+            )
+
+            req = cursor.fetchone()
+
+            if not req:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            if req.get("schedule_approval_status") == SCHEDULE_APPROVAL_PENDING:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя назначить исполнителей, пока не согласовано нерабочее время"
+                )
+
+            if req.get("schedule_approval_status") == SCHEDULE_APPROVAL_REJECTED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя назначить исполнителей: нерабочее время отклонено администрацией"
+                )
+
+            if req["status"] not in ["NEW", "IN_PROGRESS"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Изменять исполнителей можно только у новой заявки или заявки в работе"
+                )
+
+            executor_ids = []
+
+            for executor_id in data.executor_ids:
+                executor_id = int(executor_id)
+
+                if executor_id not in executor_ids:
+                    executor_ids.append(executor_id)
+
+            validate_request_executor_ids(cursor, executor_ids)
+
+            result = replace_request_executors(
+                cursor=cursor,
+                request_id=request_id,
+                executor_ids=executor_ids,
+                assigned_by=current_user["id"],
+            )
+
+            old_assigned_to = req["assigned_to"]
+            new_assigned_to = executor_ids[0] if executor_ids else None
+            new_status = "IN_PROGRESS" if executor_ids else "NEW"
+
+            cursor.execute(
+                """
+                UPDATE requests
+                SET assigned_to = %s,
+                    status = %s
+                WHERE id = %s
+                """,
+                (
+                    new_assigned_to,
+                    new_status,
+                    request_id,
+                )
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    old_value,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "EXECUTORS_ASSIGNED",
+                    f"assigned_to={old_assigned_to}, executors={result['old_executor_ids']}, status={req['status']}",
+                    f"assigned_to={new_assigned_to}, executors={executor_ids}, status={new_status}",
+                )
+            )
+
+            if req["status"] != new_status:
+                cursor.execute(
+                    """
+                    INSERT INTO request_history (
+                        request_id,
+                        user_id,
+                        action,
+                        old_value,
+                        new_value
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        request_id,
+                        current_user["id"],
+                        "STATUS_CHANGED",
+                        req["status"],
+                        new_status,
+                    )
+                )
+
+                notify_request_status_changed(
+                    cursor=cursor,
+                    request_id=request_id,
+                    old_status=req["status"],
+                    new_status=new_status,
+                    assigned_to=new_assigned_to,
+                    actor_user_id=current_user["id"],
+                )
+
+            if result["added_executor_ids"]:
+                notify_request_executors_assigned(
+                    cursor=cursor,
+                    request_id=request_id,
+                    executor_ids=result["added_executor_ids"],
+                    actor_user_id=current_user["id"],
+                )
+
+            connection.commit()
+
+            return {
+                "message": "Исполнители назначены",
+                "request_id": request_id,
+                "assigned_to": new_assigned_to,
+                "executor_ids": executor_ids,
+                "added_executor_ids": result["added_executor_ids"],
+                "removed_executor_ids": result["removed_executor_ids"],
+                "status": new_status,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.get("/{request_id}/executors")
+def get_request_executors_endpoint(
+    request_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    r.id,
+                    r.city,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+                    c.responsible_manager_id,
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re
+                        WHERE re.request_id = r.id
+                          AND re.user_id = %s
+                    ) AS current_user_is_executor
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s
+                  AND r.is_deleted = 0
+                """,
+                (
+                    current_user["id"],
+                    request_id,
+                )
+            )
+
+            request = cursor.fetchone()
+
+            if not request:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            user_city = None
+
+            if current_user["role"] == TECHNICIAN:
+                user_city = get_current_user_city(cursor, current_user)
+
+            if not user_can_access_request(request, current_user, user_city):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра исполнителей этой заявки"
+                )
+
+            return get_request_executors(cursor, request_id)
+
     finally:
         connection.close()
 
@@ -1022,12 +1522,19 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     r.is_paid,
                     r.created_by,
 
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re
+                        WHERE re.request_id = r.id
+                          AND re.user_id = %s
+                    ) AS current_user_is_executor,
+
                     c.responsible_manager_id
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 WHERE r.id = %s AND r.is_deleted = 0
                 """,
-                (request_id,)
+                (current_user["id"], request_id)
             )
             req = cursor.fetchone()
 
@@ -1667,6 +2174,14 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
 
                 cursor.execute(
                     """
+                    DELETE FROM request_executors
+                    WHERE request_id = %s
+                    """,
+                    (request_id,)
+                )
+
+                cursor.execute(
+                    """
                     INSERT INTO request_history 
                     (request_id, user_id, action, old_value, new_value)
                     VALUES (%s, %s, %s, %s, %s)
@@ -1724,6 +2239,32 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
 
             cursor.execute(
                 """
+                DELETE FROM request_executors
+                WHERE request_id = %s
+                """,
+                (request_id,)
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO request_executors (
+                    request_id,
+                    user_id,
+                    assigned_by,
+                    assigned_at
+                )
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    data.technician_id,
+                    current_user["id"],
+                    almaty_now(),
+                )
+            )
+
+            cursor.execute(
+                """
                 INSERT INTO request_history 
                 (request_id, user_id, action, old_value, new_value)
                 VALUES (%s, %s, %s, %s, %s)
@@ -1777,6 +2318,12 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
             )
             req = cursor.fetchone()
 
+            current_user_is_executor = user_is_request_executor(
+                cursor=cursor,
+                request_id=request_id,
+                user_id=current_user["id"],
+            )
+
             if not req:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
 
@@ -1801,7 +2348,12 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
             role = current_user["role"]
 
             if role == "TECHNICIAN":
-                if req["assigned_to"] != current_user["id"]:
+                is_main_executor = (
+                    req["assigned_to"] is not None
+                    and int(req["assigned_to"]) == int(current_user["id"])
+                )
+
+                if not is_main_executor and not current_user_is_executor:
                     raise HTTPException(
                         status_code=403,
                         detail="Обычный монтажник может завершить только свою заявку"
@@ -1910,14 +2462,21 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     c.company_name,
                     c.phone,
                     c.email,
-                    c.type AS client_type
+                    c.type AS client_type,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re
+                        WHERE re.request_id = r.id
+                          AND re.user_id = %s
+                    ) AS current_user_is_executor
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 LEFT JOIN users creator ON r.created_by = creator.id
                 LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
                 WHERE r.id = %s AND r.is_deleted = 0
                 """,
-                (request_id,)
+                (current_user["id"], request_id)
             )
             request_data = cursor.fetchone()
 
@@ -1936,6 +2495,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                 )
 
             request_data = attach_vehicles_to_requests(cursor, [request_data])[0]
+            request_data = attach_executors_to_requests(cursor, [request_data])[0]
             attach_request_permissions(request_data, current_user)
 
             cursor.execute(
@@ -2005,6 +2565,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
             return {
                 "request": request_data,
                 "vehicles": request_data["vehicles"],
+                "executors": request_data["executors"],
                 "comments": comments,
                 "history": history,
                 "price_lines": price_lines
@@ -2026,12 +2587,19 @@ def get_comments(request_id: int, current_user: dict = Depends(get_current_user)
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
-                    c.responsible_manager_id
+                    c.responsible_manager_id,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re
+                        WHERE re.request_id = r.id
+                          AND re.user_id = %s
+                    ) AS current_user_is_executor
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 WHERE r.id = %s AND r.is_deleted = 0
                 """,
-                (request_id,)
+                (current_user["id"], request_id)
             )
             request = cursor.fetchone()
 
@@ -2164,6 +2732,27 @@ def accept_request(
                   AND status = 'NEW'
                 """,
                 (current_user["id"], request_id)
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO request_executors (
+                    request_id,
+                    user_id,
+                    assigned_by,
+                    assigned_at
+                )
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    assigned_by = VALUES(assigned_by),
+                    assigned_at = VALUES(assigned_at)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    current_user["id"],
+                    almaty_now(),
+                )
             )
 
             if cursor.rowcount == 0:

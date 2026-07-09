@@ -455,6 +455,88 @@
   background: transparent;
 }
 
+.request-executors-footer {
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.request-executors-control {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.request-executors-selected {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+	min-height: 30px;
+}
+
+.request-executors-empty {
+	font-size: 13px;
+	color: #9ca3af;
+}
+
+.request-executor-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 8px;
+	border-radius: 999px;
+	background: #eef7e8;
+	border: 1px solid #cde8bc;
+	color: #315f14;
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.request-executor-chip-remove {
+	border: none;
+	background: transparent;
+	color: #7a9f63;
+	cursor: pointer;
+	font-size: 15px;
+	line-height: 1;
+	padding: 0;
+}
+
+.request-executor-chip-remove:hover {
+	color: #c62828;
+}
+
+.request-executor-add-btn {
+	width: 30px;
+	height: 30px;
+	border-radius: 50%;
+	border: 1px solid #b7d99e;
+	background: #f5fbef;
+	color: #5e9424;
+	font-size: 20px;
+	font-weight: 700;
+	line-height: 1;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.request-executor-add-btn:hover {
+	background: #e8f6dc;
+	border-color: #8fc267;
+}
+
+.request-executors-dropdown {
+	min-width: 240px;
+}
+
+.request-executors-search {
+	width: calc(100% - 16px);
+	margin: 8px;
+}
+
 @media (max-width: 768px) {
   
   /* 1. Обертка для кнопок */

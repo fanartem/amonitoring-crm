@@ -97,12 +97,12 @@ export default function Requests() {
 
 	const [myRequestsFirst, setMyRequestsFirst] = useState(isTechnicianUser)
 
-	const isMyActiveRequest = req => {
+	function isMyActiveRequest(req) {
 		if (!myRequestsFirst) return false
 		if (!currentUserId) return false
 
 		return (
-			Number(req.assigned_to) === Number(currentUserId) &&
+			isCurrentUserExecutor(req) &&
 			!['COMPLETED', 'CANCELLED'].includes(req.status)
 		)
 	}
@@ -165,6 +165,7 @@ export default function Requests() {
 			schedule_approval_reason: req.schedule_approval_reason,
 			schedule_approval_comment: req.schedule_approval_comment,
 			assigned_to: req.assigned_to,
+			executors: req.executors || [],
 			is_paid: req.is_paid,
 			paid_at: req.paid_at,
 			total_price: req.total_price,
@@ -286,6 +287,54 @@ export default function Requests() {
 		return tech.name
 	}
 
+	const getRequestExecutors = req => {
+		if (Array.isArray(req.executors) && req.executors.length > 0) {
+			return req.executors.map(executor => ({
+				id: executor.user_id,
+				name: executor.user_name || getTechName(executor.user_id),
+			}))
+		}
+
+		if (req.assigned_to) {
+			return [
+				{
+					id: req.assigned_to,
+					name: getTechName(req.assigned_to),
+				},
+			]
+		}
+
+		return []
+	}
+
+	const getExecutorsLabel = req => {
+		const executors = getRequestExecutors(req)
+
+		if (executors.length === 0) return null
+
+		return executors.length === 1 ? 'Исполнитель' : 'Исполнители'
+	}
+
+	const getExecutorsText = req => {
+		const executors = getRequestExecutors(req)
+
+		if (executors.length === 0) return null
+
+		return executors
+			.map(executor => executor.name || `ID: ${executor.id}`)
+			.join(', ')
+	}
+
+	const isCurrentUserExecutor = req => {
+		if (!currentUserId) return false
+
+		const executors = getRequestExecutors(req)
+
+		return executors.some(
+			executor => Number(executor.id) === Number(currentUserId),
+		)
+	}
+
 	const clientTypeLabels = {
 		TOO: 'ТОО',
 		IP: 'ИП',
@@ -377,10 +426,14 @@ export default function Requests() {
 
 		if (filters.assigned_to) {
 			const assigneeFilter = filters.assigned_to.toLowerCase()
+
 			result = result.filter(r => {
-				if (!r.assigned_to) return false
-				const techName = getTechName(r.assigned_to)
-				return Boolean(techName) && techName.toLowerCase().includes(assigneeFilter)
+				const executorsText = getExecutorsText(r)
+
+				return (
+					Boolean(executorsText) &&
+					executorsText.toLowerCase().includes(assigneeFilter)
+				)
 			})
 		}
 		if (filters.date_from) {
@@ -661,14 +714,17 @@ export default function Requests() {
 
 	const canCompleteRequest = req => {
 		if (req.status !== 'IN_PROGRESS') return false
-		if (!req.assigned_to) return false
+
+		const executors = getRequestExecutors(req)
+
+		if (executors.length === 0) return false
 
 		if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
 			return true
 		}
 
 		if (userRole === 'TECHNICIAN') {
-			return Number(req.assigned_to) === Number(currentUserId)
+			return isCurrentUserExecutor(req)
 		}
 
 		return false
@@ -1115,18 +1171,19 @@ export default function Requests() {
 								</div>
 							)}
 
-							{req.assigned_to && (
+							{getRequestExecutors(req).length > 0 && (
 								<div className='card-item' style={{ marginTop: '5px' }}>
-									<span className='card-label'>Исполнитель</span>
+									<span className='card-label'>{getExecutorsLabel(req)}</span>
 									<span
 										className='card-value'
 										style={{
 											fontWeight: '600',
 											color: '#5e9424',
 											fontSize: '13px',
+											lineHeight: '1.35',
 										}}
 									>
-										{getTechName(req.assigned_to)}
+										{getExecutorsText(req)}
 									</span>
 								</div>
 							)}

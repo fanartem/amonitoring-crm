@@ -371,3 +371,13 @@ def can_create_request_for_client(client: dict, current_user: dict) -> bool:
         return is_client_owned_by_user(client, current_user)
 
     return False
+
+
+def can_manage_request_executors(user: dict) -> bool:
+    """
+    Назначать и изменять исполнителей заявки могут:
+    - ADMIN
+    - ROP
+    - SENIOR_TECHNICIAN
+    """
+    return get_role(user) in [ADMIN, ROP, SENIOR_TECHNICIAN]

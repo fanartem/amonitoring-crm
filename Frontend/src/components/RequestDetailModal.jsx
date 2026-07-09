@@ -91,7 +91,7 @@ export default function RequestDetailModal({
 	const [newComment, setNewComment] = useState('')
 	const [technicians, setTechnicians] = useState([])
 	const [techniciansLookup, setTechniciansLookup] = useState([])
-	const [selectedTech, setSelectedTech] = useState('')
+	const [selectedExecutors, setSelectedExecutors] = useState([])
 	const [techSearchTerm, setTechSearchTerm] = useState('')
 	const [isTechDropdownOpen, setTechDropdownOpen] = useState(false)
 	const techSearchRef = useRef(null)
@@ -152,12 +152,17 @@ export default function RequestDetailModal({
 
 	useEffect(() => {
 		if (request) {
-			setSelectedTech(request.assigned_to ? request.assigned_to.toString() : '')
-			setTechSearchTerm(
-				request.assigned_to ? getTechName(request.assigned_to) : '',
-			)
+			const executorIds =
+				request.executors && request.executors.length > 0
+					? request.executors.map(executor => String(executor.user_id))
+					: request.assigned_to
+						? [String(request.assigned_to)]
+						: []
+
+			setSelectedExecutors(executorIds)
+			setTechSearchTerm('')
 		}
-	}, [request, technicians])
+	}, [request])
 
 	useEffect(() => {
 		const handleClickOutside = e => {
@@ -298,28 +303,29 @@ export default function RequestDetailModal({
 
 	const handleAssign = async () => {
 		try {
-			const techId = selectedTech ? parseInt(selectedTech, 10) : null
+			const executorIds = selectedExecutors.map(id => parseInt(id, 10))
 
-			const res = await fetch(`${API_BASE_URL}/requests/${requestId}/assign`, {
-				method: 'POST',
-				headers: getJsonAuthHeaders(),
-				body: JSON.stringify({ technician_id: techId }),
-			})
+			const res = await fetch(
+				`${API_BASE_URL}/requests/${requestId}/executors/assign`,
+				{
+					method: 'PATCH',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({ executor_ids: executorIds }),
+				},
+			)
 
 			if (!res.ok) {
 				const data = await res.json().catch(() => null)
 				throw new Error(
-					data?.detail || 'Ошибка при назначении/снятии сотрудника',
+					data?.detail || 'Ошибка при назначении/снятии исполнителей',
 				)
 			}
 
-			if (!techId) alert('Монтажник успешно снят с заявки!')
-			else
-				alert(
-					request.assigned_to
-						? 'Монтажник успешно заменен!'
-						: 'Монтажник назначен!',
-				)
+			if (executorIds.length === 0) {
+				alert('Исполнители сняты с заявки!')
+			} else {
+				alert('Исполнители назначены!')
+			}
 
 			fetchRequestDetails()
 			onUpdated()
@@ -420,6 +426,30 @@ export default function RequestDetailModal({
 		return tech ? tech.name : `Сотрудник ID: ${id}`
 	}
 
+	const getSelectedExecutorNames = () => {
+		if (!selectedExecutors.length) return 'Не назначены'
+
+		return selectedExecutors.map(id => getTechName(id)).join(', ')
+	}
+
+	const toggleExecutor = techId => {
+		const id = String(techId)
+
+		setSelectedExecutors(prev => {
+			if (prev.includes(id)) {
+				return prev.filter(item => item !== id)
+			}
+
+			return [...prev, id]
+		})
+	}
+
+	const removeExecutor = techId => {
+		const id = String(techId)
+
+		setSelectedExecutors(prev => prev.filter(item => item !== id))
+	}
+
 	const renderHistoryMessage = h => {
 		const extractId = str => {
 			if (!str) return null
@@ -468,6 +498,10 @@ export default function RequestDetailModal({
 		if (h.action === 'PAYMENT_CHANGED' || h.action === 'PAYMENT_UPDATED') {
 			const isPaid = String(h.new_value).toLowerCase().includes('true')
 			return `Статус оплаты: ${isPaid ? 'Оплачено' : 'Ожидает оплаты'}`
+		}
+
+		if (h.action === 'EXECUTORS_ASSIGNED') {
+			return 'Исполнители заявки обновлены'
 		}
 
 		if (
@@ -857,8 +891,12 @@ export default function RequestDetailModal({
 											</div>
 
 											<div className='info-row'>
-												<span className='info-key bold'>Желаемая дата выполнения:</span>
-												<span className='info-val bold'>{formatDate(request.scheduled_at)}</span>
+												<span className='info-key bold'>
+													Желаемая дата выполнения:
+												</span>
+												<span className='info-val bold'>
+													{formatDate(request.scheduled_at)}
+												</span>
 											</div>
 
 											{request.schedule_approval_status &&
@@ -1272,63 +1310,83 @@ export default function RequestDetailModal({
 							!['PENDING', 'REJECTED'].includes(
 								request.schedule_approval_status,
 							) ? (
-								<div className='footer-group'>
-									<span style={{ fontSize: '13px' }}>Монтажник:</span>
+								<div className='footer-group request-executors-footer'>
+									<span style={{ fontSize: '13px' }}>Исполнители:</span>
 
-									<div className='footer-tech-search' ref={techSearchRef}>
-										<input
-											className='footer-select footer-tech-input'
-											type='text'
-											placeholder='Поиск...'
-											value={techSearchTerm}
-											onChange={e => {
-												setTechSearchTerm(e.target.value)
-												setTechDropdownOpen(true)
-												if (selectedTech) setSelectedTech('')
-											}}
-											onFocus={() => setTechDropdownOpen(true)}
-										/>
-
-										{isTechDropdownOpen && (
-											<div className='footer-tech-dropdown'>
-												<div
-													className={`footer-tech-option ${
-														!selectedTech ? 'active' : ''
-													}`}
-													onClick={() => {
-														setSelectedTech('')
-														setTechSearchTerm('')
-														setTechDropdownOpen(false)
-													}}
-												>
-													— не назначен —
-												</div>
-
-												{filteredTechnicians.length === 0 ? (
-													<div className='footer-tech-option footer-tech-option-empty'>
-														Не найдено
-													</div>
-												) : (
-													filteredTechnicians.map(t => (
-														<div
-															key={t.id}
-															className={`footer-tech-option ${
-																String(t.id) === String(selectedTech)
-																	? 'active'
-																	: ''
-															}`}
-															onClick={() => {
-																setSelectedTech(String(t.id))
-																setTechSearchTerm(t.name)
-																setTechDropdownOpen(false)
-															}}
+									<div className='request-executors-control'>
+										<div className='request-executors-selected'>
+											{selectedExecutors.length === 0 ? (
+												<span className='request-executors-empty'>
+													Не назначены
+												</span>
+											) : (
+												selectedExecutors.map(executorId => (
+													<span
+														key={executorId}
+														className='request-executor-chip'
+													>
+														{getTechName(executorId)}
+														<button
+															type='button'
+															className='request-executor-chip-remove'
+															onClick={() => removeExecutor(executorId)}
+															title='Убрать исполнителя'
 														>
-															{t.name}
+															×
+														</button>
+													</span>
+												))
+											)}
+										</div>
+
+										<div className='footer-tech-search' ref={techSearchRef}>
+											<button
+												type='button'
+												className='request-executor-add-btn'
+												onClick={() => setTechDropdownOpen(prev => !prev)}
+												title='Добавить исполнителя'
+											>
+												+
+											</button>
+
+											{isTechDropdownOpen && (
+												<div className='footer-tech-dropdown request-executors-dropdown'>
+													<input
+														className='footer-select footer-tech-input request-executors-search'
+														type='text'
+														placeholder='Поиск исполнителя...'
+														value={techSearchTerm}
+														onChange={e => setTechSearchTerm(e.target.value)}
+														autoFocus
+													/>
+
+													{filteredTechnicians.length === 0 ? (
+														<div className='footer-tech-option footer-tech-option-empty'>
+															Не найдено
 														</div>
-													))
-												)}
-											</div>
-										)}
+													) : (
+														filteredTechnicians.map(t => {
+															const isSelected = selectedExecutors.includes(
+																String(t.id),
+															)
+
+															return (
+																<div
+																	key={t.id}
+																	className={`footer-tech-option ${
+																		isSelected ? 'active' : ''
+																	}`}
+																	onClick={() => toggleExecutor(t.id)}
+																>
+																	<span>{t.name}</span>
+																	{isSelected && <span>✓</span>}
+																</div>
+															)
+														})
+													)}
+												</div>
+											)}
+										</div>
 									</div>
 
 									<button
@@ -1336,11 +1394,7 @@ export default function RequestDetailModal({
 										style={{ padding: '5px 12px', fontSize: '13px' }}
 										onClick={handleAssign}
 									>
-										{request.assigned_to
-											? selectedTech
-												? 'Изменить'
-												: 'Снять'
-											: 'Назначить'}
+										{selectedExecutors.length > 0 ? 'Назначить' : 'Снять'}
 									</button>
 								</div>
 							) : ['PENDING', 'REJECTED'].includes(
@@ -1353,6 +1407,24 @@ export default function RequestDetailModal({
 											: 'Назначение недоступно: время отклонено'}
 									</span>
 								</div>
+							) : request.executors && request.executors.length > 0 ? (
+								<div className='footer-group'>
+									<span
+										style={{
+											color: '#5e9424',
+											fontWeight: '500',
+											fontSize: '13px',
+										}}
+									>
+										Исполнители:{' '}
+										{request.executors
+											.map(
+												executor =>
+													executor.user_name || getTechName(executor.user_id),
+											)
+											.join(', ')}
+									</span>
+								</div>
 							) : request.assigned_to ? (
 								<div className='footer-group'>
 									<span
@@ -1362,7 +1434,7 @@ export default function RequestDetailModal({
 											fontSize: '13px',
 										}}
 									>
-										Монтажник: {getTechName(request.assigned_to)}
+										Исполнитель: {getTechName(request.assigned_to)}
 									</span>
 								</div>
 							) : null}

@@ -364,6 +364,31 @@ def notify_request_assigned(
     )
 
 
+def notify_request_executors_assigned(
+    cursor,
+    request_id: int,
+    executor_ids: list[int],
+    actor_user_id: int | None = None,
+):
+    """
+    Уведомление нескольким назначенным исполнителям.
+    """
+    title = "Вам назначена заявка"
+    message = f"Вам назначена заявка №{request_id}."
+
+    return create_notifications_for_users(
+        cursor=cursor,
+        user_ids=executor_ids,
+        type_code="REQUEST_ASSIGNED",
+        title=title,
+        message=message,
+        entity_type="request",
+        entity_id=request_id,
+        actor_user_id=actor_user_id,
+        exclude_user_id=actor_user_id,
+    )
+
+
 def notify_request_self_accepted(
     cursor,
     request_id: int,

@@ -46,6 +46,9 @@ class CommentCreate(BaseModel):
 class AssignRequest(BaseModel):
     technician_id: int | None = None
 
+class RequestExecutorsAssign(BaseModel):
+    executor_ids: list[int] = []
+
 class ClientCreate(BaseModel):
     type: str
     name: str
