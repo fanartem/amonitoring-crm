@@ -57,6 +57,11 @@ const createEmptyManualPriceLine = () => ({
 	unit_price: '',
 })
 
+const CLIENT_PAYMENT_TYPES = {
+	PREPAYMENT: 'Предоплата',
+	POSTPAYMENT: 'Постоплата',
+}
+
 function SearchableSelect({
 	value,
 	options,
@@ -217,6 +222,31 @@ const mapWorkTypeToAPI = uiWorkType => {
 	return 'DIAGNOSTIC'
 }
 
+const getUserRole = () => {
+	try {
+		const token = localStorage.getItem('access_token')
+		if (!token) return null
+
+		const base64Url = token.split('.')[1]
+		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+		const jsonPayload = decodeURIComponent(
+			atob(base64)
+				.split('')
+				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+				.join(''),
+		)
+
+		return JSON.parse(jsonPayload).role
+	} catch {
+		return null
+	}
+}
+
+const getClientPaymentTypeLabel = paymentType => {
+	if (paymentType === 'POSTPAYMENT') return 'Постоплата'
+	return 'Предоплата'
+}
+
 export default function CreateRequestModal({
 	isOpen,
 	onClose,
@@ -224,6 +254,9 @@ export default function CreateRequestModal({
 	editRequestData,
 }) {
 	const isEditMode = !!editRequestData
+
+	const userRole = getUserRole()
+	const canSetPaymentType = ['ADMIN', 'ROP'].includes(userRole)
 
 	const [clientKind, setClientKind] = useState('new')
 	const [clientsList, setClientsList] = useState([])
@@ -255,6 +288,7 @@ export default function CreateRequestModal({
 		email: '',
 		city: '',
 		company_name: '',
+		payment_type: 'PREPAYMENT',
 
 		is_subclient: false,
 		parent_client_id: '',
@@ -286,6 +320,7 @@ export default function CreateRequestModal({
 		email: '',
 		city: '',
 		company_name: '',
+		payment_type: 'PREPAYMENT',
 
 		is_subclient: false,
 		parent_client_id: '',
@@ -325,6 +360,7 @@ export default function CreateRequestModal({
 				phone: editRequestData.phone || '',
 				city: editRequestData.city || '',
 				company_name: editRequestData.company_name || '',
+				payment_type: editRequestData.client_payment_type || 'PREPAYMENT',
 
 				is_subclient: false,
 				parent_client_id: '',
@@ -579,6 +615,7 @@ export default function CreateRequestModal({
 				phone: client.phone || '',
 				email: client.email || '',
 				company_name: client.company_name || '',
+				payment_type: client.payment_type || 'PREPAYMENT',
 			}))
 
 			fetchClientVehicles(client.id)
@@ -597,6 +634,7 @@ export default function CreateRequestModal({
 				phone: '',
 				email: '',
 				company_name: '',
+				payment_type: 'PREPAYMENT',
 			}))
 
 			setClientVehicles([])
@@ -1085,6 +1123,9 @@ export default function CreateRequestModal({
 						bin_iin: formData.bin_iin.trim() || null,
 						phone: formData.phone.trim(),
 						email: formData.email.trim() || null,
+						payment_type: canSetPaymentType
+							? formData.payment_type
+							: 'PREPAYMENT',
 
 						source_system: formData.is_subclient ? 'CRM' : null,
 						source_client_name:
@@ -1125,6 +1166,9 @@ export default function CreateRequestModal({
 						bin_iin: formData.bin_iin.trim() || null,
 						phone: formData.phone.trim(),
 						email: formData.email.trim() || null,
+						payment_type: canSetPaymentType
+							? formData.payment_type
+							: 'PREPAYMENT',
 						source_system: formData.is_subclient ? 'CRM' : null,
 						source_client_name:
 							formData.client_type === 'Физ. лицо'
@@ -1531,6 +1575,7 @@ export default function CreateRequestModal({
 														is_subclient: false,
 														parent_client_id: '',
 														parent_source_name: '',
+														payment_type: 'PREPAYMENT',
 													}))
 												}}
 											/>
@@ -1549,6 +1594,7 @@ export default function CreateRequestModal({
 														is_subclient: false,
 														parent_client_id: '',
 														parent_source_name: '',
+														payment_type: 'PREPAYMENT',
 													}))
 												}}
 											/>
@@ -1656,6 +1702,34 @@ export default function CreateRequestModal({
 												</div>
 											</div>
 										)}
+
+										{isExisting && !isEditMode && selectedExistingClient && (
+											<div
+												className={`request-client-status-warning ${
+													(formData.payment_type ||
+														selectedExistingClient.payment_type) ===
+													'POSTPAYMENT'
+														? 'debtor'
+														: ''
+												}`}
+											>
+												<div className='request-client-status-warning-title'>
+													Тип оплаты:{' '}
+													{getClientPaymentTypeLabel(
+														formData.payment_type ||
+															selectedExistingClient.payment_type,
+													)}
+												</div>
+
+												<div className='request-client-status-warning-text'>
+													{(formData.payment_type ||
+														selectedExistingClient.payment_type) ===
+													'POSTPAYMENT'
+														? 'Заявка будет видна монтажникам сразу после создания, даже если она ещё не оплачена.'
+														: 'Заявка будет скрыта от монтажников до момента оплаты.'}
+												</div>
+											</div>
+										)}
 									</div>
 								)}
 
@@ -1754,6 +1828,35 @@ export default function CreateRequestModal({
 											placeholder='example@mail.com'
 										/>
 									</label>
+
+									{clientKind === 'new' && !isEditMode && canSetPaymentType && (
+										<label className='request-modal-field request-modal-full'>
+											<span className='request-modal-label'>Тип оплаты</span>
+
+											<select
+												className='request-modal-input'
+												name='payment_type'
+												value={formData.payment_type}
+												onChange={handleChange}
+											>
+												{Object.entries(CLIENT_PAYMENT_TYPES).map(
+													([key, label]) => (
+														<option key={key} value={key}>
+															{label}
+														</option>
+													),
+												)}
+											</select>
+
+											{formData.payment_type === 'POSTPAYMENT' && (
+												<span className='request-modal-hint warning'>
+													Постоплата делает заявки клиента видимыми монтажникам
+													сразу после создания, даже если заявка ещё не
+													оплачена.
+												</span>
+											)}
+										</label>
+									)}
 								</div>
 							</div>
 
