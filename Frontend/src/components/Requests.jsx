@@ -166,6 +166,7 @@ export default function Requests() {
 			schedule_approval_comment: req.schedule_approval_comment,
 			assigned_to: req.assigned_to,
 			executors: req.executors || [],
+			client_payment_type: req.client_payment_type,
 			is_paid: req.is_paid,
 			paid_at: req.paid_at,
 			total_price: req.total_price,
@@ -323,6 +324,30 @@ export default function Requests() {
 		return executors
 			.map(executor => executor.name || `ID: ${executor.id}`)
 			.join(', ')
+	}
+
+	const getClientPaymentTypeLabel = paymentType => {
+		if (paymentType === 'POSTPAYMENT') return 'Постоплата'
+		return 'Предоплата'
+	}
+
+	const getRequestPaymentText = req => {
+		const paymentType = req.client_payment_type || 'PREPAYMENT'
+		const isPaid = Boolean(req.is_paid)
+
+		if (paymentType === 'POSTPAYMENT') {
+			return isPaid ? 'Постоплата · оплачено' : 'Постоплата · не оплачено'
+		}
+
+		return isPaid ? 'Предоплата · оплачено' : 'Предоплата · не оплачено'
+	}
+
+	const getRequestPaymentClass = req => {
+		if (req.client_payment_type === 'POSTPAYMENT') {
+			return req.is_paid ? 'payment-postpaid-paid' : 'payment-postpaid-unpaid'
+		}
+
+		return req.is_paid ? 'payment-paid' : 'payment-unpaid'
 	}
 
 	const isCurrentUserExecutor = req => {
@@ -1247,7 +1272,6 @@ export default function Requests() {
 									{req.visit_type === 'ON_SITE' ? (
 										<>
 											Выезд к клиенту
-											{/* --- НОВОЕ: Вывод адреса при выезде --- */}
 											{req.address && (
 												<div
 													style={{
@@ -1308,36 +1332,40 @@ export default function Requests() {
 									</span>
 								</div>
 							)}
-							<div className='card-item'>
-								<span className='card-label'>Оплата</span>
-								<div
-									style={{
-										display: 'flex',
-										flexDirection: 'row',
-										gap: '8px',
-										alignItems: 'center',
-										marginTop: '2px',
-									}}
-								>
+							{canViewRequestPrice && (
+								<div className='card-item'>
+									<span className='card-label'>Оплата</span>
+
 									<div
-										className={`status-badge ${Boolean(req.is_paid) ? 'status-progress' : 'status-new'}`}
-										style={{ padding: '2px 10px', fontSize: '11px' }}
+										style={{
+											display: 'flex',
+											flexDirection: 'row',
+											gap: '8px',
+											alignItems: 'center',
+											marginTop: '2px',
+											flexWrap: 'wrap',
+										}}
 									>
-										{Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}
-									</div>
-									{Boolean(req.is_paid) && req.paid_at && (
-										<span
-											style={{
-												fontSize: '11px',
-												color: '#888',
-												fontWeight: '500',
-											}}
+										<div
+											className={`payment-status ${getRequestPaymentClass(req)}`}
 										>
-											{formatDate(req.paid_at).split(' ')[0]}
-										</span>
-									)}{' '}
+											{getRequestPaymentText(req)}
+										</div>
+
+										{Boolean(req.is_paid) && req.paid_at && (
+											<span
+												style={{
+													fontSize: '11px',
+													color: '#888',
+													fontWeight: '500',
+												}}
+											>
+												{formatDate(req.paid_at).split(' ')[0]}
+											</span>
+										)}
+									</div>
 								</div>
-							</div>
+							)}
 						</div>
 
 						{/* --- ВЕРХНИЙ ПРАВЫЙ УГОЛ: Детали и меню --- */}

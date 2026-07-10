@@ -1407,6 +1407,49 @@
 	border: 1px solid #dce8d2;
 }
 
+.client-payment-badge,
+.client-payment-detail {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	border-radius: 999px;
+	padding: 4px 9px;
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.client-payment-prepayment {
+	background: #f3f4f6;
+	color: #4b5563;
+	border: 1px solid #e5e7eb;
+}
+
+.client-payment-postpayment {
+	background: #fff7ee;
+	color: #a33030;
+	border: 1px solid #fec7c7;
+}
+
+.client-payment-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex: 0 0 10px;
+}
+
+.client-payment-dot-prepayment {
+	background: #6b7280;
+}
+
+.client-payment-dot-postpayment {
+	background: #4f46e5;
+}
+
+.client-payment-select {
+	background: #ffffff;
+}
+
 @media (max-width: 768px) {
 	.vehicle-trash-card {
 		flex-direction: column;

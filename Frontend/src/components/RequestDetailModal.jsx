@@ -55,6 +55,22 @@ const formatMoney = value => {
 	return `${number.toLocaleString('ru-RU')} тг`
 }
 
+const getClientPaymentTypeLabel = paymentType => {
+	if (paymentType === 'POSTPAYMENT') return 'Постоплата'
+	return 'Предоплата'
+}
+
+const getRequestPaymentText = request => {
+	const paymentType = request?.client_payment_type || 'PREPAYMENT'
+	const isPaid = Boolean(request?.is_paid)
+
+	if (paymentType === 'POSTPAYMENT') {
+		return isPaid ? 'Постоплата · оплачено' : 'Постоплата · не оплачено'
+	}
+
+	return isPaid ? 'Предоплата · оплачено' : 'Предоплата · не оплачено'
+}
+
 const getPriceSourceLabel = source => {
 	if (source === 'client_override') return 'инд. цена'
 	if (source === 'manual') return 'ручная'
@@ -1263,6 +1279,9 @@ export default function RequestDetailModal({
 												<option value='false'>Ожидает оплаты</option>
 												<option value='true'>Оплачено</option>
 											</select>
+											<div className='payment-type-hint'>
+												{getRequestPaymentText(request)}
+											</div>
 										</div>
 									) : (
 										<div className='footer-group'>

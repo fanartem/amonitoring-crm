@@ -57,6 +57,9 @@ SCHEDULE_APPROVAL_PENDING = "PENDING"
 SCHEDULE_APPROVAL_APPROVED = "APPROVED"
 SCHEDULE_APPROVAL_REJECTED = "REJECTED"
 
+CLIENT_PAYMENT_PREPAYMENT = "PREPAYMENT"
+CLIENT_PAYMENT_POSTPAYMENT = "POSTPAYMENT"
+
 ALMATY_TZ = timezone(timedelta(hours=5))
 
 def almaty_now():
@@ -157,6 +160,12 @@ def normalize_city(city):
         return None
     return str(city).strip().lower()
 
+def request_is_visible_to_technician_by_payment(request: dict) -> bool:
+    return (
+        bool(request.get("is_paid"))
+        or request.get("client_payment_type") == CLIENT_PAYMENT_POSTPAYMENT
+    )
+
 def hide_request_prices(requests: list[dict]) -> list[dict]:
     for req in requests:
         req["total_price"] = None
@@ -235,7 +244,7 @@ def user_can_access_request(
             )
 
         if role == TECHNICIAN:
-            if not request.get("is_paid"):
+            if not request_is_visible_to_technician_by_payment(request):
                 return False
 
             technician_city = user_city or current_user.get("city")
@@ -1040,7 +1049,14 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 if not user_city:
                     return []
 
-                conditions.append("r.is_paid = 1")
+                conditions.append(
+                    """
+                    (
+                        r.is_paid = 1
+                        OR c.payment_type = 'POSTPAYMENT'
+                    )
+                    """
+                )
                 conditions.append("r.city = %s")
                 values.append(user_city)
                 conditions.append(
@@ -1101,6 +1117,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     c.phone,
                     c.type AS client_type,
                     c.status AS client_status,
+                    c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
 
                     responsible.name AS responsible_manager_name
@@ -1215,6 +1232,7 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
+                    c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
 
                     EXISTS (
@@ -1447,6 +1465,7 @@ def get_request_executors_endpoint(
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
+                    c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
                     EXISTS (
                         SELECT 1
@@ -1521,6 +1540,8 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
+
+                    c.payment_type AS client_payment_type,
 
                     EXISTS (
                         SELECT 1
@@ -2452,6 +2473,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     r.total_price,
                     r.created_by,
                     c.status AS client_status,
+                    c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
                     responsible.name AS responsible_manager_name,
 
@@ -2587,6 +2609,7 @@ def get_comments(request_id: int, current_user: dict = Depends(get_current_user)
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
+                    c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
 
                     EXISTS (
@@ -2669,9 +2692,18 @@ def accept_request(
 
             cursor.execute(
                 """
-                SELECT id, city, status, assigned_to, is_paid, is_deleted, schedule_approval_status
-                FROM requests
-                WHERE id = %s
+                SELECT
+                    r.id,
+                    r.city,
+                    r.status,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.is_deleted,
+                    r.schedule_approval_status,
+                    c.payment_type AS client_payment_type
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s
                 """,
                 (request_id,)
             )
@@ -2698,10 +2730,13 @@ def accept_request(
                     detail="Нельзя принять заявку: нерабочее время отклонено администрацией"
                 )
 
-            if current_user["role"] == TECHNICIAN and not request["is_paid"]:
+            if (
+                current_user["role"] == TECHNICIAN
+                and not request_is_visible_to_technician_by_payment(request)
+            ):
                 raise HTTPException(
                     status_code=403,
-                    detail="Обычный монтажник может принять только оплаченную заявку"
+                    detail="Обычный монтажник может принять только оплаченную заявку или заявку клиента с постоплатой"
                 )
 
             if current_user["role"] == TECHNICIAN and request["city"] != user["city"]:

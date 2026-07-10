@@ -58,6 +58,7 @@ class ClientCreate(BaseModel):
     email: str | None = None
 
     status: str | None = None
+    payment_type: str | None = None
     responsible_manager_id: int | None = None
 
     source_system: str | None = None
@@ -88,6 +89,9 @@ class ClientStatusUpdate(BaseModel):
 class ClientResponsibleUpdate(BaseModel):
     responsible_manager_id: int | None = None
     apply_to_subclients: bool = True
+
+class ClientPaymentTypeUpdate(BaseModel):
+    payment_type: str
 
 class VehicleCreate(BaseModel):
     client_id: int

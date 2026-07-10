@@ -9,6 +9,11 @@ const CLIENT_TYPES = {
 	INDIVIDUAL: 'Физ. лицо',
 }
 
+const CLIENT_PAYMENT_TYPES = {
+	PREPAYMENT: 'Предоплата',
+	POSTPAYMENT: 'Постоплата',
+}
+
 const getErrorMessage = async res => {
 	const contentType = res.headers.get('content-type') || ''
 
@@ -208,6 +213,7 @@ export default function CreateClientModal({
 		email: '',
 
 		status: 'ACTIVE',
+		payment_type: 'PREPAYMENT',
 		responsible_manager_id: '',
 
 		is_subclient: false,
@@ -225,6 +231,8 @@ export default function CreateClientModal({
 
 	const canSetClientStatus = ['ADMIN', 'ROP', 'ACCOUNTANT'].includes(userRole)
 	const canSetResponsibleManager = ['ADMIN', 'ROP'].includes(userRole)
+
+	const canSetPaymentType = ['ADMIN', 'ROP'].includes(userRole)
 
 	const fetchClients = async () => {
 		try {
@@ -280,6 +288,7 @@ export default function CreateClientModal({
 				email: editClient.email || '',
 
 				status: editClient.status || 'ACTIVE',
+				payment_type: editClient.payment_type || 'PREPAYMENT',
 				responsible_manager_id: editClient.responsible_manager_id || '',
 
 				is_subclient: Boolean(editClient.source_parent_client_name),
@@ -296,6 +305,7 @@ export default function CreateClientModal({
 				email: '',
 
 				status: 'ACTIVE',
+				payment_type: 'PREPAYMENT',
 				responsible_manager_id: '',
 
 				is_subclient: false,
@@ -398,6 +408,7 @@ export default function CreateClientModal({
 			email: '',
 
 			status: 'ACTIVE',
+			payment_type: 'PREPAYMENT',
 			responsible_manager_id: '',
 
 			is_subclient: false,
@@ -464,6 +475,7 @@ export default function CreateClientModal({
 				email: formData.email.trim() || null,
 
 				status: canSetClientStatus ? formData.status : undefined,
+				payment_type: canSetPaymentType ? formData.payment_type : 'PREPAYMENT',
 				responsible_manager_id:
 					canSetResponsibleManager && formData.responsible_manager_id
 						? Number(formData.responsible_manager_id)
@@ -491,6 +503,27 @@ export default function CreateClientModal({
 
 			if (!res.ok) {
 				throw new Error(await getErrorMessage(res))
+			}
+
+			if (
+				isEditMode &&
+				canSetPaymentType &&
+				formData.payment_type !== (editClient.payment_type || 'PREPAYMENT')
+			) {
+				const paymentRes = await fetch(
+					`${API_BASE_URL}/clients/${editClient.id}/payment-type`,
+					{
+						method: 'PATCH',
+						headers: getJsonAuthHeaders(),
+						body: JSON.stringify({
+							payment_type: formData.payment_type,
+						}),
+					},
+				)
+
+				if (!paymentRes.ok) {
+					throw new Error(await getErrorMessage(paymentRes))
+				}
 			}
 
 			resetForm()
@@ -740,6 +773,32 @@ export default function CreateClientModal({
 										совпадать с ответственным родителя.
 									</div>
 								)}
+							</div>
+						)}
+
+						{canSetPaymentType && (
+							<div className='create-client-card'>
+								<div className='create-client-section-title'>Тип оплаты</div>
+								<label className='create-client-field'>
+									<select
+										name='payment_type'
+										value={formData.payment_type}
+										onChange={handleChange}
+										className='create-client-input'
+									>
+										{Object.entries(CLIENT_PAYMENT_TYPES).map(
+											([key, label]) => (
+												<option key={key} value={key}>
+													{label}
+												</option>
+											),
+										)}
+									</select>
+								</label>
+								<div className='create-client-note'>
+									Постоплата делает заявки клиента видимыми монтажникам сразу
+									после создания.
+								</div>
 							</div>
 						)}
 					</form>

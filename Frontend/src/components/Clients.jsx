@@ -135,6 +135,61 @@ export default function Clients() {
 
 	const canReassignClient = client => Boolean(client?.can_reassign)
 
+	const canChangeClientPaymentType = client =>
+		Boolean(client?.can_change_payment_type) ||
+		['ADMIN', 'ROP'].includes(userRole)
+
+	const getClientPaymentTypeLabel = paymentType => {
+		if (paymentType === 'POSTPAYMENT') return 'Постоплата'
+		return 'Предоплата'
+	}
+
+	const getClientPaymentTypeClass = paymentType => {
+		return paymentType === 'POSTPAYMENT' ? 'postpayment' : 'prepayment'
+	}
+
+	const getRequestPaymentText = req => {
+		const paymentType =
+			req.client_payment_type || selectedClient?.payment_type || 'PREPAYMENT'
+		const isPaid = Boolean(req.is_paid)
+
+		if (paymentType === 'POSTPAYMENT') {
+			return isPaid ? 'Постоплата · оплачено' : 'Постоплата · не оплачено'
+		}
+
+		return isPaid ? 'Предоплата · оплачено' : 'Предоплата · не оплачено'
+	}
+
+	const getRequestExecutors = req => {
+		if (Array.isArray(req.executors) && req.executors.length > 0) {
+			return req.executors.map(executor => ({
+				id: executor.user_id,
+				name: executor.user_name || getTechName(executor.user_id),
+			}))
+		}
+
+		if (req.assigned_to) {
+			return [
+				{
+					id: req.assigned_to,
+					name: getTechName(req.assigned_to),
+				},
+			]
+		}
+
+		return []
+	}
+
+	const getRequestExecutorsLabel = req => {
+		const executors = getRequestExecutors(req)
+
+		if (executors.length === 0) return 'Не назначены'
+
+		return executors
+			.map(executor => executor.name || `ID: ${executor.id}`)
+			.join(', ')
+	}
+
 	const getClientStatusLabel = status => {
 		if (status === 'ACTIVE') return 'Активный'
 		if (status === 'DEBTOR') return 'Должник'
@@ -252,6 +307,7 @@ export default function Clients() {
 		if (!client) return null
 
 		const status = client.status || 'ACTIVE'
+		const paymentType = client.payment_type || 'PREPAYMENT'
 
 		return (
 			<div className='client-card-badges'>
@@ -259,6 +315,12 @@ export default function Clients() {
 					className={`client-status-badge client-status-${String(status).toLowerCase()}`}
 				>
 					Статус: {getClientStatusLabel(status)}
+				</span>
+
+				<span
+					className={`client-payment-badge client-payment-${getClientPaymentTypeClass(paymentType)}`}
+				>
+					Тип оплаты: {getClientPaymentTypeLabel(paymentType)}
 				</span>
 
 				<span className='client-responsible-badge'>
@@ -585,6 +647,7 @@ export default function Clients() {
 			phone: client.phone,
 			email: client.email,
 			status: client.status,
+			payment_type: client.payment_type,
 			responsible_manager_id: client.responsible_manager_id,
 			responsible_manager_name: client.responsible_manager_name,
 			request_count: client.request_count,
@@ -593,6 +656,7 @@ export default function Clients() {
 			can_open_details: client.can_open_details,
 			can_edit: client.can_edit,
 			can_change_status: client.can_change_status,
+			can_change_payment_type: client.can_change_payment_type,
 			can_reassign: client.can_reassign,
 		})
 	}
@@ -1301,6 +1365,57 @@ export default function Clients() {
 
 			updateClientLocally(updatedClient)
 			fetchClientGroups({ silent: true })
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setClientActionLoading(false)
+		}
+	}
+
+	const handleClientPaymentTypeChange = async nextPaymentType => {
+		if (!selectedClient) return
+
+		const oldPaymentType = selectedClient.payment_type || 'PREPAYMENT'
+
+		if (nextPaymentType === oldPaymentType) return
+
+		const confirmText =
+			nextPaymentType === 'POSTPAYMENT'
+				? 'Перевести клиента на постоплату? Неоплаченные заявки этого клиента будут видны монтажникам.'
+				: 'Перевести клиента на предоплату? Новые и неоплаченные заявки будут скрыты от обычных монтажников до оплаты.'
+
+		if (!window.confirm(confirmText)) return
+
+		setClientActionLoading(true)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/clients/${selectedClient.id}/payment-type`,
+				{
+					method: 'PATCH',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						payment_type: nextPaymentType,
+					}),
+				},
+			)
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(
+					data?.detail || 'Не удалось изменить тип оплаты клиента',
+				)
+			}
+
+			const updatedClient = {
+				...selectedClient,
+				payment_type: nextPaymentType,
+			}
+
+			updateClientLocally(updatedClient)
+			fetchClientGroups({ silent: true })
+			fetchClients({ silent: true })
 		} catch (err) {
 			alert(err.message)
 		} finally {
@@ -2689,6 +2804,42 @@ export default function Clients() {
 						</div>
 
 						<div className='info-row'>
+							<span className='info-key'>Тип оплаты</span>
+
+							{canChangeClientPaymentType(selectedClient) ? (
+								<div className='client-status-control'>
+									<span
+										className={`client-payment-dot client-payment-dot-${getClientPaymentTypeClass(
+											selectedClient.payment_type || 'PREPAYMENT',
+										)}`}
+									/>
+
+									<select
+										className='client-inline-select client-payment-select'
+										value={selectedClient.payment_type || 'PREPAYMENT'}
+										onChange={e =>
+											handleClientPaymentTypeChange(e.target.value)
+										}
+										disabled={clientActionLoading}
+									>
+										<option value='PREPAYMENT'>Предоплата</option>
+										<option value='POSTPAYMENT'>Постоплата</option>
+									</select>
+								</div>
+							) : (
+								<span
+									className={`info-val client-payment-detail client-payment-${getClientPaymentTypeClass(
+										selectedClient.payment_type || 'PREPAYMENT',
+									)}`}
+								>
+									{getClientPaymentTypeLabel(
+										selectedClient.payment_type || 'PREPAYMENT',
+									)}
+								</span>
+							)}
+						</div>
+
+						<div className='info-row'>
 							<span className='info-key'>Ответственный</span>
 
 							{canReassignClient(selectedClient) ? (
@@ -3065,21 +3216,25 @@ export default function Clients() {
 										</div>
 									</div>
 
-									{req.assigned_to && (
-										<div className='card-item' style={{ marginTop: '5px' }}>
-											<span className='card-label'>Исполнитель</span>
-											<span
-												className='card-value'
-												style={{
-													fontWeight: '600',
-													color: '#5e9424',
-													fontSize: '13px',
-												}}
-											>
-												{getTechName(req.assigned_to)}
-											</span>
-										</div>
-									)}
+									<div className='card-item' style={{ marginTop: '5px' }}>
+										<span className='card-label'>
+											{getRequestExecutors(req).length > 1
+												? 'Исполнители'
+												: 'Исполнитель'}
+										</span>
+
+										<span
+											className='card-value'
+											style={{
+												fontWeight: '600',
+												color: '#5e9424',
+												fontSize: '13px',
+												lineHeight: '1.35',
+											}}
+										>
+											{getRequestExecutorsLabel(req)}
+										</span>
+									</div>
 								</div>
 
 								<div className='card-column'>
@@ -3183,6 +3338,7 @@ export default function Clients() {
 									{canViewRequestPrice && (
 										<div className='card-item'>
 											<span className='card-label'>Оплата</span>
+
 											<div
 												style={{
 													display: 'flex',
@@ -3190,14 +3346,24 @@ export default function Clients() {
 													gap: '8px',
 													alignItems: 'center',
 													marginTop: '2px',
+													flexWrap: 'wrap',
 												}}
 											>
 												<div
-													className={`status-badge ${Boolean(req.is_paid) ? 'status-progress' : 'status-new'}`}
-													style={{ padding: '2px 10px', fontSize: '11px' }}
+													className={`payment-status ${
+														(req.client_payment_type ||
+															selectedClient?.payment_type) === 'POSTPAYMENT'
+															? Boolean(req.is_paid)
+																? 'payment-postpaid-paid'
+																: 'payment-postpaid-unpaid'
+															: Boolean(req.is_paid)
+																? 'payment-paid'
+																: 'payment-unpaid'
+													}`}
 												>
-													{Boolean(req.is_paid) ? 'Оплачено' : 'Ожидает оплаты'}
+													{getRequestPaymentText(req)}
 												</div>
+
 												{Boolean(req.is_paid) && req.paid_at && (
 													<span
 														style={{

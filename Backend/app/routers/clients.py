@@ -5,6 +5,7 @@ from app.schemas import (
     ClientUpdate,
     ClientStatusUpdate,
     ClientResponsibleUpdate,
+    ClientPaymentTypeUpdate,
 )
 from app.security import get_current_user
 from app.permissions import (
@@ -39,6 +40,14 @@ ALLOWED_CLIENT_CREATOR_ROLES = [ADMIN, ROP, MANAGER, TECH_SUPPORT]
 ALLOWED_RESPONSIBLE_ROLES = [MANAGER, ROP, ADMIN]
 
 CLIENT_ACCESS_SCOPE_RESPONSIBLE_ONLY = "RESPONSIBLE_ONLY"
+
+CLIENT_PAYMENT_PREPAYMENT = "PREPAYMENT"
+CLIENT_PAYMENT_POSTPAYMENT = "POSTPAYMENT"
+
+ALLOWED_CLIENT_PAYMENT_TYPES = [
+    CLIENT_PAYMENT_PREPAYMENT,
+    CLIENT_PAYMENT_POSTPAYMENT,
+]
 
 def is_responsible_only_client_scope(current_user: dict) -> bool:
     return current_user.get("client_access_scope") == CLIENT_ACCESS_SCOPE_RESPONSIBLE_ONLY
@@ -120,6 +129,17 @@ def get_client_status(value: str | None) -> str:
 
     return status
 
+def get_client_payment_type(value: str | None) -> str:
+    payment_type = str(value or CLIENT_PAYMENT_PREPAYMENT).strip().upper()
+
+    if payment_type not in ALLOWED_CLIENT_PAYMENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Некорректный тип оплаты клиента"
+        )
+
+    return payment_type
+
 def get_default_responsible_manager_id(data: ClientCreate, current_user: dict):
     """
     При создании клиента:
@@ -171,6 +191,7 @@ def attach_client_permissions(client: dict, current_user: dict) -> dict:
     client["can_edit"] = can_edit_client(client, current_user)
     client["can_change_status"] = can_change_client_status(current_user)
     client["can_reassign"] = can_reassign_clients(current_user)
+    client["can_change_payment_type"] = current_user.get("role") in [ADMIN, ROP]
     client["can_create_request"] = can_create_request_for_client(client, current_user)
     return client
 
@@ -408,6 +429,54 @@ def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
 
     return requests
 
+def attach_executors_to_client_requests(cursor, requests: list[dict]) -> list[dict]:
+    if not requests:
+        return requests
+
+    request_ids = [r["id"] for r in requests]
+    placeholders = ", ".join(["%s"] * len(request_ids))
+
+    cursor.execute(
+        f"""
+        SELECT
+            re.id,
+            re.request_id,
+            re.user_id,
+            re.assigned_by,
+            re.assigned_at,
+
+            u.name AS user_name,
+            u.email AS user_email,
+            u.role AS user_role,
+            u.city AS user_city,
+
+            assigned_by_user.name AS assigned_by_name
+        FROM request_executors re
+        LEFT JOIN users u ON re.user_id = u.id
+        LEFT JOIN users assigned_by_user ON re.assigned_by = assigned_by_user.id
+        WHERE re.request_id IN ({placeholders})
+        ORDER BY re.id ASC
+        """,
+        tuple(request_ids)
+    )
+
+    rows = cursor.fetchall()
+    grouped = {}
+
+    for row in rows:
+        grouped.setdefault(row["request_id"], []).append(row)
+
+    for request in requests:
+        executors = grouped.get(request["id"], [])
+        request["executors"] = executors
+        request["executors_count"] = len(executors)
+        request["executors_summary"] = ", ".join(
+            executor.get("user_name") or f"ID {executor.get('user_id')}"
+            for executor in executors
+        )
+
+    return requests
+
 def get_subclient_ids_recursive(cursor, root_client_id: int) -> list[int]:
     cursor.execute(
         """
@@ -503,6 +572,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.phone,
                 c.email,
                 c.status,
+                c.payment_type,
                 c.source_system,
                 c.source_client_name,
                 c.source_parent_client_name,
@@ -542,6 +612,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.phone,
                 c.email,
                 c.status,
+                c.payment_type,
                 c.source_system,
                 c.source_client_name,
                 c.source_parent_client_name,
@@ -597,6 +668,13 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
 
             client_status = get_client_status(getattr(data, "status", None))
 
+            client_payment_type = CLIENT_PAYMENT_PREPAYMENT
+
+            if current_user["role"] in [ADMIN, ROP]:
+                client_payment_type = get_client_payment_type(
+                    getattr(data, "payment_type", None)
+                )
+
             # Обычные роли при создании не должны создавать сразу BLOCKED/DEBTOR.
             # Статус меняется отдельным endpoint'ом бухгалтером/РОП/админом.
             if client_status != "ACTIVE" and not can_change_client_status(current_user):
@@ -619,6 +697,7 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                     phone,
                     email,
                     status,
+                    payment_type,
                     source_system,
                     source_client_name,
                     source_parent_client_name,
@@ -628,7 +707,7 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                     responsible_changed_at,
                     responsible_changed_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
             """
 
             cursor.execute(
@@ -642,6 +721,7 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                         data.phone,
                         data.email,
                         client_status,
+                        client_payment_type,
                         getattr(data, "source_system", None),
                         getattr(data, "source_client_name", None),
                         getattr(data, "source_parent_client_name", None),
@@ -700,6 +780,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 c.phone,
                 c.email,
                 c.status,
+                c.payment_type,
                 c.source_system,
                 c.source_client_name,
                 c.source_parent_client_name,
@@ -730,6 +811,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 c.phone,
                 c.email,
                 c.status,
+                c.payment_type,
                 c.source_system,
                 c.source_client_name,
                 c.source_parent_client_name,
@@ -825,6 +907,7 @@ def get_clients_grouped(
                     c.phone,
                     c.email,
                     c.status,
+                    c.payment_type,
                     c.source_system,
                     c.source_client_name,
                     c.source_parent_client_name,
@@ -1076,6 +1159,7 @@ def get_client_grouped_position(
                     c.phone,
                     c.email,
                     c.status,
+                    c.payment_type,
                     c.source_system,
                     c.source_client_name,
                     c.source_parent_client_name,
@@ -1281,6 +1365,7 @@ def get_client_by_id(
                     c.phone,
                     c.email,
                     c.status,
+                    c.payment_type,
                     c.source_system,
                     c.source_client_name,
                     c.source_parent_client_name,
@@ -1554,6 +1639,85 @@ def update_client_status(
     finally:
         connection.close()
 
+@router.patch("/{client_id}/payment-type")
+def update_client_payment_type(
+    client_id: int,
+    data: ClientPaymentTypeUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] not in [ADMIN, ROP]:
+        raise HTTPException(
+            status_code=403,
+            detail="Только Админ или РОП могут менять тип оплаты клиента"
+        )
+
+    payment_type = get_client_payment_type(data.payment_type)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    payment_type,
+                    is_deleted
+                FROM clients
+                WHERE id = %s
+                """,
+                (client_id,)
+            )
+            client = cursor.fetchone()
+
+            if not client:
+                raise HTTPException(status_code=404, detail="Клиент не найден")
+
+            if client["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя менять тип оплаты у клиента из корзины"
+                )
+
+            old_payment_type = client.get("payment_type") or CLIENT_PAYMENT_PREPAYMENT
+
+            if old_payment_type == payment_type:
+                return {
+                    "message": "Тип оплаты клиента не изменился",
+                    "client_id": client_id,
+                    "payment_type": payment_type,
+                }
+
+            cursor.execute(
+                """
+                UPDATE clients
+                SET payment_type = %s
+                WHERE id = %s
+                """,
+                (
+                    payment_type,
+                    client_id,
+                )
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Тип оплаты клиента обновлён",
+                "client_id": client_id,
+                "old_payment_type": old_payment_type,
+                "payment_type": payment_type,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
 @router.patch("/{client_id}/responsible")
 def update_client_responsible(
     client_id: int,
@@ -1802,19 +1966,24 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
                     r.total_price,
                     r.created_by,
 
+                    client.payment_type AS client_payment_type,
+
                     creator.name AS created_by_name,
                     creator.role AS created_by_role
                 FROM requests r
+                LEFT JOIN clients client ON r.client_id = client.id
                 LEFT JOIN users creator ON r.created_by = creator.id
                 WHERE r.client_id = %s
-                  AND r.is_deleted = 0
+                    AND r.is_deleted = 0
                 ORDER BY r.created_at DESC
                 """,
                 (client_id,)
             )
 
             requests = cursor.fetchall()
-            return attach_vehicles_to_requests(cursor, requests)
+            requests = attach_vehicles_to_requests(cursor, requests)
+            requests = attach_executors_to_client_requests(cursor, requests)
+            return requests
 
     finally:
         connection.close()
