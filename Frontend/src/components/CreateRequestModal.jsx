@@ -154,6 +154,15 @@ function SearchableSelect({
 							setIsOpen(false)
 							setQuery('')
 						}
+
+						if (e.key === 'Enter') {
+							e.preventDefault()
+							e.stopPropagation()
+
+							if (isOpen && filteredOptions.length > 0) {
+								handleSelect(filteredOptions[0])
+							}
+						}
 					}}
 				/>
 
@@ -1554,7 +1563,19 @@ export default function CreateRequestModal({
 
 				<div className='request-modal-body'>
 					<div className='request-modal-main-layout'>
-						<form id='request-form' onSubmit={handleSubmit}>
+						<form
+							id='request-form'
+							onSubmit={handleSubmit}
+							onKeyDown={e => {
+								if (
+									e.key === 'Enter' &&
+									e.target.tagName !== 'SELECT' &&
+									e.target.tagName !== 'TEXTAREA'
+								) {
+									e.preventDefault()
+								}
+							}}
+						>
 							<div className='request-modal-card'>
 								<div className='request-modal-section-title'>
 									Данные клиента
@@ -2813,8 +2834,8 @@ export default function CreateRequestModal({
 
 					<button
 						className='request-submit-btn'
-						type='submit'
-						form='request-form'
+						type='button'
+						onClick={handleSubmit}
 						disabled={loading || clientRequestBlocked}
 					>
 						{loading
