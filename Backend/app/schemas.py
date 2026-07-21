@@ -242,6 +242,14 @@ class RequestEquipmentAttach(BaseModel):
 
     note: str | None = None
 
+class VehicleEquipmentAttach(BaseModel):
+    warehouse_item_id: int
+    quantity: int = 1
+    note: str | None = None
+
+class VehicleEquipmentDetach(BaseModel):
+    reason: str | None = None
+
 class PriceItemCreate(BaseModel):
     code: str
     name: str

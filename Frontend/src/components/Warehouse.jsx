@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 import WarehouseItemModal from './WarehouseItemModal'
+import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
 
 const CATEGORIES = {
 	GPS_TRACKER: 'Трекер',
@@ -59,6 +60,10 @@ const HISTORY_ACTIONS = {
 	ATTACHED_TO_REQUEST: 'Привязано к заявке',
 	DETACHED_FROM_REQUEST: 'Отвязано от заявки',
 
+	INSTALLED_TO_VEHICLE_DIRECT: 'Привязано к авто напрямую',
+	CONSUMABLE_USED_TO_VEHICLE_DIRECT: 'Расходник привязан к авто напрямую',
+	DETACHED_FROM_VEHICLE_DIRECT: 'Отвязано от авто напрямую',
+
 	DELETED: 'Перемещено в корзину',
 	RESTORED: 'Восстановлено из корзины',
 	WRITTEN_OFF: 'Списано',
@@ -81,10 +86,13 @@ const HISTORY_ACTIONS = {
 	INVENTORY_TRANSFERRED_TO_STOCK: 'Возвращено на склад из инвентаря',
 
 	CONSUMABLE_INVENTORY_TRANSFERRED_OUT: 'Расходник передан другому монтажнику',
-	CONSUMABLE_INVENTORY_TRANSFERRED_IN: 'Расходник получен от другого монтажника',
+	CONSUMABLE_INVENTORY_TRANSFERRED_IN:
+		'Расходник получен от другого монтажника',
 
-	CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_OUT: 'Расходник списан из инвентаря на склад',
-	CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_IN: 'Расходник принят на склад из инвентаря',
+	CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_OUT:
+		'Расходник списан из инвентаря на склад',
+	CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_IN:
+		'Расходник принят на склад из инвентаря',
 }
 
 const getUserRole = () => {
@@ -137,6 +145,7 @@ export default function Warehouse() {
 		reason: '',
 	})
 	const [assignLoading, setAssignLoading] = useState(false)
+	const [attachVehicleItem, setAttachVehicleItem] = useState(null)
 
 	const [historyItem, setHistoryItem] = useState(null)
 	const [historyRows, setHistoryRows] = useState([])
@@ -1106,6 +1115,29 @@ export default function Warehouse() {
 		})
 	}
 
+	const canAttachItemToVehicle = item => {
+		if (!canManageWarehouse) return false
+		if (viewMode !== 'active') return false
+		if (!item) return false
+		if (item.status !== 'IN_STOCK') return false
+		if (item.assigned_to_user_id) return false
+
+		return Number(item.quantity || 0) > 0
+	}
+
+	const openAttachVehicleModal = item => {
+		setAttachVehicleItem(item)
+	}
+
+	const closeAttachVehicleModal = () => {
+		setAttachVehicleItem(null)
+	}
+
+	const handleVehicleEquipmentAttached = () => {
+		setAttachVehicleItem(null)
+		fetchItems()
+	}
+
 	const handleAssignChange = e => {
 		const { name, value } = e.target
 
@@ -1461,6 +1493,16 @@ export default function Warehouse() {
 								>
 									🕘
 								</button>
+
+								{canAttachItemToVehicle(item) && (
+									<button
+										className='warehouse-action-btn warehouse-attach-vehicle-btn'
+										onClick={() => openAttachVehicleModal(item)}
+										title='Привязать к авто'
+									>
+										🚗
+									</button>
+								)}
 
 								{canManageWarehouse && item.status === 'IN_STOCK' && (
 									<button
@@ -1865,6 +1907,15 @@ export default function Warehouse() {
 					setEditItem(null)
 					fetchItems()
 				}}
+			/>
+
+			<AttachEquipmentToVehicleModal
+				isOpen={Boolean(attachVehicleItem)}
+				mode='equipment-first'
+				initialWarehouseItem={attachVehicleItem}
+				initialWarehouseItemId={attachVehicleItem?.id || null}
+				onClose={closeAttachVehicleModal}
+				onAttached={handleVehicleEquipmentAttached}
 			/>
 
 			{importPreviewOpen && importPreview && (

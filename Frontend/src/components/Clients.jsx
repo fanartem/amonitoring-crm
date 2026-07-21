@@ -7,6 +7,7 @@ import '../styles/Requests.css'
 import CreateClientModal from './CreateClientModal'
 import RequestDetailModal from './RequestDetailModal'
 import AttachmentsPanel from './AttachmentsPanel'
+import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
 
 const getUserRole = () => {
@@ -65,6 +66,7 @@ export default function Clients() {
 	const [technicians, setTechnicians] = useState([])
 	const [techniciansLookup, setTechniciansLookup] = useState([])
 	const [vehicleEquipmentMap, setVehicleEquipmentMap] = useState({})
+	const [attachEquipmentVehicle, setAttachEquipmentVehicle] = useState(null)
 
 	const [responsibleManagers, setResponsibleManagers] = useState([])
 	const [clientActionLoading, setClientActionLoading] = useState(false)
@@ -126,6 +128,11 @@ export default function Clients() {
 	const canRestoreVehicle = userRole === 'ADMIN'
 
 	const canTransferVehicle = ['ADMIN', 'ROP', 'MANAGER'].includes(userRole)
+
+	const canManageDirectVehicleEquipment = [
+		'ADMIN',
+		'WAREHOUSE_MANAGER',
+	].includes(userRole)
 
 	const canOpenClientDetails = client => Boolean(client?.can_open_details)
 
@@ -1032,19 +1039,30 @@ export default function Clients() {
 		const quantity = Number(item.quantity || 1)
 		const quantityText = quantity > 1 ? ` ${quantity} шт.` : ''
 
+		const sourceText =
+			item.source_type === 'DIRECT'
+				? ' · напрямую'
+				: item.request_id
+					? ` · заявка #${item.request_id}`
+					: ''
+
 		if (item.identifier_value) {
-			return `${title}: ${item.identifier_type || 'ID'} ${item.identifier_value}${quantityText}`
+			return `${title}: ${item.identifier_type || 'ID'} ${item.identifier_value}${quantityText}${sourceText}`
 		}
 
 		if (item.serial_number) {
-			return `${title}: S/N ${item.serial_number}${quantityText}`
+			return `${title}: S/N ${item.serial_number}${quantityText}${sourceText}`
 		}
 
-		return `${title}${quantityText}`
+		return `${title}${quantityText}${sourceText}`
 	}
 
 	const getVehicleEquipment = vehicleId => {
 		return vehicleEquipmentMap[vehicleId] || []
+	}
+
+	const getEquipmentBadgeKey = item => {
+		return item.source_key || `${item.source_type || 'REQUEST'}-${item.link_id}`
 	}
 
 	const getVehicleTitle = (vehicle, index) => {
@@ -1084,6 +1102,51 @@ export default function Clients() {
 			}
 		} catch (err) {
 			console.error('Ошибка загрузки заявок клиента:', err)
+		}
+	}
+
+	const fetchEquipmentForClientVehicles = async vehiclesList => {
+		if (!Array.isArray(vehiclesList) || vehiclesList.length === 0) {
+			return
+		}
+
+		try {
+			const equipmentByVehicle = {}
+
+			await Promise.all(
+				vehiclesList.map(async vehicle => {
+					if (!vehicle?.id) return
+
+					try {
+						const res = await fetch(
+							`${API_BASE_URL}/warehouse/vehicles/${vehicle.id}/equipment`,
+							{
+								headers: getAuthHeaders(),
+							},
+						)
+
+						if (!res.ok) return
+
+						const equipment = await res.json()
+
+						equipmentByVehicle[vehicle.id] = Array.isArray(equipment)
+							? equipment
+							: []
+					} catch (err) {
+						console.error(
+							`Ошибка загрузки оборудования машины ${vehicle.id}:`,
+							err,
+						)
+					}
+				}),
+			)
+
+			setVehicleEquipmentMap(prev => ({
+				...prev,
+				...equipmentByVehicle,
+			}))
+		} catch (err) {
+			console.error('Ошибка загрузки оборудования машин:', err)
 		}
 	}
 
@@ -1177,6 +1240,8 @@ export default function Clients() {
 				setVehiclesPage(page)
 				setVehiclesPageSize(pageSize)
 
+				fetchEquipmentForClientVehicles(items)
+
 				if (items.length === 0 && total === 0 && !silent) {
 					alert('У этого клиента пока нет добавленных автомобилей.')
 				}
@@ -1268,6 +1333,8 @@ export default function Clients() {
 								equipmentByVehicle[item.vehicle_id].push({
 									...item,
 									request_id: req.id,
+									source_type: 'REQUEST',
+									source_key: `REQUEST-${item.link_id}`,
 								})
 							}
 						})
@@ -1277,7 +1344,22 @@ export default function Clients() {
 				}),
 			)
 
-			setVehicleEquipmentMap(equipmentByVehicle)
+			setVehicleEquipmentMap(prev => {
+				const next = { ...prev }
+
+				Object.entries(equipmentByVehicle).forEach(
+					([vehicleId, requestEquipment]) => {
+						const currentItems = next[vehicleId] || []
+						const directItems = currentItems.filter(
+							item => item.source_type === 'DIRECT',
+						)
+
+						next[vehicleId] = [...directItems, ...requestEquipment]
+					},
+				)
+
+				return next
+			})
 		} catch (err) {
 			console.error('Ошибка загрузки оборудования по машинам:', err)
 		}
@@ -1755,6 +1837,48 @@ export default function Clients() {
 		})
 		setTransferClientQuery('')
 		setTransferVehicleHistory([])
+	}
+
+	const buildVehicleForAttachModal = vehicle => {
+		if (!vehicle) return null
+
+		return {
+			...vehicle,
+			client_name: selectedClient?.name || selectedClient?.client_name,
+			company_name: selectedClient?.company_name,
+			client_phone: selectedClient?.phone,
+			client_bin_iin: selectedClient?.bin_iin,
+			client_type: selectedClient?.type || selectedClient?.client_type,
+		}
+	}
+
+	const openAttachEquipmentToVehicleModal = vehicle => {
+		setAttachEquipmentVehicle(buildVehicleForAttachModal(vehicle))
+	}
+
+	const closeAttachEquipmentToVehicleModal = () => {
+		setAttachEquipmentVehicle(null)
+	}
+
+	const handleDirectVehicleEquipmentAttached = () => {
+		const vehicleId = attachEquipmentVehicle?.id
+
+		setAttachEquipmentVehicle(null)
+
+		if (vehicleId) {
+			fetchEquipmentForClientVehicles([{ id: vehicleId }])
+		}
+
+		if (selectedClient) {
+			fetchClientVehicles(
+				selectedClient.id,
+				true,
+				vehiclesPage,
+				vehiclesPageSize,
+			)
+			fetchClientGroups({ silent: true })
+			fetchClients({ silent: true })
+		}
 	}
 
 	const handleVehicleTransferSubmit = async e => {
@@ -2989,7 +3113,7 @@ export default function Clients() {
 															{getVehicleEquipment(v.id).length > 0 ? (
 																getVehicleEquipment(v.id).map(item => (
 																	<span
-																		key={item.link_id}
+																		key={getEquipmentBadgeKey(item)}
 																		className='vehicle-equipment-badge'
 																	>
 																		{getEquipmentBadgeText(item)}
@@ -3012,6 +3136,16 @@ export default function Clients() {
 												{(canEditClient(selectedClient) ||
 													canTransferVehicle) && (
 													<div className='vehicle-card-actions'>
+														{canManageDirectVehicleEquipment && (
+															<button
+																className='btn-details vehicle-attach-equipment-btn'
+																onClick={() =>
+																	openAttachEquipmentToVehicleModal(v)
+																}
+															>
+																+ Оборудование
+															</button>
+														)}
 														{canEditClient(selectedClient) && (
 															<button
 																className='btn-details vehicle-edit-btn'
@@ -3521,7 +3655,7 @@ export default function Clients() {
 										{getVehicleEquipment(editingVehicle.id).length > 0 ? (
 											getVehicleEquipment(editingVehicle.id).map(item => (
 												<span
-													key={item.link_id}
+													key={getEquipmentBadgeKey(item)}
 													className='vehicle-equipment-badge'
 												>
 													{getEquipmentBadgeText(item)}
@@ -3535,9 +3669,23 @@ export default function Clients() {
 									</div>
 
 									<div className='vehicle-equipment-hint'>
-										Устройства привязываются к автомобилю через заявку и склад.
-										Здесь они отображаются только для просмотра.
+										Устройства могут быть привязаны через заявку или напрямую со
+										склада.
 									</div>
+
+									{canManageDirectVehicleEquipment && (
+										<button
+											type='button'
+											className='btn-details vehicle-attach-equipment-btn'
+											onClick={() => {
+												const vehicleToAttach = editingVehicle
+												setEditingVehicle(null)
+												openAttachEquipmentToVehicleModal(vehicleToAttach)
+											}}
+										>
+											+ Привязать оборудование
+										</button>
+									)}
 								</div>
 							</form>
 						</div>
@@ -3890,6 +4038,15 @@ export default function Clients() {
 					</div>
 				</div>
 			)}
+
+			<AttachEquipmentToVehicleModal
+				isOpen={Boolean(attachEquipmentVehicle)}
+				mode='vehicle-first'
+				initialVehicle={attachEquipmentVehicle}
+				initialVehicleId={attachEquipmentVehicle?.id || null}
+				onClose={closeAttachEquipmentToVehicleModal}
+				onAttached={handleDirectVehicleEquipmentAttached}
+			/>
 
 			<CreateClientModal
 				isOpen={isCreateModalOpen}

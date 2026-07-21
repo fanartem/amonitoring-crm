@@ -11,6 +11,9 @@ const CATEGORIES = {
 	WIRED_SENSOR: 'Проводной датчик',
 	RELAY: 'Реле',
 	CABLE: 'Кабель',
+	CONSUMABLE: 'Расходники',
+	TOOLS: 'Инструменты',
+	FIRST_AID: 'Аптечки',
 	OTHER: 'Другое',
 }
 
@@ -49,6 +52,15 @@ export default function WarehouseItemModal({
 
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState('')
+
+	const isLinkedToRequest =
+		isEditMode &&
+		(editItem?.installed_source_type === 'REQUEST' ||
+			(!editItem?.installed_source_type &&
+				Boolean(editItem?.installed_request_id)))
+
+	const isLinkedDirectly =
+		isEditMode && editItem?.installed_source_type === 'DIRECT'
 
 	useEffect(() => {
 		if (!isOpen) return
@@ -94,6 +106,10 @@ export default function WarehouseItemModal({
 
 	const handleChange = e => {
 		const { name, value, type, checked } = e.target
+
+		if (name === 'status' && isLinkedToRequest) {
+			return
+		}
 
 		if (name === 'is_serialized') {
 			if (checked) {
@@ -167,7 +183,7 @@ export default function WarehouseItemModal({
 					? { city_id: Number(formData.city_id) }
 					: {}),
 				note: formData.note.trim() || null,
-				...(isEditMode && { status: formData.status }),
+				...(isEditMode && !isLinkedToRequest && { status: formData.status }),
 			}
 
 			const url = isEditMode
@@ -390,11 +406,15 @@ export default function WarehouseItemModal({
 								<div className='warehouse-form-grid warehouse-inner-grid'>
 									<label className='warehouse-field'>
 										<span className='warehouse-label required'>Статус</span>
+
 										<select
-											className='warehouse-input'
+											className={`warehouse-input ${
+												isLinkedToRequest ? 'warehouse-disabled-input' : ''
+											}`}
 											name='status'
 											value={formData.status}
 											onChange={handleChange}
+											disabled={isLinkedToRequest}
 										>
 											{Object.entries(STATUSES).map(([key, label]) => (
 												<option key={key} value={key}>
@@ -402,6 +422,21 @@ export default function WarehouseItemModal({
 												</option>
 											))}
 										</select>
+
+										{isLinkedToRequest && (
+											<span className='warehouse-field-hint'>
+												Статус нельзя менять через склад, так как оборудование
+												привязано к заявке #{editItem?.installed_request_id}.
+												Сначала отвяжите оборудование внутри заявки.
+											</span>
+										)}
+
+										{isLinkedDirectly && (
+											<span className='warehouse-field-hint'>
+												Если изменить статус установленного оборудования, прямая
+												привязка к автомобилю будет автоматически закрыта.
+											</span>
+										)}
 									</label>
 								</div>
 							)}

@@ -1450,6 +1450,18 @@
 	background: #ffffff;
 }
 
+.vehicle-attach-equipment-btn {
+	background: #eef2ff;
+	border-color: #c7d2fe;
+	color: #3730a3;
+}
+
+.vehicle-attach-equipment-btn:hover {
+	background: #e0e7ff;
+	border-color: #a5b4fc;
+	color: #312e81;
+}
+
 @media (max-width: 768px) {
 	.vehicle-trash-card {
 		flex-direction: column;

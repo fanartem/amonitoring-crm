@@ -225,12 +225,12 @@ def get_vehicles(
 @router.get("/search")
 def search_vehicles(
     q: str = Query(..., min_length=2),
-    limit: int = Query(default=10, ge=1, le=20),
+    limit: int = Query(default=10, ge=1, le=50),
     current_user: dict = Depends(get_current_user),
 ):
     """
     Быстрый глобальный поиск автомобилей без загрузки всех машин на фронт.
-    Ищет по гос. номеру, VIN, марке, модели.
+    Ищет по гос. номеру, VIN, марке, модели, клиенту, компании, телефону, БИН/ИИН.
     """
     search = q.strip()
 
@@ -238,6 +238,7 @@ def search_vehicles(
         return []
 
     like_value = f"%{search}%"
+    vin_search = search.upper()
 
     conditions = [
         "v.is_deleted = 0",
@@ -247,7 +248,11 @@ def search_vehicles(
             v.plate_number LIKE %s OR
             v.vin LIKE %s OR
             v.brand LIKE %s OR
-            v.model LIKE %s
+            v.model LIKE %s OR
+            c.name LIKE %s OR
+            c.company_name LIKE %s OR
+            c.phone LIKE %s OR
+            c.bin_iin LIKE %s
         )
         """,
     ]
@@ -257,9 +262,12 @@ def search_vehicles(
         like_value,
         like_value,
         like_value,
+        like_value,
+        like_value,
+        like_value,
+        like_value,
     ]
 
-    # Учитываем ограничение Максима и будущих пользователей с таким же scope
     if current_user.get("client_access_scope") == "RESPONSIBLE_ONLY":
         conditions.append("c.responsible_manager_id = %s")
         values.append(current_user["id"])
@@ -283,7 +291,10 @@ def search_vehicles(
 
                 c.name AS client_name,
                 c.company_name,
+                c.phone AS client_phone,
+                c.bin_iin AS client_bin_iin,
                 c.type AS client_type,
+                c.status AS client_status,
                 c.responsible_manager_id,
 
                 responsible.name AS responsible_manager_name
@@ -297,7 +308,11 @@ def search_vehicles(
                     WHEN v.vin = %s THEN 2
                     WHEN v.plate_number LIKE %s THEN 3
                     WHEN v.vin LIKE %s THEN 4
-                    ELSE 5
+                    WHEN c.bin_iin = %s THEN 5
+                    WHEN c.phone = %s THEN 6
+                    WHEN c.company_name LIKE %s THEN 7
+                    WHEN c.name LIKE %s THEN 8
+                    ELSE 9
                 END,
                 v.id DESC
             LIMIT %s
@@ -305,7 +320,11 @@ def search_vehicles(
 
             values.extend([
                 search,
-                search.upper(),
+                vin_search,
+                like_value,
+                like_value,
+                search,
+                search,
                 like_value,
                 like_value,
                 limit,

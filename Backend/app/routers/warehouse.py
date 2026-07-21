@@ -15,6 +15,8 @@ from app.schemas import (
     WarehouseInventoryTransfer,
     WarehouseConsumableThresholdUpdate,
     RequestEquipmentAttach,
+    VehicleEquipmentAttach,
+    VehicleEquipmentDetach,
 )
 
 router = APIRouter(prefix="/warehouse", tags=["Warehouse"])
@@ -36,6 +38,7 @@ REQUEST_EQUIPMENT_READ_ROLES = [
     "ROP",
     "WAREHOUSE_MANAGER",
     "MANAGER",
+    "TECH_SUPPORT",
     "SENIOR_TECHNICIAN",
     "TECHNICIAN",
 ]
@@ -98,6 +101,37 @@ def require_request_equipment_attach(current_user: dict):
             status_code=403,
             detail="Недостаточно прав для добавления оборудования в заявку"
         )
+    
+def require_vehicle_equipment_manage(current_user: dict):
+    if current_user["role"] not in WAREHOUSE_MANAGE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Привязывать оборудование напрямую к авто могут только Админ или Зав. складом"
+        )
+
+
+def can_user_access_vehicle_equipment(vehicle: dict, current_user: dict) -> bool:
+    role = current_user.get("role")
+    user_id = int(current_user["id"])
+
+    if role in ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT"]:
+        return True
+
+    if role == "SENIOR_TECHNICIAN":
+        return True
+
+    if role == "MANAGER":
+        created_by = vehicle.get("client_created_by")
+        responsible_manager_id = vehicle.get("responsible_manager_id")
+
+        return (
+            created_by is not None and int(created_by) == user_id
+        ) or (
+            responsible_manager_id is not None
+            and int(responsible_manager_id) == user_id
+        )
+
+    return False
     
 def normalize_city(value):
     if value is None:
@@ -2566,21 +2600,27 @@ def get_warehouse_items_grouped(
                 wi.updated_at,
                 u.name AS created_by_name,
 
-                r.id AS installed_request_id,
-                r.city AS installed_city,
-                r.address AS installed_address,
+                req_r.id AS installed_request_id,
+                req_r.city AS installed_city,
+                req_r.address AS installed_address,
 
-                c.id AS installed_client_id,
-                c.type AS client_type,
-                c.name AS client_name,
-                c.company_name,
+                COALESCE(direct_c.id, req_c.id) AS installed_client_id,
+                COALESCE(direct_c.type, req_c.type) AS client_type,
+                COALESCE(direct_c.name, req_c.name) AS client_name,
+                COALESCE(direct_c.company_name, req_c.company_name) AS company_name,
 
-                rv.id AS installed_request_vehicle_id,
-                v.id AS installed_vehicle_id,
-                v.brand,
-                v.model AS vehicle_model,
-                v.plate_number,
-                v.vin
+                req_rv.id AS installed_request_vehicle_id,
+                COALESCE(direct_v.id, req_v.id) AS installed_vehicle_id,
+                COALESCE(direct_v.brand, req_v.brand) AS brand,
+                COALESCE(direct_v.model, req_v.model) AS vehicle_model,
+                COALESCE(direct_v.plate_number, req_v.plate_number) AS plate_number,
+                COALESCE(direct_v.vin, req_v.vin) AS vin,
+
+                CASE
+                    WHEN direct_ve.id IS NOT NULL THEN 'DIRECT'
+                    WHEN re.id IS NOT NULL THEN 'REQUEST'
+                    ELSE NULL
+                END AS installed_source_type
                 
             FROM warehouse_items wi
             LEFT JOIN users u ON wi.created_by = u.id
@@ -2595,10 +2635,23 @@ def get_warehouse_items_grouped(
             ) latest_eq ON wi.id = latest_eq.warehouse_item_id
 
             LEFT JOIN request_equipment re ON latest_eq.last_equipment_link_id = re.id
-            LEFT JOIN requests r ON re.request_id = r.id AND r.is_deleted = 0
-            LEFT JOIN clients c ON r.client_id = c.id
-            LEFT JOIN request_vehicles rv ON re.request_vehicle_id = rv.id
-            LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+            LEFT JOIN requests req_r ON re.request_id = req_r.id AND req_r.is_deleted = 0
+            LEFT JOIN clients req_c ON req_r.client_id = req_c.id
+            LEFT JOIN request_vehicles req_rv ON re.request_vehicle_id = req_rv.id
+            LEFT JOIN vehicles req_v ON req_rv.vehicle_id = req_v.id
+
+            LEFT JOIN (
+                SELECT
+                    warehouse_item_id,
+                    MAX(id) AS last_vehicle_equipment_id
+                FROM vehicle_equipment
+                WHERE is_active = 1
+                GROUP BY warehouse_item_id
+            ) latest_direct_eq ON wi.id = latest_direct_eq.warehouse_item_id
+
+            LEFT JOIN vehicle_equipment direct_ve ON latest_direct_eq.last_vehicle_equipment_id = direct_ve.id
+            LEFT JOIN vehicles direct_v ON direct_ve.vehicle_id = direct_v.id AND direct_v.is_deleted = 0
+            LEFT JOIN clients direct_c ON direct_v.client_id = direct_c.id AND direct_c.is_deleted = 0
 
             WHERE wi.is_deleted = 0
                 AND wi.assigned_to_user_id IS NULL
@@ -3064,6 +3117,7 @@ def update_warehouse_item(
                 SELECT *
                 FROM warehouse_items
                 WHERE id = %s
+                FOR UPDATE
                 """,
                 (item_id,)
             )
@@ -3081,6 +3135,73 @@ def update_warehouse_item(
 
             if "status" in update_data and update_data["status"] not in ALLOWED_STATUSES:
                 raise HTTPException(status_code=400, detail="Некорректный статус оборудования")
+
+            status_is_really_changed = (
+                "status" in update_data
+                and str(update_data["status"]) != str(item.get("status"))
+            )
+
+            if status_is_really_changed:
+                cursor.execute(
+                    """
+                    SELECT
+                        re.id AS request_equipment_id,
+                        re.request_id,
+                        re.request_vehicle_id,
+
+                        r.status AS request_status,
+                        r.city AS request_city,
+                        r.address AS request_address,
+
+                        rv.vehicle_id,
+
+                        v.brand,
+                        v.model AS vehicle_model,
+                        v.plate_number,
+                        v.vin,
+
+                        c.name AS client_name,
+                        c.company_name
+                    FROM request_equipment re
+                    LEFT JOIN requests r ON re.request_id = r.id
+                    LEFT JOIN request_vehicles rv ON re.request_vehicle_id = rv.id
+                    LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+                    LEFT JOIN clients c ON r.client_id = c.id
+                    WHERE re.warehouse_item_id = %s
+                    AND r.is_deleted = 0
+                    ORDER BY re.id DESC
+                    LIMIT 1
+                    """,
+                    (item_id,)
+                )
+
+                request_equipment_link = cursor.fetchone()
+
+                if request_equipment_link:
+                    vehicle_title = f"{request_equipment_link.get('brand') or ''} {request_equipment_link.get('vehicle_model') or ''}".strip()
+
+                    if request_equipment_link.get("plate_number"):
+                        vehicle_title += f" ({request_equipment_link.get('plate_number')})"
+
+                    if request_equipment_link.get("vin"):
+                        vehicle_title += f" VIN: {request_equipment_link.get('vin')}"
+
+                    client_title = (
+                        request_equipment_link.get("company_name")
+                        or request_equipment_link.get("client_name")
+                        or "клиент не указан"
+                    )
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Нельзя изменить статус оборудования через склад, "
+                            f"так как оно привязано к заявке #{request_equipment_link['request_id']}. "
+                            f"Клиент: {client_title}. "
+                            f"Авто: {vehicle_title or 'не указано'}. "
+                            "Сначала отвяжите оборудование в заявке."
+                        )
+                    )
             
             if "city_id" in update_data:
                 if not bool(item["is_serialized"]):
@@ -3090,6 +3211,39 @@ def update_warehouse_item(
                     )
 
                 require_city(cursor, update_data["city_id"])
+
+            direct_vehicle_link_to_detach = None
+
+            status_changed_from_installed = (
+                status_is_really_changed
+                and item.get("status") == "INSTALLED"
+                and update_data["status"] != "INSTALLED"
+            )
+
+            if status_changed_from_installed:
+                cursor.execute(
+                    """
+                    SELECT
+                        ve.id,
+                        ve.vehicle_id,
+                        ve.quantity,
+
+                        v.brand,
+                        v.model AS vehicle_model,
+                        v.plate_number,
+                        v.vin
+                    FROM vehicle_equipment ve
+                    LEFT JOIN vehicles v ON ve.vehicle_id = v.id
+                    WHERE ve.warehouse_item_id = %s
+                    AND ve.is_active = 1
+                    ORDER BY ve.id DESC
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (item_id,)
+                )
+
+                direct_vehicle_link_to_detach = cursor.fetchone()
 
             if "identifier_value" in update_data or "identifier_type" in update_data:
                 identifier_type = merged_data.get("identifier_type")
@@ -3171,6 +3325,45 @@ def update_warehouse_item(
                     old_value="\n".join(changed_fields),
                     new_value=None,
                     reason="Редактирование оборудования"
+                )
+
+            if direct_vehicle_link_to_detach:
+                cursor.execute(
+                    """
+                    UPDATE vehicle_equipment
+                    SET is_active = 0,
+                        detached_by = %s,
+                        detached_at = NOW(),
+                        detach_reason = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        current_user["id"],
+                        "Автоматическая отвязка при изменении статуса оборудования через редактирование",
+                        direct_vehicle_link_to_detach["id"],
+                    )
+                )
+
+                vehicle_title = f"{direct_vehicle_link_to_detach.get('brand') or ''} {direct_vehicle_link_to_detach.get('vehicle_model') or ''}".strip()
+
+                if direct_vehicle_link_to_detach.get("plate_number"):
+                    vehicle_title += f" ({direct_vehicle_link_to_detach.get('plate_number')})"
+
+                if direct_vehicle_link_to_detach.get("vin"):
+                    vehicle_title += f" VIN: {direct_vehicle_link_to_detach.get('vin')}"
+
+                add_warehouse_movement(
+                    cursor=cursor,
+                    warehouse_item_id=item_id,
+                    action="DETACHED_FROM_VEHICLE_DIRECT",
+                    current_user=current_user,
+                    vehicle_id=direct_vehicle_link_to_detach["vehicle_id"],
+                    quantity=direct_vehicle_link_to_detach.get("quantity") or item.get("quantity"),
+                    old_status=item.get("status"),
+                    new_status=update_data.get("status"),
+                    old_value=vehicle_title or None,
+                    new_value=None,
+                    reason="Оборудование автоматически отвязано от авто при изменении статуса через редактирование"
                 )
 
             if (
@@ -3711,6 +3904,728 @@ def get_request_equipment(
     finally:
         connection.close()
 
+@router.get("/available-equipment")
+def get_available_equipment_for_vehicle_attach(
+    category: str | None = Query(None),
+    search: str | None = Query(None),
+    city_id: int | None = Query(None),
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Список оборудования для прямой привязки к автомобилю без заявки.
+
+    Доступ: ADMIN / WAREHOUSE_MANAGER.
+    Берём только свободное оборудование со склада:
+    - status = IN_STOCK
+    - assigned_to_user_id IS NULL
+    - quantity > 0
+    - серийное оборудование не должно быть уже привязано к заявке или авто
+    """
+    require_vehicle_equipment_manage(current_user)
+
+    conditions = [
+        "wi.is_deleted = 0",
+        "wi.quantity > 0",
+        "wi.status = 'IN_STOCK'",
+        "wi.assigned_to_user_id IS NULL",
+        """
+        (
+            wi.is_serialized = 0
+            OR (
+                NOT EXISTS (
+                    SELECT 1
+                    FROM request_equipment re_check
+                    WHERE re_check.warehouse_item_id = wi.id
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM vehicle_equipment ve_check
+                    WHERE ve_check.warehouse_item_id = wi.id
+                      AND ve_check.is_active = 1
+                )
+            )
+        )
+        """,
+    ]
+    values = []
+
+    if category:
+        conditions.append("wi.category = %s")
+        values.append(category)
+
+    if city_id:
+        conditions.append("wi.city_id = %s")
+        values.append(city_id)
+
+    if search:
+        conditions.append(
+            """
+            (
+                wi.name LIKE %s OR
+                wi.manufacturer LIKE %s OR
+                wi.model LIKE %s OR
+                wi.identifier_value LIKE %s OR
+                wi.serial_number LIKE %s OR
+                city.name LIKE %s
+            )
+            """
+        )
+        like_value = f"%{search}%"
+        values.extend([
+            like_value,
+            like_value,
+            like_value,
+            like_value,
+            like_value,
+            like_value,
+        ])
+
+    where_clause = " AND ".join(conditions)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT
+                    wi.id,
+                    wi.category,
+                    wi.name,
+                    wi.manufacturer,
+                    wi.model,
+                    wi.identifier_type,
+                    wi.identifier_value,
+                    wi.serial_number,
+                    wi.is_serialized,
+                    wi.quantity,
+                    wi.city_id,
+                    city.name AS city_name,
+                    wi.status,
+                    wi.note,
+
+                    CASE
+                        WHEN wi.is_serialized = 1 THEN 1
+                        ELSE wi.quantity
+                    END AS available_quantity,
+
+                    'STOCK' AS source_type,
+                    CONCAT('Склад: ', COALESCE(city.name, '—')) AS source_label
+
+                FROM warehouse_items wi
+                LEFT JOIN cities city ON wi.city_id = city.id
+
+                WHERE {where_clause}
+
+                ORDER BY
+                    city.name ASC,
+                    wi.category ASC,
+                    wi.name ASC,
+                    wi.identifier_value ASC,
+                    wi.id DESC
+
+                LIMIT %s
+                """,
+                tuple(values + [limit])
+            )
+
+            return cursor.fetchall()
+
+    finally:
+        connection.close()
+
+@router.get("/vehicles/{vehicle_id}/equipment")
+def get_vehicle_equipment(
+    vehicle_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Получить оборудование автомобиля.
+
+    Возвращает:
+    - прямые привязки из vehicle_equipment;
+    - привязки через заявки из request_equipment.
+    """
+    require_request_equipment_read(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    v.is_deleted,
+
+                    c.name AS client_name,
+                    c.company_name,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id,
+                    c.is_deleted AS client_is_deleted
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.id = %s
+                LIMIT 1
+                """,
+                (vehicle_id,)
+            )
+
+            vehicle = cursor.fetchone()
+
+            if not vehicle:
+                raise HTTPException(status_code=404, detail="Машина не найдена")
+
+            if vehicle["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Машина находится в корзине"
+                )
+
+            if vehicle["client_is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Клиент машины находится в корзине"
+                )
+
+            if not can_user_access_vehicle_equipment(vehicle, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра оборудования этой машины"
+                )
+
+            cursor.execute(
+                """
+                SELECT
+                    ve.id AS link_id,
+                    ve.vehicle_id,
+                    NULL AS request_id,
+                    NULL AS request_vehicle_id,
+                    ve.warehouse_item_id,
+                    ve.quantity,
+                    ve.attached_at,
+                    ve.note,
+
+                    wi.city_id,
+                    city.name AS city_name,
+                    wi.category,
+                    wi.name,
+                    wi.manufacturer,
+                    wi.model,
+                    wi.identifier_type,
+                    wi.identifier_value,
+                    wi.serial_number,
+                    wi.is_serialized,
+                    wi.status,
+                    wi.is_deleted AS warehouse_item_is_deleted,
+
+                    v.brand,
+                    v.model AS vehicle_model,
+                    v.plate_number,
+                    v.vin,
+
+                    u.name AS attached_by_name,
+
+                    'DIRECT' AS source_type,
+                    NULL AS request_status
+                FROM vehicle_equipment ve
+                LEFT JOIN warehouse_items wi ON ve.warehouse_item_id = wi.id
+                LEFT JOIN vehicles v ON ve.vehicle_id = v.id
+                LEFT JOIN users u ON ve.attached_by = u.id
+                LEFT JOIN cities city ON wi.city_id = city.id
+                WHERE ve.vehicle_id = %s
+                  AND ve.is_active = 1
+                ORDER BY ve.attached_at DESC
+                """,
+                (vehicle_id,)
+            )
+
+            direct_rows = cursor.fetchall()
+
+            cursor.execute(
+                """
+                SELECT
+                    re.id AS link_id,
+                    rv.vehicle_id,
+                    re.request_id,
+                    re.request_vehicle_id,
+                    re.warehouse_item_id,
+                    re.quantity,
+                    re.attached_at,
+                    re.note,
+
+                    wi.city_id,
+                    city.name AS city_name,
+                    wi.category,
+                    wi.name,
+                    wi.manufacturer,
+                    wi.model,
+                    wi.identifier_type,
+                    wi.identifier_value,
+                    wi.serial_number,
+                    wi.is_serialized,
+                    wi.status,
+                    wi.is_deleted AS warehouse_item_is_deleted,
+
+                    v.brand,
+                    v.model AS vehicle_model,
+                    v.plate_number,
+                    v.vin,
+
+                    u.name AS attached_by_name,
+
+                    'REQUEST' AS source_type,
+                    r.status AS request_status
+                FROM request_equipment re
+                LEFT JOIN request_vehicles rv ON re.request_vehicle_id = rv.id
+                LEFT JOIN requests r ON re.request_id = r.id
+                LEFT JOIN warehouse_items wi ON re.warehouse_item_id = wi.id
+                LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+                LEFT JOIN users u ON re.attached_by = u.id
+                LEFT JOIN cities city ON wi.city_id = city.id
+                WHERE rv.vehicle_id = %s
+                  AND r.is_deleted = 0
+                ORDER BY re.attached_at DESC
+                """,
+                (vehicle_id,)
+            )
+
+            request_rows = cursor.fetchall()
+
+            result = []
+
+            for row in direct_rows + request_rows:
+                row["source_key"] = f"{row['source_type']}-{row['link_id']}"
+                result.append(row)
+
+            return result
+
+    finally:
+        connection.close()
+
+@router.post("/vehicles/{vehicle_id}/equipment")
+def attach_equipment_to_vehicle(
+    vehicle_id: int,
+    data: VehicleEquipmentAttach,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Прямая привязка оборудования к машине без заявки.
+
+    Доступ: ADMIN / WAREHOUSE_MANAGER.
+    Источник: только свободное оборудование со склада IN_STOCK.
+    """
+    require_vehicle_equipment_manage(current_user)
+
+    if data.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Количество должно быть больше 0")
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    v.is_deleted,
+
+                    c.name AS client_name,
+                    c.company_name,
+                    c.is_deleted AS client_is_deleted
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.id = %s
+                LIMIT 1
+                """,
+                (vehicle_id,)
+            )
+
+            vehicle = cursor.fetchone()
+
+            if not vehicle:
+                raise HTTPException(status_code=404, detail="Машина не найдена")
+
+            if vehicle["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя привязать оборудование к машине из корзины"
+                )
+
+            if vehicle["client_is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя привязать оборудование к машине клиента из корзины"
+                )
+
+            cursor.execute(
+                """
+                SELECT
+                    wi.id,
+                    wi.category,
+                    wi.name,
+                    wi.manufacturer,
+                    wi.model,
+                    wi.identifier_type,
+                    wi.identifier_value,
+                    wi.serial_number,
+                    wi.is_serialized,
+                    wi.quantity,
+                    wi.city_id,
+                    city.name AS city_name,
+                    wi.status,
+                    wi.is_deleted,
+                    wi.assigned_to_user_id
+                FROM warehouse_items wi
+                LEFT JOIN cities city ON wi.city_id = city.id
+                WHERE wi.id = %s
+                FOR UPDATE
+                """,
+                (data.warehouse_item_id,)
+            )
+
+            item = cursor.fetchone()
+
+            if not item:
+                raise HTTPException(status_code=404, detail="Оборудование не найдено")
+
+            if item["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя привязать оборудование из корзины"
+                )
+
+            if item["status"] != "IN_STOCK" or item.get("assigned_to_user_id"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Прямо к авто можно привязать только свободное оборудование со склада"
+                )
+
+            is_serialized = bool(item["is_serialized"])
+            old_status = item.get("status")
+
+            if is_serialized:
+                if data.quantity != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Для серийного оборудования количество должно быть 1"
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM request_equipment
+                    WHERE warehouse_item_id = %s
+                    LIMIT 1
+                    """,
+                    (data.warehouse_item_id,)
+                )
+                existing_request_link = cursor.fetchone()
+
+                if existing_request_link:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Это серийное оборудование уже привязано к заявке"
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM vehicle_equipment
+                    WHERE warehouse_item_id = %s
+                      AND is_active = 1
+                    LIMIT 1
+                    """,
+                    (data.warehouse_item_id,)
+                )
+                existing_vehicle_link = cursor.fetchone()
+
+                if existing_vehicle_link:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Это серийное оборудование уже привязано к машине"
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET status = 'INSTALLED',
+                        assigned_to_user_id = NULL,
+                        assigned_at = NULL,
+                        assigned_by = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (data.warehouse_item_id,)
+                )
+
+                movement_action = "INSTALLED_TO_VEHICLE_DIRECT"
+                new_status_for_history = "INSTALLED"
+
+            else:
+                available_quantity = int(item["quantity"] or 0)
+
+                if data.quantity > available_quantity:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Недостаточно количества. Доступно: {available_quantity}"
+                    )
+
+                new_quantity = available_quantity - data.quantity
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = %s,
+                        is_deleted = CASE WHEN %s = 0 THEN 1 ELSE is_deleted END,
+                        deleted_at = CASE WHEN %s = 0 THEN NOW() ELSE deleted_at END,
+                        deleted_by = CASE WHEN %s = 0 THEN %s ELSE deleted_by END,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        new_quantity,
+                        new_quantity,
+                        new_quantity,
+                        new_quantity,
+                        current_user["id"],
+                        data.warehouse_item_id,
+                    )
+                )
+
+                movement_action = "CONSUMABLE_USED_TO_VEHICLE_DIRECT"
+                new_status_for_history = old_status
+
+            cursor.execute(
+                """
+                INSERT INTO vehicle_equipment (
+                    vehicle_id,
+                    warehouse_item_id,
+                    quantity,
+                    attached_by,
+                    note,
+                    source_type
+                )
+                VALUES (%s, %s, %s, %s, %s, 'DIRECT')
+                """,
+                (
+                    vehicle_id,
+                    data.warehouse_item_id,
+                    data.quantity,
+                    current_user["id"],
+                    data.note,
+                )
+            )
+
+            link_id = cursor.lastrowid
+
+            vehicle_title = f"{vehicle.get('brand') or ''} {vehicle.get('model') or ''}".strip()
+            if vehicle.get("plate_number"):
+                vehicle_title += f" ({vehicle.get('plate_number')})"
+            if vehicle.get("vin"):
+                vehicle_title += f" VIN: {vehicle.get('vin')}"
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=data.warehouse_item_id,
+                action=movement_action,
+                current_user=current_user,
+                from_city_id=item.get("city_id"),
+                to_city_id=None,
+                vehicle_id=vehicle_id,
+                quantity=data.quantity,
+                old_status=old_status,
+                new_status=new_status_for_history,
+                old_value=None,
+                new_value=vehicle_title,
+                reason=data.note or "Оборудование привязано напрямую к машине"
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Оборудование привязано к машине",
+                "link_id": link_id,
+                "vehicle_id": vehicle_id,
+                "warehouse_item_id": data.warehouse_item_id,
+                "quantity": data.quantity,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.patch("/vehicle-equipment/{link_id}/detach")
+def detach_equipment_from_vehicle(
+    link_id: int,
+    data: VehicleEquipmentDetach,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Отвязать оборудование, которое было привязано напрямую к машине.
+    Возвращает серийное оборудование в IN_STOCK, расходник возвращает количеством.
+    """
+    require_vehicle_equipment_manage(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    ve.id,
+                    ve.vehicle_id,
+                    ve.warehouse_item_id,
+                    ve.quantity,
+                    ve.is_active,
+
+                    wi.name,
+                    wi.model,
+                    wi.identifier_type,
+                    wi.identifier_value,
+                    wi.is_serialized,
+                    wi.quantity AS current_quantity,
+                    wi.city_id,
+                    wi.status,
+
+                    v.brand,
+                    v.model AS vehicle_model,
+                    v.plate_number,
+                    v.vin
+                FROM vehicle_equipment ve
+                LEFT JOIN warehouse_items wi ON ve.warehouse_item_id = wi.id
+                LEFT JOIN vehicles v ON ve.vehicle_id = v.id
+                WHERE ve.id = %s
+                FOR UPDATE
+                """,
+                (link_id,)
+            )
+
+            link = cursor.fetchone()
+
+            if not link:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Привязка оборудования к машине не найдена"
+                )
+
+            if not link["is_active"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Оборудование уже отвязано от машины"
+                )
+
+            is_serialized = bool(link["is_serialized"])
+            old_status = link.get("status")
+
+            if is_serialized:
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET status = 'IN_STOCK',
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (link["warehouse_item_id"],)
+                )
+
+                new_status_for_history = "IN_STOCK"
+
+            else:
+                new_quantity = int(link["current_quantity"] or 0) + int(link["quantity"] or 0)
+
+                cursor.execute(
+                    """
+                    UPDATE warehouse_items
+                    SET quantity = %s,
+                        is_deleted = 0,
+                        deleted_at = NULL,
+                        deleted_by = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        new_quantity,
+                        link["warehouse_item_id"],
+                    )
+                )
+
+                new_status_for_history = old_status
+
+            cursor.execute(
+                """
+                UPDATE vehicle_equipment
+                SET is_active = 0,
+                    detached_by = %s,
+                    detached_at = NOW(),
+                    detach_reason = %s
+                WHERE id = %s
+                """,
+                (
+                    current_user["id"],
+                    data.reason,
+                    link_id,
+                )
+            )
+
+            vehicle_title = f"{link.get('brand') or ''} {link.get('vehicle_model') or ''}".strip()
+            if link.get("plate_number"):
+                vehicle_title += f" ({link.get('plate_number')})"
+            if link.get("vin"):
+                vehicle_title += f" VIN: {link.get('vin')}"
+
+            add_warehouse_movement(
+                cursor=cursor,
+                warehouse_item_id=link["warehouse_item_id"],
+                action="DETACHED_FROM_VEHICLE_DIRECT",
+                current_user=current_user,
+                from_city_id=None,
+                to_city_id=link.get("city_id"),
+                vehicle_id=link.get("vehicle_id"),
+                quantity=link.get("quantity"),
+                old_status=old_status,
+                new_status=new_status_for_history,
+                old_value=vehicle_title,
+                new_value=None,
+                reason=data.reason or "Оборудование отвязано от машины и возвращено на склад"
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Оборудование отвязано от машины",
+                "link_id": link_id,
+                "vehicle_id": link["vehicle_id"],
+                "warehouse_item_id": link["warehouse_item_id"],
+                "quantity": link["quantity"],
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
 @router.delete("/requests/{request_id}/equipment/{link_id}")
 def detach_equipment_from_request(
     request_id: int,
@@ -3937,10 +4852,18 @@ def get_available_inventory_for_request_vehicle(
                 """
                 (
                     wi.is_serialized = 0
-                    OR NOT EXISTS (
-                        SELECT 1
-                        FROM request_equipment re_check
-                        WHERE re_check.warehouse_item_id = wi.id
+                    OR (
+                        NOT EXISTS (
+                            SELECT 1
+                            FROM request_equipment re_check
+                            WHERE re_check.warehouse_item_id = wi.id
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM vehicle_equipment ve_check
+                            WHERE ve_check.warehouse_item_id = wi.id
+                            AND ve_check.is_active = 1
+                        )
                     )
                 )
                 """
@@ -4286,6 +5209,46 @@ def attach_equipment_to_request_vehicle(
                     raise HTTPException(
                         status_code=400,
                         detail="Это серийное оборудование уже привязано к заявке"
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT
+                        ve.id,
+                        ve.vehicle_id,
+
+                        v.brand,
+                        v.model AS vehicle_model,
+                        v.plate_number,
+                        v.vin
+                    FROM vehicle_equipment ve
+                    LEFT JOIN vehicles v ON ve.vehicle_id = v.id
+                    WHERE ve.warehouse_item_id = %s
+                    AND ve.is_active = 1
+                    ORDER BY ve.id DESC
+                    LIMIT 1
+                    """,
+                    (data.warehouse_item_id,)
+                )
+
+                existing_direct_link = cursor.fetchone()
+
+                if existing_direct_link:
+                    vehicle_title = f"{existing_direct_link.get('brand') or ''} {existing_direct_link.get('vehicle_model') or ''}".strip()
+
+                    if existing_direct_link.get("plate_number"):
+                        vehicle_title += f" ({existing_direct_link.get('plate_number')})"
+
+                    if existing_direct_link.get("vin"):
+                        vehicle_title += f" VIN: {existing_direct_link.get('vin')}"
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Это серийное оборудование уже напрямую привязано к машине"
+                            f"{': ' + vehicle_title if vehicle_title else ''}. "
+                            "Сначала отвяжите его от автомобиля."
+                        )
                     )
 
                 old_status = item.get("status")
