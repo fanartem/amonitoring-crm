@@ -1366,14 +1366,23 @@ export default function Clients() {
 	}
 
 	const handleDeleteClient = async (e, clientId, clientName) => {
-		e.stopPropagation()
+		e?.stopPropagation?.()
 		setActiveDropdown(null)
 
-		if (
-			!window.confirm(`Вы уверены, что хотите удалить клиента "${clientName}"?`)
-		) {
+		if (!canDeleteClient) {
+			alert('Недостаточно прав для удаления клиента')
 			return
 		}
+
+		const confirmText =
+			`Удалить клиента "${clientName}" в корзину?\n\n` +
+			'Клиент будет скрыт из активного списка. Если у клиента есть активные заявки, backend не даст его удалить.'
+
+		if (!window.confirm(confirmText)) {
+			return
+		}
+
+		setClientActionLoading(true)
 
 		try {
 			const res = await fetch(`${API_BASE_URL}/clients/${clientId}`, {
@@ -1381,19 +1390,35 @@ export default function Clients() {
 				headers: getAuthHeaders(),
 			})
 
-			if (res.ok) {
-				alert('Клиент успешно удален в корзину!')
-				refreshClientsData()
+			const data = await res.json().catch(() => null)
 
-				if (selectedClient && selectedClient.id === clientId) {
-					setSelectedClient(null)
-				}
-			} else {
-				const errData = await res.json().catch(() => null)
-				throw new Error(errData?.detail || 'Ошибка при удалении клиента')
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Ошибка при удалении клиента')
 			}
+
+			alert(data?.message || 'Клиент перемещён в корзину')
+
+			if (selectedClient && Number(selectedClient.id) === Number(clientId)) {
+				setSelectedClient(null)
+				setClientRequests([])
+				setClientVehicles([])
+				setVehicleEquipmentMap({})
+				setShowVehicles(false)
+				setDeletedVehicles([])
+				setShowDeletedVehicles(false)
+			}
+
+			fetchClientGroups({
+				initial: clientGroupsPageRef.current === 1,
+				page: clientGroupsPageRef.current,
+				pageSize: clientGroupsPageSizeRef.current,
+			})
+
+			fetchClients({ silent: true })
 		} catch (err) {
 			alert(`Ошибка при удалении: ${err.message}`)
+		} finally {
+			setClientActionLoading(false)
 		}
 	}
 
@@ -2995,14 +3020,33 @@ export default function Clients() {
 							)}
 						</div>
 
-						{canEditClient(selectedClient) && (
+						{(canEditClient(selectedClient) || canDeleteClient) && (
 							<div className='client-edit-btn-wrapper'>
-								<button
-									className='btn-edit-request'
-									onClick={e => handleEditClientClick(e, selectedClient)}
-								>
-									✎ Редактировать
-								</button>
+								{canEditClient(selectedClient) && (
+									<button
+										className='btn-edit-request client-detail-action-btn'
+										onClick={e => handleEditClientClick(e, selectedClient)}
+										disabled={clientActionLoading}
+									>
+										✎ Редактировать
+									</button>
+								)}
+
+								{canDeleteClient && (
+									<button
+										className='btn-delete-client-detail client-detail-action-btn'
+										onClick={e =>
+											handleDeleteClient(
+												e,
+												selectedClient.id,
+												selectedClient.company_name || selectedClient.name,
+											)
+										}
+										disabled={clientActionLoading}
+									>
+										🗑 Удалить клиента
+									</button>
+								)}
 							</div>
 						)}
 
