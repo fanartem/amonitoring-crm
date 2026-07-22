@@ -79,6 +79,7 @@ export default function Clients() {
 
 	// Состояние для редактируемого автомобиля
 	const [editingVehicle, setEditingVehicle] = useState(null)
+	const [vehicleFormMode, setVehicleFormMode] = useState('edit')
 
 	const [deletingVehicle, setDeletingVehicle] = useState(null)
 	const [deleteVehicleForm, setDeleteVehicleForm] = useState({
@@ -128,6 +129,14 @@ export default function Clients() {
 	const canRestoreVehicle = userRole === 'ADMIN'
 
 	const canTransferVehicle = ['ADMIN', 'ROP', 'MANAGER'].includes(userRole)
+
+	const canAddVehicleToClient = client => {
+		return (
+			['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'].includes(userRole) &&
+			Boolean(client?.can_create_request) &&
+			String(client?.status || 'ACTIVE') !== 'BLOCKED'
+		)
+	}
 
 	const canManageDirectVehicleEquipment = [
 		'ADMIN',
@@ -1609,35 +1618,140 @@ export default function Clients() {
 		}))
 	}
 
-	// ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ОТРЕДАКТИРОВАННОГО АВТО (без IMEI, так как он берется со склада)
+	const getEmptyVehicleForm = clientId => ({
+		client_id: clientId,
+		brand: '',
+		model: '',
+		plate_number: '',
+		vin: '',
+		year: '',
+		type: '',
+	})
+
+	const openCreateVehicleModal = () => {
+		if (!selectedClient) return
+
+		if (!canAddVehicleToClient(selectedClient)) {
+			alert('Недостаточно прав для добавления машины этому клиенту')
+			return
+		}
+
+		setVehicleFormMode('create')
+		setEditingVehicle(getEmptyVehicleForm(selectedClient.id))
+	}
+
+	const openEditVehicleModal = vehicle => {
+		setVehicleFormMode('edit')
+		setEditingVehicle(vehicle)
+	}
+
+	const closeVehicleModal = () => {
+		setEditingVehicle(null)
+		setVehicleFormMode('edit')
+	}
+
 	const handleVehicleSubmit = async e => {
 		e.preventDefault()
 
+		if (!editingVehicle || !selectedClient) return
+
+		const isCreateMode = vehicleFormMode === 'create'
+
+		const brand = String(editingVehicle.brand || '').trim()
+		const model = String(editingVehicle.model || '').trim()
+		const plateNumber = String(editingVehicle.plate_number || '').trim()
+		const vin = String(editingVehicle.vin || '')
+			.trim()
+			.toUpperCase()
+		const type = String(editingVehicle.type || '').trim()
+
+		if (!brand) {
+			alert('Укажите марку автомобиля')
+			return
+		}
+
+		if (!model) {
+			alert('Укажите модель автомобиля')
+			return
+		}
+
+		if (!vin) {
+			alert('Укажите VIN автомобиля')
+			return
+		}
+
+		const yearValue = editingVehicle.year
+			? parseInt(editingVehicle.year, 10)
+			: null
+
+		if (yearValue && (Number.isNaN(yearValue) || yearValue < 1900)) {
+			alert('Некорректный год выпуска')
+			return
+		}
+
+		setClientActionLoading(true)
+
 		try {
-			const res = await fetch(`${API_BASE_URL}/vehicles/${editingVehicle.id}`, {
-				method: 'PATCH',
+			const payload = {
+				brand,
+				model,
+				plate_number: plateNumber,
+				vin,
+				year: yearValue,
+				type: type || null,
+			}
+
+			if (isCreateMode) {
+				payload.client_id = Number(selectedClient.id)
+			}
+
+			const url = isCreateMode
+				? `${API_BASE_URL}/vehicles`
+				: `${API_BASE_URL}/vehicles/${editingVehicle.id}`
+
+			const method = isCreateMode ? 'POST' : 'PATCH'
+
+			const res = await fetch(url, {
+				method,
 				headers: getJsonAuthHeaders(),
-				body: JSON.stringify({
-					brand: editingVehicle.brand,
-					model: editingVehicle.model,
-					plate_number: editingVehicle.plate_number,
-					vin: editingVehicle.vin,
-					year: editingVehicle.year ? parseInt(editingVehicle.year, 10) : null,
-				}),
+				body: JSON.stringify(payload),
 			})
 
-			if (!res.ok) throw new Error(await res.text())
+			const data = await res.json().catch(() => null)
 
-			alert('Данные авто успешно обновлены!')
-			setEditingVehicle(null)
+			if (!res.ok) {
+				throw new Error(
+					data?.detail ||
+						(isCreateMode
+							? 'Не удалось добавить автомобиль'
+							: 'Не удалось обновить автомобиль'),
+				)
+			}
+
+			alert(
+				isCreateMode
+					? 'Автомобиль успешно добавлен клиенту'
+					: 'Данные авто успешно обновлены!',
+			)
+
+			closeVehicleModal()
+
+			setShowVehicles(true)
+			setShowDeletedVehicles(false)
+
 			fetchClientVehicles(
 				selectedClient.id,
 				true,
-				vehiclesPage,
+				isCreateMode ? 1 : vehiclesPage,
 				vehiclesPageSize,
 			)
+
+			fetchClientGroups({ silent: true })
+			fetchClients({ silent: true })
 		} catch (err) {
-			alert('Ошибка: ' + err.message)
+			alert(`Ошибка: ${err.message}`)
+		} finally {
+			setClientActionLoading(false)
 		}
 	}
 
@@ -3050,63 +3164,69 @@ export default function Clients() {
 							</div>
 						)}
 
-						<div
-							style={{
-								marginTop: '20px',
-								paddingTop: '15px',
-								borderTop: '1px solid #eee',
-							}}
-						>
-							<button
-								className='btn-green'
-								onClick={() => {
-									if (showVehicles) {
-										setShowVehicles(false)
-									} else {
-										setShowVehicles(true)
-										fetchClientVehicles(
-											selectedClient.id,
-											false,
-											vehiclesPage,
-											vehiclesPageSize,
-										)
-									}
-								}}
-								disabled={isVehiclesLoading}
-								style={{ padding: '6px 12px', fontSize: '13px' }}
-							>
-								{isVehiclesLoading
-									? 'Загрузка...'
-									: showVehicles
-										? '🚗 Скрыть машины клиента'
-										: '🚗 Просмотреть все машины клиента'}
-							</button>
+						<div>
+							<div className='client-vehicle-toolbar'>
+								<div className='client-vehicle-toolbar-left'>
+									<button
+										className='btn-green client-vehicle-toolbar-btn'
+										onClick={() => {
+											if (showVehicles) {
+												setShowVehicles(false)
+											} else {
+												setShowDeletedVehicles(false)
+												setShowVehicles(true)
+												fetchClientVehicles(
+													selectedClient.id,
+													false,
+													vehiclesPage,
+													vehiclesPageSize,
+												)
+											}
+										}}
+										disabled={isVehiclesLoading}
+									>
+										{isVehiclesLoading
+											? 'Загрузка...'
+											: showVehicles
+												? '🚗 Скрыть машины клиента'
+												: '🚗 Просмотреть все машины клиента'}
+									</button>
 
-							{canViewVehicleTrash && (
-								<button
-									className='btn-details'
-									onClick={() => {
-										if (showDeletedVehicles) {
-											setShowDeletedVehicles(false)
-										} else {
-											setShowDeletedVehicles(true)
-											fetchDeletedVehicles(selectedClient.id)
-										}
-									}}
-									disabled={deletedVehiclesLoading}
-									style={{
-										padding: '6px 12px',
-										fontSize: '13px',
-										marginLeft: '8px',
-									}}
-								>
-									{deletedVehiclesLoading
-										? 'Загрузка...'
-										: showDeletedVehicles
-											? '🗑 Скрыть корзину машин'
-											: '🗑 Корзина машин'}
-								</button>
-							)}
+									{canViewVehicleTrash && (
+										<button
+											className='btn-details client-vehicle-toolbar-btn'
+											onClick={() => {
+												if (showDeletedVehicles) {
+													setShowDeletedVehicles(false)
+												} else {
+													setShowVehicles(false)
+													setShowDeletedVehicles(true)
+													fetchDeletedVehicles(selectedClient.id)
+												}
+											}}
+											disabled={deletedVehiclesLoading}
+										>
+											{deletedVehiclesLoading
+												? 'Загрузка...'
+												: showDeletedVehicles
+													? '🗑 Скрыть корзину машин'
+													: '🗑 Корзина машин'}
+										</button>
+									)}
+								</div>
+
+								<div className='client-vehicle-toolbar-right'>
+									{canAddVehicleToClient(selectedClient) && (
+										<button
+											className='btn-green vehicle-create-btn'
+											onClick={openCreateVehicleModal}
+											disabled={clientActionLoading}
+										>
+											+ Добавить авто
+										</button>
+									)}
+								</div>
+							</div>
 
 							{/* БЛОК ВЫВОДА МАШИН С КНОПКОЙ ИЗМЕНИТЬ */}
 							{showVehicles && clientVehicles.length > 0 && (
@@ -3193,7 +3313,7 @@ export default function Clients() {
 														{canEditClient(selectedClient) && (
 															<button
 																className='btn-details vehicle-edit-btn'
-																onClick={() => setEditingVehicle(v)}
+																onClick={() => openEditVehicleModal(v)}
 															>
 																✎ Изменить
 															</button>
@@ -3585,21 +3705,23 @@ export default function Clients() {
 				</div>
 			)}
 
-			{/* МОДАЛКА РЕДАКТИРОВАНИЯ АВТОМОБИЛЯ (БЕЗ РУЧНОГО ВВОДА IMEI) */}
+			{/* МОДАЛКА СОЗДАНИЯ / РЕДАКТИРОВАНИЯ АВТОМОБИЛЯ */}
 			{editingVehicle && (
-				<div
-					className='modal-overlay open'
-					onClick={() => setEditingVehicle(null)}
-				>
+				<div className='modal-overlay open' onClick={closeVehicleModal}>
 					<div
 						className='modal-window vehicle-modal-window'
 						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
-							<span className='modal-title'>Редактирование авто</span>
+							<span className='modal-title'>
+								{vehicleFormMode === 'create'
+									? 'Добавить авто клиенту'
+									: 'Редактирование авто'}
+							</span>
+
 							<button
 								className='modal-close'
-								onClick={() => setEditingVehicle(null)}
+								onClick={closeVehicleModal}
 								type='button'
 							>
 								&times;
@@ -3612,6 +3734,13 @@ export default function Clients() {
 									<div className='vehicle-form-section-title'>
 										Основная информация
 									</div>
+
+									{vehicleFormMode === 'create' && (
+										<div className='vehicle-transfer-warning'>
+											Автомобиль будет добавлен напрямую к клиенту без создания
+											заявки.
+										</div>
+									)}
 
 									<div className='vehicle-form-grid'>
 										<label className='vehicle-field'>
@@ -3655,6 +3784,7 @@ export default function Clients() {
 														plate_number: e.target.value,
 													})
 												}
+												placeholder='Например: 123ABC02'
 											/>
 										</label>
 
@@ -3663,6 +3793,8 @@ export default function Clients() {
 											<input
 												className='vehicle-input'
 												type='number'
+												min='1900'
+												max='2100'
 												value={editingVehicle.year || ''}
 												onChange={e =>
 													setEditingVehicle({
@@ -3674,7 +3806,7 @@ export default function Clients() {
 										</label>
 
 										<label className='vehicle-field vehicle-full'>
-											<span className='vehicle-label'>VIN-код</span>
+											<span className='vehicle-label required'>VIN-код</span>
 											<input
 												className='vehicle-input'
 												maxLength='17'
@@ -3682,55 +3814,59 @@ export default function Clients() {
 												onChange={e =>
 													setEditingVehicle({
 														...editingVehicle,
-														vin: e.target.value,
+														vin: e.target.value.toUpperCase(),
 													})
 												}
+												placeholder='VIN обязателен'
+												required
 											/>
 										</label>
 									</div>
 								</div>
 
-								<div className='vehicle-form-card'>
-									<div className='vehicle-form-section-title'>
-										Привязанное оборудование
-									</div>
+								{vehicleFormMode !== 'create' && (
+									<div className='vehicle-form-card'>
+										<div className='vehicle-form-section-title'>
+											Привязанное оборудование
+										</div>
 
-									<div className='vehicle-equipment-badges modal-equipment-badges'>
-										{getVehicleEquipment(editingVehicle.id).length > 0 ? (
-											getVehicleEquipment(editingVehicle.id).map(item => (
-												<span
-													key={getEquipmentBadgeKey(item)}
-													className='vehicle-equipment-badge'
-												>
-													{getEquipmentBadgeText(item)}
+										<div className='vehicle-equipment-badges modal-equipment-badges'>
+											{getVehicleEquipment(editingVehicle.id).length > 0 ? (
+												getVehicleEquipment(editingVehicle.id).map(item => (
+													<span
+														key={getEquipmentBadgeKey(item)}
+														className='vehicle-equipment-badge'
+													>
+														{getEquipmentBadgeText(item)}
+													</span>
+												))
+											) : (
+												<span className='vehicle-equipment-badge empty'>
+													Устройства не привязаны
 												</span>
-											))
-										) : (
-											<span className='vehicle-equipment-badge empty'>
-												Устройства не привязаны
-											</span>
+											)}
+										</div>
+
+										<div className='vehicle-equipment-hint'>
+											Устройства могут быть привязаны через заявку или напрямую
+											со склада.
+										</div>
+
+										{canManageDirectVehicleEquipment && (
+											<button
+												type='button'
+												className='btn-details vehicle-attach-equipment-btn'
+												onClick={() => {
+													const vehicleToAttach = editingVehicle
+													closeVehicleModal()
+													openAttachEquipmentToVehicleModal(vehicleToAttach)
+												}}
+											>
+												+ Привязать оборудование
+											</button>
 										)}
 									</div>
-
-									<div className='vehicle-equipment-hint'>
-										Устройства могут быть привязаны через заявку или напрямую со
-										склада.
-									</div>
-
-									{canManageDirectVehicleEquipment && (
-										<button
-											type='button'
-											className='btn-details vehicle-attach-equipment-btn'
-											onClick={() => {
-												const vehicleToAttach = editingVehicle
-												setEditingVehicle(null)
-												openAttachEquipmentToVehicleModal(vehicleToAttach)
-											}}
-										>
-											+ Привязать оборудование
-										</button>
-									)}
-								</div>
+								)}
 							</form>
 						</div>
 
@@ -3738,7 +3874,8 @@ export default function Clients() {
 							<button
 								className='vehicle-cancel-btn'
 								type='button'
-								onClick={() => setEditingVehicle(null)}
+								onClick={closeVehicleModal}
+								disabled={clientActionLoading}
 							>
 								Отмена
 							</button>
@@ -3747,8 +3884,15 @@ export default function Clients() {
 								className='vehicle-submit-btn'
 								type='submit'
 								form='vehicle-form'
+								disabled={clientActionLoading}
 							>
-								Сохранить
+								{clientActionLoading
+									? vehicleFormMode === 'create'
+										? 'Добавление...'
+										: 'Сохранение...'
+									: vehicleFormMode === 'create'
+										? 'Добавить авто'
+										: 'Сохранить'}
 							</button>
 						</div>
 					</div>

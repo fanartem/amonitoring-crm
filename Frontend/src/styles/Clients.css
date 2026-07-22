@@ -1,213 +1,216 @@
 .clients-page-container {
-  padding: 20px;
-  background: #fff;
-  min-height: 100vh;
-  font-family: inherit;
+	padding: 20px;
+	background: #fff;
+	min-height: 100vh;
+	font-family: inherit;
 }
 
 .clients-header-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 5px;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 5px;
 }
 
 .clients-header-bar h2 {
-  color: #2e5902;
-  margin: 0;
-  font-size: 24px;
+	color: #2e5902;
+	margin: 0;
+	font-size: 24px;
 }
 
 .clients-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
 }
 
 .subtitle-text {
-  color: #a0a0a0;
-  font-style: italic;
-  font-size: 13px;
-  margin-bottom: 25px;
+	color: #a0a0a0;
+	font-style: italic;
+	font-size: 13px;
+	margin-bottom: 25px;
 }
 
 .clients-filters-bar {
-  margin: 6px 0 18px;
+	margin: 6px 0 18px;
 }
 
 /* Выпадающий навигатор по клиентам */
 .client-picker {
-  position: relative;
-  flex: 1.6;
-  min-width: 220px;
+	position: relative;
+	flex: 1.6;
+	min-width: 220px;
 }
 
 /* Поле-автодополнение (например, фильтр по ответственному) */
 .filter-typeahead {
-  position: relative;
+	position: relative;
 }
 
 .client-picker-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  z-index: 60;
-  max-height: 320px;
-  overflow-y: auto;
-  background: #fff;
-  border: 1px solid #d8e8c6;
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  padding: 6px;
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	right: 0;
+	z-index: 60;
+	max-height: 320px;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid #d8e8c6;
+	border-radius: 10px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+	padding: 6px;
 }
 
 .client-picker-option {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  padding: 9px 12px;
-  cursor: pointer;
-  transition: background 0.15s;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	width: 100%;
+	text-align: left;
+	background: transparent;
+	border: none;
+	border-radius: 8px;
+	padding: 9px 12px;
+	cursor: pointer;
+	transition: background 0.15s;
 }
 
 .client-picker-option:hover {
-  background: #f1f8e9;
+	background: #f1f8e9;
 }
 
 .client-picker-option-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1f2937;
+	font-size: 14px;
+	font-weight: 600;
+	color: #1f2937;
 }
 
 .client-picker-option-meta {
-  font-size: 12px;
-  color: #6b7280;
+	font-size: 12px;
+	color: #6b7280;
 }
 
 .client-picker-status {
-  font-weight: 600;
+	font-weight: 600;
 }
 
 .client-picker-status.client-status-active {
-  color: #2e7d32;
+	color: #2e7d32;
 }
 
 .client-picker-status.client-status-debtor {
-  color: #b26a00;
+	color: #b26a00;
 }
 
 .client-picker-status.client-status-blocked {
-  color: #c62828;
+	color: #c62828;
 }
 
 .client-picker-empty {
-  padding: 14px 12px;
-  font-size: 13px;
-  color: #9ca3af;
-  text-align: center;
+	padding: 14px 12px;
+	font-size: 13px;
+	color: #9ca3af;
+	text-align: center;
 }
 
 .clients-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 20px;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	gap: 20px;
 }
 
 .client-card {
-  border: 1px solid #eaeaea;
-  border-radius: 8px;
-  padding: 20px;
-  background: #fff;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.02);
-  transition: box-shadow 0.2s, border-color 0.2s, transform 0.15s;
+	border: 1px solid #eaeaea;
+	border-radius: 8px;
+	padding: 20px;
+	background: #fff;
+	cursor: pointer;
+	display: flex;
+	flex-direction: column;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02);
+	transition:
+		box-shadow 0.2s,
+		border-color 0.2s,
+		transform 0.15s;
 }
 
 .client-card:hover {
-  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-  border-color: #d6d6d6;
-  transform: translateY(-1px);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+	border-color: #d6d6d6;
+	transform: translateY(-1px);
 }
 
 .client-card-title {
-  font-weight: 700;
-  font-size: 16px;
-  margin-bottom: 5px;
-  color: #222;
+	font-weight: 700;
+	font-size: 16px;
+	margin-bottom: 5px;
+	color: #222;
 }
 
 .client-card-type {
-  font-size: 13px;
-  color: #888;
-  margin-bottom: 10px;
+	font-size: 13px;
+	color: #888;
+	margin-bottom: 10px;
 }
 
 .client-card-info {
-  font-size: 14px;
-  color: #555;
-  margin-bottom: 15px;
-  line-height: 1.4;
+	font-size: 14px;
+	color: #555;
+	margin-bottom: 15px;
+	line-height: 1.4;
 }
 
 .client-card-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: auto;
 }
 
 .request-count-label {
-  font-size: 13px;
-  color: #5e9424;
-  font-weight: 500;
+	font-size: 13px;
+	color: #5e9424;
+	font-weight: 500;
 }
 
 .request-count-badge {
-  background: #f5f5f5;
-  color: #616161;
-  padding: 4px 10px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
+	background: #f5f5f5;
+	color: #616161;
+	padding: 4px 10px;
+	border-radius: 20px;
+	font-size: 12px;
+	font-weight: 600;
 }
 
 .request-count-badge.active {
-  background: #f1f8e9;
-  color: #558b2f;
+	background: #f1f8e9;
+	color: #558b2f;
 }
 
 .btn-back {
-  background: #fff;
-  border: 1px solid #c8e6c9;
-  color: #558b2f;
-  padding: 8px 14px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 13px;
+	background: #fff;
+	border: 1px solid #c8e6c9;
+	color: #558b2f;
+	padding: 8px 14px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-weight: 500;
+	font-size: 13px;
 }
 
 .btn-back:hover {
-  background: #f1f8e9;
+	background: #f1f8e9;
 }
 
 .client-info-box {
-  border: 1px solid #eaeaea;
-  border-radius: 8px;
-  padding: 20px;
-  background: #fafafa;
-  margin-bottom: 25px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.02);
-  position: relative;
+	border: 1px solid #eaeaea;
+	border-radius: 8px;
+	padding: 20px;
+	background: #fafafa;
+	margin-bottom: 25px;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02);
+	position: relative;
 }
 
 /* Кнопка «Редактировать» — абсолютно поверх info-box на десктопе */
@@ -223,311 +226,319 @@
 }
 
 .info-row {
-  display: flex;
-  margin-bottom: 10px;
-  font-size: 14px;
+	display: flex;
+	margin-bottom: 10px;
+	font-size: 14px;
 }
 
 .info-row:last-child {
-  margin-bottom: 0;
+	margin-bottom: 0;
 }
 
 .info-key {
-  width: 200px;
-  color: #888;
+	width: 200px;
+	color: #888;
 }
 
 .info-val {
-  color: #222;
-  font-weight: 500;
+	color: #222;
+	font-weight: 500;
 }
 
 .section-title {
-  color: #2e5902;
-  font-size: 18px;
-  margin-bottom: 15px;
-  font-weight: 700;
+	color: #2e5902;
+	font-size: 18px;
+	margin-bottom: 15px;
+	font-weight: 700;
 }
 
 .client-request-row {
-  display: flex;
-  align-items: center;
-  padding: 15px 20px;
-  border: 1px solid #eaeaea;
-  border-radius: 8px;
-  background: #fff;
-  margin-bottom: 10px;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+	display: flex;
+	align-items: center;
+	padding: 15px 20px;
+	border: 1px solid #eaeaea;
+	border-radius: 8px;
+	background: #fff;
+	margin-bottom: 10px;
+	cursor: pointer;
+	transition:
+		background 0.2s,
+		border-color 0.2s;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02);
 }
 
 .client-request-row:hover {
-  background: #fafafa;
-  border-color: #d6d6d6;
+	background: #fafafa;
+	border-color: #d6d6d6;
 }
 
 .req-date {
-  width: 150px;
-  color: #888;
-  font-size: 14px;
+	width: 150px;
+	color: #888;
+	font-size: 14px;
 }
 
 .req-auto {
-  flex: 1;
-  font-weight: 500;
-  color: #333;
+	flex: 1;
+	font-weight: 500;
+	color: #333;
 }
 
 .status-pill {
-  padding: 5px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
+	padding: 5px 12px;
+	border-radius: 20px;
+	font-size: 12px;
+	font-weight: 600;
 }
 
 .status-pill.new {
-  background: #fff9c4;
-  color: #f57f17;
+	background: #fff9c4;
+	color: #f57f17;
 }
 
 .status-pill.in_progress {
-  background: #e3f2fd;
-  color: #1565c0;
+	background: #e3f2fd;
+	color: #1565c0;
 }
 
 .status-pill.completed {
-  background: #e8f5e9;
-  color: #2e7d32;
+	background: #e8f5e9;
+	color: #2e7d32;
 }
 
 .status-pill.cancelled {
-  background: #ffebee;
-  color: #c62828;
+	background: #ffebee;
+	color: #c62828;
 }
 
 /* --- Vehicles in client details --- */
 
 .vehicle-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 14px;
-  background: #fff;
-  padding: 14px 16px;
-  border-radius: 8px;
-  border: 1px solid #eee;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 14px;
+	background: #fff;
+	padding: 14px 16px;
+	border-radius: 8px;
+	border: 1px solid #eee;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
 }
 
 .vehicle-card-main {
-  flex: 1;
-  min-width: 0;
+	flex: 1;
+	min-width: 0;
 }
 
 .vehicle-card-header {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
 }
 
 .vehicle-card-title {
-  font-size: 14px;
-  color: #222;
+	font-size: 14px;
+	color: #222;
 }
 
 .vehicle-card-meta {
-  margin-top: 8px;
-  color: #242424;
-  font-size: 14px;
+	margin-top: 8px;
+	color: #242424;
+	font-size: 14px;
 }
 
 .vehicle-equipment-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
 }
 
 .vehicle-equipment-badge {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  background: #e0f7fa;
-  color: #006064;
-  padding: 4px 9px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
-  border: 1px solid #b2ebf2;
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	background: #e0f7fa;
+	color: #006064;
+	padding: 4px 9px;
+	border-radius: 20px;
+	font-size: 12px;
+	font-weight: 600;
+	border: 1px solid #b2ebf2;
 }
 
 .vehicle-equipment-badge.empty {
-  background: #f5f5f5;
-  color: #888;
-  border-color: #e0e0e0;
+	background: #f5f5f5;
+	color: #888;
+	border-color: #e0e0e0;
 }
 
 .vehicle-edit-btn {
-  padding: 5px 12px !important;
-  font-size: 12px !important;
-  white-space: nowrap;
+	padding: 5px 12px !important;
+	font-size: 12px !important;
+	white-space: nowrap;
 }
-
 
 /* --- Vehicle edit modal --- */
 
 .vehicle-modal-window {
-  width: 620px;
-  max-width: 95%;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-  background: #fcfcfc;
-  border-radius: 8px;
-  overflow: hidden;
+	width: 620px;
+	max-width: 95%;
+	max-height: 90vh;
+	display: flex;
+	flex-direction: column;
+	background: #fcfcfc;
+	border-radius: 8px;
+	overflow: hidden;
 }
 
 .vehicle-modal-body {
-  flex: 1;
-  overflow-y: auto;
-  background: #f7f7f7;
-  padding: 20px;
+	flex: 1;
+	overflow-y: auto;
+	background: #f7f7f7;
+	padding: 20px;
 }
 
 .vehicle-form-card {
-  background: #ffffff;
-  border: 1px solid #eeeeee;
-  border-radius: 8px;
-  padding: 18px;
-  margin-bottom: 14px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+	background: #ffffff;
+	border: 1px solid #eeeeee;
+	border-radius: 8px;
+	padding: 18px;
+	margin-bottom: 14px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
 }
 
 .vehicle-form-card:last-child {
-  margin-bottom: 0;
+	margin-bottom: 0;
 }
 
 .vehicle-form-section-title {
-  color: #5e9424;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  margin-bottom: 14px;
-  letter-spacing: 0.5px;
+	color: #5e9424;
+	font-size: 12px;
+	font-weight: 700;
+	text-transform: uppercase;
+	margin-bottom: 14px;
+	letter-spacing: 0.5px;
 }
 
 .vehicle-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px;
 }
 
 .vehicle-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
 }
 
 .vehicle-full {
-  grid-column: 1 / -1;
+	grid-column: 1 / -1;
 }
 
 .vehicle-label {
-  font-size: 13px;
-  color: #777777;
-  font-weight: 500;
+	font-size: 13px;
+	color: #777777;
+	font-weight: 500;
 }
 
 .vehicle-label.required::after {
-  content: ' *';
-  color: #c62828;
+	content: ' *';
+	color: #c62828;
 }
 
 .vehicle-input {
-  width: 100%;
-  border: 1px solid #d8d8d8;
-  border-radius: 6px;
-  padding: 9px 10px;
-  font-size: 14px;
-  font-family: inherit;
-  color: #222222;
-  background: #ffffff;
-  outline: none;
-  box-sizing: border-box;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+	width: 100%;
+	border: 1px solid #d8d8d8;
+	border-radius: 6px;
+	padding: 9px 10px;
+	font-size: 14px;
+	font-family: inherit;
+	color: #222222;
+	background: #ffffff;
+	outline: none;
+	box-sizing: border-box;
+	transition:
+		border-color 0.2s ease,
+		box-shadow 0.2s ease;
 }
 
 .vehicle-input:focus {
-  border-color: #5e9424;
-  box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
 }
 
 .modal-equipment-badges {
-  margin-bottom: 10px;
+	margin-bottom: 10px;
 }
 
 .vehicle-equipment-hint {
-  color: #888;
-  font-size: 12px;
-  line-height: 1.4;
+	color: #888;
+	font-size: 12px;
+	line-height: 1.4;
 }
 
 .vehicle-modal-footer {
-  gap: 12px;
+	gap: 12px;
 }
 
 .vehicle-cancel-btn {
-  min-width: 130px;
-  padding: 10px 18px;
-  border: 1px solid #cccccc;
-  border-radius: 10px;
-  background: #ffffff;
-  color: #666666;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
+	min-width: 130px;
+	padding: 10px 18px;
+	border: 1px solid #cccccc;
+	border-radius: 10px;
+	background: #ffffff;
+	color: #666666;
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		background 0.2s ease,
+		border-color 0.2s ease;
 }
 
 .vehicle-cancel-btn:hover {
-  background: #f5f5f5;
-  border-color: #999999;
+	background: #f5f5f5;
+	border-color: #999999;
 }
 
 .vehicle-submit-btn {
-  min-width: 150px;
-  padding: 10px 18px;
-  border: 1px solid #5e9424;
-  border-radius: 10px;
-  background: #ffffff;
-  color: #5e9424;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+	min-width: 150px;
+	padding: 10px 18px;
+	border: 1px solid #5e9424;
+	border-radius: 10px;
+	background: #ffffff;
+	color: #5e9424;
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		background 0.2s ease,
+		color 0.2s ease,
+		opacity 0.2s ease;
 }
 
 .vehicle-submit-btn:hover {
-  background: #5e9424;
-  color: #ffffff;
+	background: #5e9424;
+	color: #ffffff;
 }
 
 .client-request-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 2px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 2px;
 }
 
 .client-request-line {
-  color: #222;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.35;
+	color: #222;
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 1.35;
 }
 
 .client-request-line + .client-request-line {
-  padding-top: 4px;
-  border-top: 1px dashed #e5e5e5;
+	padding-top: 4px;
+	border-top: 1px dashed #e5e5e5;
 }
 
 .client-files-section {
@@ -670,7 +681,7 @@
 	border-radius: 10px;
 	background: #eef6e2;
 	box-shadow: 0 1px 3px rgba(80, 120, 40, 0.08);
-  overflow: visible;
+	overflow: visible;
 }
 
 .client-tree-row:hover {
@@ -1493,6 +1504,47 @@
 	cursor: not-allowed;
 }
 
+.client-vehicle-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 20px;
+	padding-top: 15px;
+	border-top: 1px solid #eee;
+}
+
+.client-vehicle-toolbar-left,
+.client-vehicle-toolbar-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.client-vehicle-toolbar-right {
+	margin-left: auto;
+	justify-content: flex-end;
+}
+
+.client-vehicle-toolbar-btn,
+.vehicle-create-btn {
+	padding: 6px 12px;
+	font-size: 13px;
+	white-space: nowrap;
+}
+
+.vehicle-create-btn {
+	background: #5e9424;
+	border: 1px solid #5e9424;
+	color: #ffffff;
+}
+
+.vehicle-create-btn:hover {
+	background: #4f7f1e;
+	border-color: #4f7f1e;
+}
+
 @media (max-width: 768px) {
 	.vehicle-trash-card {
 		flex-direction: column;
@@ -1510,13 +1562,29 @@
 }
 
 @media (max-width: 640px) {
-  .client-inline-select {
+	.client-vehicle-toolbar {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.client-vehicle-toolbar-left,
+	.client-vehicle-toolbar-right {
+		width: 100%;
+		justify-content: stretch;
+	}
+
+	.client-vehicle-toolbar-btn,
+	.vehicle-create-btn {
+		width: 100%;
+	}
+
+	.client-inline-select {
 		width: 100%;
 		min-width: 0;
 		justify-self: stretch;
 	}
 
-  .client-status-control {
+	.client-status-control {
 		width: 100%;
 		justify-self: stretch;
 	}
@@ -1525,148 +1593,148 @@
 		width: 100%;
 	}
 
-  .vehicle-card {
-    flex-direction: column;
-  }
+	.vehicle-card {
+		flex-direction: column;
+	}
 
-  .vehicle-edit-btn {
-    width: 100%;
-  }
+	.vehicle-edit-btn {
+		width: 100%;
+	}
 
-  .vehicle-form-grid {
-    grid-template-columns: 1fr;
-  }
+	.vehicle-form-grid {
+		grid-template-columns: 1fr;
+	}
 
-  .vehicle-modal-footer {
-    flex-direction: column;
-    align-items: stretch;
-  }
+	.vehicle-modal-footer {
+		flex-direction: column;
+		align-items: stretch;
+	}
 
-  .vehicle-cancel-btn,
-  .vehicle-submit-btn {
-    width: 100%;
-  }
+	.vehicle-cancel-btn,
+	.vehicle-submit-btn {
+		width: 100%;
+	}
 
-  /* Группа клиентов: кнопка «Детали» под бейджем «GlonassSoft» */
-  .client-group-header {
-    align-items: flex-start;
-  }
+	/* Группа клиентов: кнопка «Детали» под бейджем «GlonassSoft» */
+	.client-group-header {
+		align-items: flex-start;
+	}
 
-  .client-group-actions {
-    flex-direction: column-reverse; /* GlonassSoft сверху, Детали снизу */
-    align-items: flex-end;
-    gap: 6px;
-  }
+	.client-group-actions {
+		flex-direction: column-reverse; /* GlonassSoft сверху, Детали снизу */
+		align-items: flex-end;
+		gap: 6px;
+	}
 
-  /* Кнопка «Редактировать» — выходит из потока и встаёт после Email */
-  .client-edit-btn-wrapper {
-	position: static;
-	margin-top: 12px;
-	align-items: stretch;
-	justify-content: flex-start;
+	/* Кнопка «Редактировать» — выходит из потока и встаёт после Email */
+	.client-edit-btn-wrapper {
+		position: static;
+		margin-top: 12px;
+		align-items: stretch;
+		justify-content: flex-start;
 	}
 
 	.client-detail-action-btn {
 		width: 100%;
 	}
 
-  /* Блок прикреплённых файлов — не даём кнопке вылезти за рамку */
-  .client-files-section {
-    overflow: hidden;
-    padding: 14px;
-  }
+	/* Блок прикреплённых файлов — не даём кнопке вылезти за рамку */
+	.client-files-section {
+		overflow: hidden;
+		padding: 14px;
+	}
 
-  /* Пагинация: перенос на несколько строк */
-  .pagination-bar {
-    flex-wrap: wrap;
-    gap: 8px 12px;
-  }
+	/* Пагинация: перенос на несколько строк */
+	.pagination-bar {
+		flex-wrap: wrap;
+		gap: 8px 12px;
+	}
 
-  .pagination-info {
-    order: -1;      /* строка с номером страницы — первой */
-    width: 100%;
-    text-align: center;
-  }
+	.pagination-info {
+		order: -1; /* строка с номером страницы — первой */
+		width: 100%;
+		text-align: center;
+	}
 
-  .pagination-size {
-    flex: 0 0 auto;
-  }
+	.pagination-size {
+		flex: 0 0 auto;
+	}
 
-  .pagination-actions {
-    flex: 1;                        /* занимает остаток строки */
-    justify-content: space-between; /* Назад — слева, Вперёд — справа */
-  }
+	.pagination-actions {
+		flex: 1; /* занимает остаток строки */
+		justify-content: space-between; /* Назад — слева, Вперёд — справа */
+	}
 
-  /* ─── Карточка клиента (верхний уровень) ─── */
-  /* Футер: статистика + кнопка «Детали» переносятся на две строки */
-  .client-card-footer {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
+	/* ─── Карточка клиента (верхний уровень) ─── */
+	/* Футер: статистика + кнопка «Детали» переносятся на две строки */
+	.client-card-footer {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 10px;
+	}
 
-  /* Ряд со статистикой: разрешаем перенос, чтобы «Подклиентов» не вылезал */
-  .client-card-footer > div:first-child {
-    flex-wrap: wrap;
-    gap: 6px 10px;
-  }
+	/* Ряд со статистикой: разрешаем перенос, чтобы «Подклиентов» не вылезал */
+	.client-card-footer > div:first-child {
+		flex-wrap: wrap;
+		gap: 6px 10px;
+	}
 
-  /* Кнопка «Детали» в карточке клиента — во всю ширину */
-  .client-card-footer > .btn-details {
-    width: 100%;
-    text-align: center;
-  }
+	/* Кнопка «Детали» в карточке клиента — во всю ширину */
+	.client-card-footer > .btn-details {
+		width: 100%;
+		text-align: center;
+	}
 
-  /* ─── Строка дерева (вложенный клиент) ─── */
-  /* Меняем grid с двух колонок на одну, чтобы правая часть не вылезала */
-  /* position: relative нужен для абсолютного позиционирования трёх точек */
-  .client-tree-row {
-    position: relative;
-    grid-template-columns: 1fr;
-    gap: 8px;
-    padding-right: 46px; /* резервируем место под кнопку ⋮ */
-  }
+	/* ─── Строка дерева (вложенный клиент) ─── */
+	/* Меняем grid с двух колонок на одну, чтобы правая часть не вылезала */
+	/* position: relative нужен для абсолютного позиционирования трёх точек */
+	.client-tree-row {
+		position: relative;
+		grid-template-columns: 1fr;
+		gap: 8px;
+		padding-right: 46px; /* резервируем место под кнопку ⋮ */
+	}
 
-  /* Три точки — фиксируем в правом верхнем углу строки */
-  .client-tree-row .client-tree-actions {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-  }
+	/* Три точки — фиксируем в правом верхнем углу строки */
+	.client-tree-row .client-tree-actions {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+	}
 
-  /* Правая часть (статы + кнопка): выравниваем влево, разрешаем перенос */
-  .client-tree-row-right {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 6px 8px;
-  }
+	/* Правая часть (статы + кнопка): выравниваем влево, разрешаем перенос */
+	.client-tree-row-right {
+		justify-content: flex-start;
+		flex-wrap: wrap;
+		gap: 6px 8px;
+	}
 
-  /* Кнопка «Детали» в строке дерева — во всю ширину */
-  .client-tree-row-right > .btn-details {
-    width: 100%;
-    text-align: center;
-  }
+	/* Кнопка «Детали» в строке дерева — во всю ширину */
+	.client-tree-row-right > .btn-details {
+		width: 100%;
+		text-align: center;
+	}
 
-  .client-hierarchy-badge {
-	font-size: 10px;
-	padding: 3px 7px;
-}
+	.client-hierarchy-badge {
+		font-size: 10px;
+		padding: 3px 7px;
+	}
 
-.client-tree-row-title {
-	flex-wrap: wrap;
-}
+	.client-tree-row-title {
+		flex-wrap: wrap;
+	}
 
-.client-card-title-text {
-	white-space: normal;
-}
+	.client-card-title-text {
+		white-space: normal;
+	}
 
-.client-tree-row-wrapper-nested::before {
-	left: -14px;
-}
+	.client-tree-row-wrapper-nested::before {
+		left: -14px;
+	}
 
-.client-level-2 .client-tree-row,
-.client-level-3 .client-tree-row,
-.client-level-4 .client-tree-row {
-	margin-left: 0;
-}
+	.client-level-2 .client-tree-row,
+	.client-level-3 .client-tree-row,
+	.client-level-4 .client-tree-row {
+		margin-left: 0;
+	}
 }
