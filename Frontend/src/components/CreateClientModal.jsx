@@ -211,6 +211,8 @@ export default function CreateClientModal({
 		bin_iin: '',
 		phone: '',
 		email: '',
+		monitoring_login: '',
+		monitoring_password: '',
 
 		status: 'ACTIVE',
 		payment_type: 'PREPAYMENT',
@@ -233,6 +235,10 @@ export default function CreateClientModal({
 	const canSetResponsibleManager = ['ADMIN', 'ROP'].includes(userRole)
 
 	const canSetPaymentType = ['ADMIN', 'ROP'].includes(userRole)
+
+	const canSetMonitoringPassword = ['ADMIN', 'ROP', 'TECH_SUPPORT'].includes(
+		userRole,
+	)
 
 	const fetchClients = async () => {
 		try {
@@ -286,6 +292,10 @@ export default function CreateClientModal({
 				bin_iin: editClient.bin_iin || '',
 				phone: editClient.phone || '',
 				email: editClient.email || '',
+				monitoring_login: editClient.monitoring_login || '',
+				monitoring_password: canSetMonitoringPassword
+					? editClient.monitoring_password || ''
+					: '',
 
 				status: editClient.status || 'ACTIVE',
 				payment_type: editClient.payment_type || 'PREPAYMENT',
@@ -303,6 +313,8 @@ export default function CreateClientModal({
 				company_name: '',
 				phone: '',
 				email: '',
+				monitoring_login: '',
+				monitoring_password: '',
 
 				status: 'ACTIVE',
 				payment_type: 'PREPAYMENT',
@@ -355,6 +367,7 @@ export default function CreateClientModal({
 			client.bin_iin,
 			client.phone,
 			client.email,
+			client.monitoring_login,
 			client.source_client_name,
 			client.source_parent_client_name,
 			client.source_inn,
@@ -406,6 +419,8 @@ export default function CreateClientModal({
 			bin_iin: '',
 			phone: '',
 			email: '',
+			monitoring_login: '',
+			monitoring_password: '',
 
 			status: 'ACTIVE',
 			payment_type: 'PREPAYMENT',
@@ -473,6 +488,10 @@ export default function CreateClientModal({
 						: formData.company_name.trim() || null,
 				phone: formData.phone.trim(),
 				email: formData.email.trim() || null,
+				monitoring_login: formData.monitoring_login.trim() || null,
+				monitoring_password: canSetMonitoringPassword
+					? formData.monitoring_password.trim() || null
+					: undefined,
 
 				status: canSetClientStatus ? formData.status : undefined,
 				payment_type: canSetPaymentType ? formData.payment_type : 'PREPAYMENT',
@@ -709,6 +728,37 @@ export default function CreateClientModal({
 										placeholder='client@example.com'
 									/>
 								</label>
+
+								<label className='create-client-field'>
+									<span className='create-client-label'>
+										Логин платформы мониторинга
+									</span>
+									<input
+										type='text'
+										name='monitoring_login'
+										value={formData.monitoring_login}
+										onChange={handleChange}
+										className='create-client-input'
+										placeholder='Логин клиента в платформе'
+									/>
+								</label>
+
+								{canSetMonitoringPassword && (
+									<label className='create-client-field'>
+										<span className='create-client-label'>
+											Пароль платформы мониторинга
+										</span>
+										<input
+											type='text'
+											name='monitoring_password'
+											value={formData.monitoring_password}
+											onChange={handleChange}
+											className='create-client-input'
+											placeholder='Пароль клиента в платформе'
+											autoComplete='off'
+										/>
+									</label>
+								)}
 							</div>
 						</div>
 						{(canSetClientStatus || canSetResponsibleManager) && (

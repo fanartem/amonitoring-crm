@@ -58,6 +58,7 @@ export default function Clients() {
 
 	const [selectedClient, setSelectedClient] = useState(null)
 	const [clientRequests, setClientRequests] = useState([])
+	const [showMonitoringPassword, setShowMonitoringPassword] = useState(false)
 	const [clientVehicles, setClientVehicles] = useState([])
 	const [isVehiclesLoading, setIsVehiclesLoading] = useState(false)
 	const [vehiclesPage, setVehiclesPage] = useState(1)
@@ -154,6 +155,10 @@ export default function Clients() {
 	const canChangeClientPaymentType = client =>
 		Boolean(client?.can_change_payment_type) ||
 		['ADMIN', 'ROP'].includes(userRole)
+
+	const canViewClientMonitoringPassword = client =>
+		Boolean(client?.can_view_monitoring_password) ||
+		['ADMIN', 'ROP', 'TECH_SUPPORT'].includes(userRole)
 
 	const getClientPaymentTypeLabel = paymentType => {
 		if (paymentType === 'POSTPAYMENT') return 'Постоплата'
@@ -296,6 +301,7 @@ export default function Clients() {
 				c.bin_iin,
 				c.phone,
 				c.email,
+				c.monitoring_login,
 			]
 				.filter(Boolean)
 				.some(field => String(field).toLowerCase().includes(q))
@@ -662,6 +668,7 @@ export default function Clients() {
 			bin_iin: client.bin_iin,
 			phone: client.phone,
 			email: client.email,
+			monitoring_login: client.monitoring_login,
 			status: client.status,
 			payment_type: client.payment_type,
 			responsible_manager_id: client.responsible_manager_id,
@@ -1206,7 +1213,18 @@ export default function Clients() {
 			return
 		}
 
-		setSelectedClient(client)
+		const detailedClient = await fetchClientById(client.id)
+
+		if (!detailedClient) {
+			return
+		}
+
+		setSelectedClient({
+			...client,
+			...detailedClient,
+		})
+
+		setShowMonitoringPassword(false)
 		setClientVehicles([])
 		setVehiclesPage(1)
 		setVehiclesTotal(0)
@@ -1431,10 +1449,17 @@ export default function Clients() {
 		}
 	}
 
-	const handleEditClientClick = (e, client) => {
+	const handleEditClientClick = async (e, client) => {
 		e.stopPropagation()
 		setActiveDropdown(null)
-		setEditClientData(client)
+
+		const detailedClient = await fetchClientById(client.id)
+
+		setEditClientData({
+			...client,
+			...(detailedClient || {}),
+		})
+
 		setCreateModalOpen(true)
 	}
 
@@ -2999,7 +3024,10 @@ export default function Clients() {
 						<div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
 							<button
 								className='btn-back'
-								onClick={() => setSelectedClient(null)}
+								onClick={() => {
+									setSelectedClient(null)
+									setShowMonitoringPassword(false)
+								}}
 							>
 								&larr; Назад
 							</button>
@@ -3036,6 +3064,50 @@ export default function Clients() {
 							<span className='info-key'>Email</span>
 							<span className='info-val'>{selectedClient.email || '—'}</span>
 						</div>
+						<div className='info-row'>
+							<span className='info-key'>Логин платформы мониторинга</span>
+							<span className='info-val'>
+								{selectedClient.monitoring_login || '—'}
+							</span>
+						</div>
+
+						{canViewClientMonitoringPassword(selectedClient) && (
+							<div className='info-row'>
+								<span className='info-key'>Пароль платформы мониторинга</span>
+								<span className='info-val'>
+									{selectedClient.monitoring_password ? (
+										<span
+											style={{
+												display: 'inline-flex',
+												alignItems: 'center',
+												gap: '8px',
+												flexWrap: 'wrap',
+											}}
+										>
+											<span>
+												{showMonitoringPassword
+													? selectedClient.monitoring_password
+													: '••••••••'}
+											</span>
+
+											<button
+												type='button'
+												className='btn-details'
+												onClick={() => setShowMonitoringPassword(prev => !prev)}
+												style={{
+													padding: '4px 8px',
+													fontSize: '12px',
+												}}
+											>
+												{showMonitoringPassword ? 'Скрыть' : 'Показать'}
+											</button>
+										</span>
+									) : (
+										'—'
+									)}
+								</span>
+							</div>
+						)}
 
 						<div className='info-row'>
 							<span className='info-key'>Статус клиента</span>
@@ -4243,10 +4315,29 @@ export default function Clients() {
 					setCreateModalOpen(false)
 					setEditClientData(null)
 				}}
-				onCreated={() => {
+				onCreated={async () => {
+					const editedClientId = editClientData?.id
+
 					setCreateModalOpen(false)
 					setEditClientData(null)
+
 					refreshClientsData()
+					fetchClients({ silent: true })
+
+					if (editedClientId && selectedClient?.id === editedClientId) {
+						const freshClient = await fetchClientById(editedClientId)
+
+						if (freshClient) {
+							setSelectedClient(prev =>
+								prev && Number(prev.id) === Number(freshClient.id)
+									? {
+											...prev,
+											...freshClient,
+										}
+									: prev,
+							)
+						}
+					}
 				}}
 			/>
 

@@ -39,6 +39,8 @@ TECHNICAL_ROOT_PARENT_NAMES = {
 ALLOWED_CLIENT_CREATOR_ROLES = [ADMIN, ROP, MANAGER, TECH_SUPPORT]
 ALLOWED_RESPONSIBLE_ROLES = [MANAGER, ROP, ADMIN]
 
+CLIENT_MONITORING_PASSWORD_VIEW_ROLES = [ADMIN, ROP, TECH_SUPPORT]
+
 CLIENT_ACCESS_SCOPE_RESPONSIBLE_ONLY = "RESPONSIBLE_ONLY"
 
 CLIENT_PAYMENT_PREPAYMENT = "PREPAYMENT"
@@ -51,6 +53,9 @@ ALLOWED_CLIENT_PAYMENT_TYPES = [
 
 def is_responsible_only_client_scope(current_user: dict) -> bool:
     return current_user.get("client_access_scope") == CLIENT_ACCESS_SCOPE_RESPONSIBLE_ONLY
+
+def can_view_client_monitoring_password(current_user: dict) -> bool:
+    return current_user.get("role") in CLIENT_MONITORING_PASSWORD_VIEW_ROLES
 
 def apply_client_access_scope_condition(
     conditions: list[str],
@@ -193,6 +198,7 @@ def attach_client_permissions(client: dict, current_user: dict) -> dict:
     client["can_reassign"] = can_reassign_clients(current_user)
     client["can_change_payment_type"] = current_user.get("role") in [ADMIN, ROP]
     client["can_create_request"] = can_create_request_for_client(client, current_user)
+    client["can_view_monitoring_password"] = can_view_client_monitoring_password(current_user)
     return client
 
 def attach_clients_permissions(clients: list[dict], current_user: dict) -> list[dict]:
@@ -571,6 +577,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.monitoring_login,
                 c.status,
                 c.payment_type,
                 c.source_system,
@@ -611,6 +618,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.monitoring_login,
                 c.status,
                 c.payment_type,
                 c.source_system,
@@ -650,6 +658,15 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для создания клиента"
+        )
+
+    if (
+        normalize_optional_str(getattr(data, "monitoring_password", None))
+        and not can_view_client_monitoring_password(current_user)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для указания пароля платформы мониторинга"
         )
 
     connection = get_connection()
@@ -696,6 +713,8 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                     company_name,
                     phone,
                     email,
+                    monitoring_login,
+                    monitoring_password,
                     status,
                     payment_type,
                     source_system,
@@ -707,7 +726,7 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                     responsible_changed_at,
                     responsible_changed_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
             """
 
             cursor.execute(
@@ -720,6 +739,8 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                         data.company_name,
                         data.phone,
                         data.email,
+                        normalize_optional_str(getattr(data, "monitoring_login", None)),
+                        normalize_optional_str(getattr(data, "monitoring_password", None)),
                         client_status,
                         client_payment_type,
                         getattr(data, "source_system", None),
@@ -779,6 +800,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.monitoring_login,
                 c.status,
                 c.payment_type,
                 c.source_system,
@@ -810,6 +832,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 c.company_name,
                 c.phone,
                 c.email,
+                c.monitoring_login,
                 c.status,
                 c.payment_type,
                 c.source_system,
@@ -906,6 +929,7 @@ def get_clients_grouped(
                     c.company_name,
                     c.phone,
                     c.email,
+                    c.monitoring_login,
                     c.status,
                     c.payment_type,
                     c.source_system,
@@ -1158,6 +1182,7 @@ def get_client_grouped_position(
                     c.company_name,
                     c.phone,
                     c.email,
+                    c.monitoring_login,
                     c.status,
                     c.payment_type,
                     c.source_system,
@@ -1364,6 +1389,8 @@ def get_client_by_id(
                     c.company_name,
                     c.phone,
                     c.email,
+                    c.monitoring_login,
+                    c.monitoring_password,
                     c.status,
                     c.payment_type,
                     c.source_system,
@@ -1421,6 +1448,9 @@ def get_client_by_id(
 
             attach_client_permissions(client, current_user)
 
+            if not can_view_client_monitoring_password(current_user):
+                client["monitoring_password"] = None
+
             client["children"] = []
             client["children_count"] = 0
             client["total_request_count"] = int(client.get("request_count") or 0)
@@ -1469,6 +1499,16 @@ def update_client(
                 )
 
             update_data = data.dict(exclude_unset=True)
+
+            if (
+                "monitoring_password" in update_data
+                and normalize_optional_str(update_data.get("monitoring_password"))
+                and not can_view_client_monitoring_password(current_user)
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для изменения пароля платформы мониторинга"
+                )
 
             for forbidden_field in ["status", "responsible_manager_id"]:
                 if forbidden_field in update_data:
@@ -1519,6 +1559,8 @@ def update_client(
                 "phone",
                 "email",
                 "bin_iin",
+                "monitoring_login",
+                "monitoring_password",
                 "source_system",
                 "source_client_name",
                 "source_parent_client_name",
@@ -1527,6 +1569,10 @@ def update_client(
 
             updates = []
             values = []
+
+            for optional_field in ["monitoring_login", "monitoring_password"]:
+                if optional_field in update_data:
+                    update_data[optional_field] = normalize_optional_str(update_data.get(optional_field))
 
             for field in allowed_fields:
                 if field in update_data:

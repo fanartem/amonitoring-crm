@@ -56,6 +56,8 @@ class ClientCreate(BaseModel):
     bin_iin: str | None = None
     phone: str
     email: str | None = None
+    monitoring_login: str | None = None
+    monitoring_password: str | None = None
 
     status: str | None = None
     payment_type: str | None = None
@@ -74,6 +76,8 @@ class ClientUpdate(BaseModel):
     bin_iin: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    monitoring_login: Optional[str] = None
+    monitoring_password: Optional[str] = None
 
     status: Optional[str] = None
     responsible_manager_id: Optional[int] = None
