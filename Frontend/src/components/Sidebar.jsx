@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink } from 'react-router'
 
 export default function Sidebar() {
 	const [isOpen, setIsOpen] = useState(false) // Состояние: открыт ли сайдбар на мобилке

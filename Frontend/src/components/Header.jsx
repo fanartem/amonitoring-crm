@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { API_BASE_URL, getJsonAuthHeaders } from '../api'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import logoImg from '../assets/logo.png'
 import '../styles/Header.css'
 import { getWorkTypeLabel } from '../utils/workTypes'

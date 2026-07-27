@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import '../styles/Clients.css'
 import '../styles/Requests.css'
 

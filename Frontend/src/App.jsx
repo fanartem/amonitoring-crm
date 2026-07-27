@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router'
 import Clients from './components/Clients'
 import Approvals from './components/Approvals'
 import Home from './components/Home'
