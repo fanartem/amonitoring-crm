@@ -28,6 +28,22 @@ const STATUSES = {
 	WRITTEN_OFF: 'Списано',
 }
 
+// Иконка на заголовок каждой категории — помогает узнавать раздел с одного взгляда,
+// не читая текст целиком.
+const CATEGORY_ICONS = {
+	GPS_TRACKER: 'fa-satellite-dish',
+	BEACON: 'fa-tower-broadcast',
+	FUEL_SENSOR: 'fa-gas-pump',
+	BLE_SENSOR: 'fa-wifi',
+	WIRED_SENSOR: 'fa-plug',
+	RELAY: 'fa-toggle-on',
+	CABLE: 'fa-ethernet',
+	CONSUMABLE: 'fa-box',
+	TOOLS: 'fa-screwdriver-wrench',
+	FIRST_AID: 'fa-kit-medical',
+	OTHER: 'fa-cube',
+}
+
 const getStatusClassName = status => {
 	if (status === 'ASSIGNED_TO_TECH') return 'status-progress'
 	if (status === 'INSTALLED' || status === 'USED') return 'status-done'
@@ -147,6 +163,10 @@ export default function MyInventory() {
 		low_stock: false,
 	})
 
+	// Текст поиска вводится сразу, но в filters.search попадает с задержкой
+	// (debounce) — иначе запрос на сервер улетал бы на каждое нажатие клавиши.
+	const [searchInput, setSearchInput] = useState('')
+
 	const [historyItem, setHistoryItem] = useState(null)
 	const [historyRows, setHistoryRows] = useState([])
 	const [historyLoading, setHistoryLoading] = useState(false)
@@ -154,6 +174,20 @@ export default function MyInventory() {
 	useEffect(() => {
 		fetchInventory()
 	}, [filters]) // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Debounce: применяем введённый текст поиска к filters.search
+	// через паузу в наборе, чтобы не дёргать сервер на каждую букву.
+	useEffect(() => {
+		const timeoutId = setTimeout(() => {
+			setFilters(prev => {
+				const trimmed = searchInput.trim()
+				if (prev.search === trimmed) return prev
+				return { ...prev, search: trimmed }
+			})
+		}, 400)
+
+		return () => clearTimeout(timeoutId)
+	}, [searchInput])
 
 	const fetchInventory = async () => {
 		setLoading(true)
@@ -219,6 +253,7 @@ export default function MyInventory() {
 	}
 
 	const resetFilters = () => {
+		setSearchInput('')
 		setFilters({
 			search: '',
 			category: '',
@@ -257,11 +292,11 @@ export default function MyInventory() {
 					<label>Поиск</label>
 					<input
 						className={
-							filters.search ? 'filter-input filter-active' : 'filter-input'
+							searchInput ? 'filter-input filter-active' : 'filter-input'
 						}
 						name='search'
-						value={filters.search}
-						onChange={handleFilterChange}
+						value={searchInput}
+						onChange={e => setSearchInput(e.target.value)}
 						placeholder='Название, IMEI, серийник...'
 					/>
 				</div>
@@ -334,96 +369,137 @@ export default function MyInventory() {
 			) : (
 				<div className='inventory-tree'>
 					{inventory.map(category => {
+						// У монтажника собственный инвентарь всегда развёрнут по умолчанию.
 						const isCategoryOpen = expandedCategories[category.category] ?? true
 
 						return (
 							<div key={category.category} className='inventory-category'>
-								<div
-									className='inventory-category-header'
+								<button
+									type='button'
+									className={`inventory-category-header ${
+										isCategoryOpen ? 'is-open' : ''
+									}`}
 									onClick={() => toggleCategory(category.category)}
+									aria-expanded={isCategoryOpen}
 								>
-									<div>
-										<strong>
-											{isCategoryOpen ? '▾' : '▸'}{' '}
-											{CATEGORIES[category.category] || category.category}
-										</strong>
-										<span>
-											{category.total_quantity} ед. · {category.total_rows}{' '}
-											строк
+									<span className='inventory-row-left'>
+										<i
+											className='fa-solid fa-chevron-right inventory-chevron'
+											aria-hidden='true'
+										></i>
+
+										<span className='inventory-category-icon'>
+											<i
+												className={`fa-solid ${
+													CATEGORY_ICONS[category.category] || 'fa-cube'
+												}`}
+											></i>
 										</span>
-									</div>
-								</div>
 
-								{isCategoryOpen &&
-									category.groups.map(group => {
-										const groupKey = `${category.category}-${group.group_key}`
-										const isGroupOpen = expandedGroups[groupKey] ?? true
+										<span className='inventory-row-heading'>
+											<strong>
+												{CATEGORIES[category.category] || category.category}
+											</strong>
+										</span>
+									</span>
 
-										return (
-											<div key={groupKey} className='inventory-group'>
-												<div
-													className='inventory-group-header'
-													onClick={() => toggleGroup(groupKey)}
-												>
-													<div>
-														<strong>
-															{isGroupOpen ? '▾' : '▸'} {group.name}
-														</strong>
-														<span>
-															{group.manufacturer || '—'}{' '}
-															{group.model ? `· ${group.model}` : ''}
+									<span className='inventory-row-stats'>
+										<span className='inventory-pill'>
+											{category.total_quantity} ед.
+										</span>
+										<span className='inventory-pill inventory-pill-muted'>
+											{category.total_rows} строк
+										</span>
+									</span>
+								</button>
+
+								{isCategoryOpen && (
+									<div className='inventory-category-body inventory-reveal'>
+										{category.groups.map(group => {
+											const groupKey = `${category.category}-${group.group_key}`
+											const isGroupOpen = expandedGroups[groupKey] ?? true
+
+											return (
+												<div key={groupKey} className='inventory-group'>
+													<button
+														type='button'
+														className={`inventory-group-header ${
+															isGroupOpen ? 'is-open' : ''
+														}`}
+														onClick={() => toggleGroup(groupKey)}
+														aria-expanded={isGroupOpen}
+													>
+														<span className='inventory-row-left'>
+															<i
+																className='fa-solid fa-chevron-right inventory-chevron'
+																aria-hidden='true'
+															></i>
+
+															<span className='inventory-row-heading'>
+																<strong>{group.name}</strong>
+																<span className='inventory-row-meta'>
+																	{group.manufacturer || '—'}{' '}
+																	{group.model ? `· ${group.model}` : ''}
+																</span>
+															</span>
 														</span>
-													</div>
 
-													<div className='inventory-group-count'>
-														{group.total_quantity} ед.
-													</div>
-												</div>
+														<span className='inventory-pill'>
+															{group.total_quantity} ед.
+														</span>
+													</button>
 
-												{isGroupOpen && (
-													<div className='inventory-items-list'>
-														{group.items.map(item => (
-															<div
-																key={item.id}
-																className='inventory-item-card'
-															>
-																<div className='inventory-item-main'>
-																	<div>
-																		<strong>{item.name}</strong>
-																		<div className='inventory-item-subtitle'>
-																			{item.manufacturer || '—'}{' '}
-																			{item.model ? `· ${item.model}` : ''}
+													{isGroupOpen && (
+														<div className='inventory-items-list inventory-reveal'>
+															{group.items.map(item => (
+																<div
+																	key={item.id}
+																	className={`inventory-item-card ${getStatusClassName(
+																		item.status,
+																	)}`}
+																>
+																	<div className='inventory-item-main'>
+																		<div>
+																			<strong>{item.name}</strong>
+																			<div className='inventory-item-subtitle'>
+																				{item.manufacturer || '—'}{' '}
+																				{item.model
+																					? `· ${item.model}`
+																					: ''}
+																			</div>
+																			<div className='inventory-item-subtitle'>
+																				{getItemIdentity(item)}
+																			</div>
 																		</div>
-																		<div className='inventory-item-subtitle'>
-																			{getItemIdentity(item)}
-																		</div>
-																	</div>
 
-																	<div className='inventory-item-badges'>
-																		<span className='inventory-qty-badge'>
-																			{getItemQuantity(item)} шт.
-																		</span>
-
-																		{item.is_low_stock && (
-																			<span className='inventory-low-stock'>
-																				Низкий остаток
+																		<div className='inventory-item-badges'>
+																			<span className='inventory-qty-badge'>
+																				{getItemQuantity(item)} шт.
 																			</span>
-																		)}
-																	</div>
-																</div>
 
-																{item.note && (
-																	<div className='inventory-note'>
-																		{item.note}
+																			{item.is_low_stock && (
+																				<span className='inventory-low-stock'>
+																					<i className='fa-solid fa-triangle-exclamation'></i>{' '}
+																					Низкий остаток
+																				</span>
+																			)}
+																		</div>
 																	</div>
-																)}
-															</div>
-														))}
-													</div>
-												)}
-											</div>
-										)
-									})}
+
+																	{item.note && (
+																		<div className='inventory-note'>
+																			{item.note}
+																		</div>
+																	)}
+																</div>
+															))}
+														</div>
+													)}
+												</div>
+											)
+										})}
+									</div>
+								)}
 							</div>
 						)
 					})}

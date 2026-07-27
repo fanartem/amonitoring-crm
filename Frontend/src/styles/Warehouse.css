@@ -861,6 +861,89 @@
 	gap: 16px;
 }
 
+/* Поле поиска монтажника с выпадающим списком (замена <select>) */
+.tech-picker {
+	position: relative;
+	width: 100%;
+}
+
+.tech-picker-input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 8px 12px;
+	border: 1px solid #d3ddc7;
+	border-radius: 8px;
+	font-size: 13px;
+	color: #333;
+	outline: none;
+	background: #fff;
+	font-family: inherit;
+	transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.tech-picker-input::placeholder {
+	color: #9aa19a;
+}
+
+.tech-picker-input:focus {
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.1);
+}
+
+.tech-picker-dropdown {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	right: 0;
+	z-index: 60;
+	max-height: 260px;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid #d8e8c6;
+	border-radius: 10px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+	padding: 6px;
+}
+
+.tech-picker-option {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	width: 100%;
+	text-align: left;
+	background: transparent;
+	border: none;
+	border-radius: 8px;
+	padding: 8px 10px;
+	cursor: pointer;
+	font-family: inherit;
+	transition: background 0.15s;
+}
+
+.tech-picker-option:hover {
+	background: #f1f8e9;
+}
+
+.tech-picker-option-name {
+	font-size: 13px;
+	font-weight: 600;
+	color: #1f2937;
+}
+
+.tech-picker-option-meta {
+	font-size: 12px;
+	color: #6b7280;
+	white-space: nowrap;
+}
+
+.tech-picker-empty {
+	padding: 12px 10px;
+	font-size: 13px;
+	color: #9ca3af;
+	text-align: center;
+}
+
 .inventory-tree {
 	display: flex;
 	flex-direction: column;
@@ -879,22 +962,25 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 12px;
+	width: 100%;
 	padding: 14px 16px;
 	background: #f4f8ef;
-	cursor: pointer;
+	border: none;
 	border-bottom: 1px solid #e1ead9;
+	cursor: pointer;
+	font: inherit;
+	text-align: left;
+	transition: background 0.15s ease;
 }
 
-.inventory-category-header strong {
+.inventory-category-header:hover {
+	background: #eef4e5;
+}
+
+.inventory-category-header .inventory-row-heading strong {
 	color: #2e5902;
-	font-size: 16px;
-}
-
-.inventory-category-header span {
-	display: block;
-	margin-top: 3px;
-	color: #777;
-	font-size: 12px;
+	font-size: 15px;
 }
 
 .inventory-group {
@@ -907,31 +993,24 @@
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
+	width: 100%;
 	padding: 10px 12px;
+	border: none;
 	border-radius: 10px;
 	background: #fafcf7;
 	cursor: pointer;
+	font: inherit;
+	text-align: left;
+	transition: background 0.15s ease;
 }
 
-.inventory-group-header strong {
+.inventory-group-header:hover {
+	background: #f2f7ec;
+}
+
+.inventory-group-header .inventory-row-heading strong {
 	color: #333;
-}
-
-.inventory-group-header span {
-	display: block;
-	margin-top: 2px;
-	color: #777;
-	font-size: 12px;
-}
-
-.inventory-group-count {
-	padding: 4px 10px;
-	border-radius: 999px;
-	background: #eef7e6;
-	color: #4f7d22;
-	font-size: 12px;
-	font-weight: 700;
-	white-space: nowrap;
+	font-size: 13px;
 }
 
 .inventory-items-list {
@@ -942,10 +1021,34 @@
 }
 
 .inventory-item-card {
+	position: relative;
 	border: 1px solid #e2e8dc;
+	border-left: 4px solid #cfd8c4;
 	border-radius: 12px;
 	background: #fff;
 	padding: 12px;
+	transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.inventory-item-card:hover {
+	box-shadow: 0 4px 14px rgba(46, 89, 2, 0.08);
+	border-color: #d3e0c7;
+}
+
+.inventory-item-card.status-new {
+	border-left-color: #f5a623;
+}
+
+.inventory-item-card.status-progress {
+	border-left-color: #1565c0;
+}
+
+.inventory-item-card.status-done {
+	border-left-color: #2e7d32;
+}
+
+.inventory-item-card.status-cancelled {
+	border-left-color: #c62828;
 }
 
 .inventory-item-main {
@@ -983,12 +1086,17 @@
 .inventory-low-stock {
 	display: inline-flex;
 	align-items: center;
+	gap: 5px;
 	padding: 3px 10px;
 	border-radius: 999px;
 	background: #fff3cd;
 	color: #946200;
 	font-size: 11px;
 	font-weight: 700;
+}
+
+.inventory-low-stock i {
+	font-size: 10px;
 }
 
 .inventory-note {
@@ -1007,6 +1115,143 @@
 	gap: 8px;
 	margin-top: 12px;
 }
+
+/* === Общие элементы строк дерева: иконки, аватар, пилюли, шеврон === */
+
+.inventory-row-left {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+.inventory-row-heading {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.inventory-row-heading strong {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.inventory-row-meta {
+	margin-top: 2px;
+	color: #6b7280;
+	font-size: 12px;
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.inventory-row-stats {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.inventory-pill {
+	display: inline-flex;
+	align-items: center;
+	padding: 4px 10px;
+	border-radius: 999px;
+	background: #eef7e6;
+	color: #4f7d22;
+	font-size: 12px;
+	font-weight: 700;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.inventory-pill-muted {
+	background: #f1f3f5;
+	color: #6b7280;
+}
+
+.inventory-chevron {
+	flex-shrink: 0;
+	width: 14px;
+	font-size: 12px;
+	color: #6b9b3a;
+	transition: transform 0.18s ease;
+}
+
+.inventory-user-header.is-open .inventory-chevron,
+.inventory-category-header.is-open .inventory-chevron,
+.inventory-group-header.is-open .inventory-chevron {
+	transform: rotate(90deg);
+}
+
+.inventory-avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 38px;
+	height: 38px;
+	border-radius: 50%;
+	background: linear-gradient(135deg, #9ed15c, #5e9424);
+	color: #fff;
+	font-size: 13px;
+	font-weight: 800;
+	letter-spacing: 0.02em;
+}
+
+.inventory-category-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 26px;
+	height: 26px;
+	border-radius: 8px;
+	background: #eef7e6;
+	color: #4f7d22;
+	font-size: 12px;
+}
+
+.inventory-user-header:focus-visible,
+.inventory-category-header:focus-visible,
+.inventory-group-header:focus-visible {
+	outline: 2px solid #5e9424;
+	outline-offset: -2px;
+}
+
+@keyframes inventoryReveal {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.inventory-reveal {
+	animation: inventoryReveal 0.18s ease;
+}
+
+/* Обёртки раскрытого содержимого монтажника/категории — чисто структурные,
+   но объявлены явно, чтобы не зависеть от display по умолчанию. */
+.inventory-user-body,
+.inventory-category-body {
+	display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.inventory-reveal,
+	.inventory-chevron {
+		animation: none !important;
+		transition: none !important;
+	}
+}
+
 
 .inventory-modal-wide {
 	max-width: 760px;
@@ -1130,6 +1375,7 @@
 	border-radius: 14px;
 	background: #ffffff;
 	overflow: hidden;
+	transition: box-shadow 0.15s ease;
 }
 
 .inventory-user + .inventory-user {
@@ -1140,23 +1386,25 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 12px;
+	width: 100%;
 	padding: 16px 18px;
 	background: #eaf4df;
-	cursor: pointer;
+	border: none;
 	border-bottom: 1px solid #d4e6c3;
+	cursor: pointer;
+	font: inherit;
+	text-align: left;
+	transition: background 0.15s ease;
 }
 
-.inventory-user-header strong {
+.inventory-user-header:hover {
+	background: #e2eed1;
+}
+
+.inventory-user-header .inventory-row-heading strong {
 	color: #2e5902;
-	font-size: 17px;
-}
-
-.inventory-user-header span {
-	display: block;
-	margin-top: 4px;
-	color: #5c6f4e;
-	font-size: 12px;
-	font-weight: 600;
+	font-size: 16px;
 }
 
 .inventory-user .inventory-category {
@@ -1164,6 +1412,7 @@
 	border-radius: 0;
 	border-top: 1px solid #eef3ea;
 }
+
 
 .modal-overlay.open {
 	z-index: 3000;
@@ -1225,11 +1474,18 @@
 	.inventory-category-header,
 	.inventory-group-header {
 		flex-wrap: wrap;
-		gap: 6px 10px;
+		gap: 8px 10px;
 	}
 
-	.inventory-group-count {
+	.inventory-row-stats,
+	.inventory-pill {
 		align-self: flex-start;
+	}
+
+	.inventory-row-heading strong,
+	.inventory-row-meta {
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 
 	/* Действия карточки: растягиваем кнопки, удобнее тапать */
@@ -1237,6 +1493,16 @@
 		flex: 1 1 calc(50% - 8px);
 		min-width: 120px;
 		text-align: center;
+	}
+
+	/* Поиск монтажника: поле и выпадающий список на всю ширину */
+	.inventory-filters .tech-picker,
+	.form-group .tech-picker {
+		width: 100%;
+	}
+
+	.tech-picker-dropdown {
+		max-height: 220px;
 	}
 }
 
