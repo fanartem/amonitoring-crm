@@ -29,6 +29,13 @@ INVENTORY_FULL_READ_ROLES = [
     "SENIOR_TECHNICIAN",
 ]
 
+REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS = 120
+
+REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES = [
+    "TECHNICIAN",
+    "SENIOR_TECHNICIAN",
+]
+
 # Полноценный доступ к странице склада: список, группировка, история, корзина
 WAREHOUSE_FULL_READ_ROLES = ["ADMIN", "WAREHOUSE_MANAGER"]
 
@@ -101,6 +108,59 @@ def require_request_equipment_attach(current_user: dict):
             status_code=403,
             detail="Недостаточно прав для добавления оборудования в заявку"
         )
+
+def enrich_request_equipment_detach_permissions(
+    rows: list[dict],
+    current_user: dict,
+) -> list[dict]:
+    """
+    Добавляет frontend-поля:
+    - can_detach
+    - detach_seconds_left
+    - detach_time_limit_seconds
+
+    ADMIN / WAREHOUSE_MANAGER могут отвязать всегда.
+    TECHNICIAN / SENIOR_TECHNICIAN могут отвязать только своё оборудование
+    в течение 2 минут после attached_at.
+    """
+    role = current_user.get("role")
+    user_id = int(current_user["id"])
+
+    can_detach_without_time_limit = role in WAREHOUSE_MANAGE_ROLES
+    can_detach_with_time_limit = role in REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES
+
+    for row in rows:
+        age_seconds_raw = row.get("detach_age_seconds")
+        age_seconds = int(age_seconds_raw or 0)
+
+        seconds_left = max(
+            0,
+            REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS - age_seconds,
+        )
+
+        is_attached_by_current_user = (
+            row.get("attached_by") is not None
+            and int(row["attached_by"]) == user_id
+        )
+
+        row["detach_time_limit_seconds"] = REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS
+        row["detach_seconds_left"] = 0
+        row["can_detach"] = False
+
+        if can_detach_without_time_limit:
+            row["can_detach"] = True
+            row["detach_seconds_left"] = None
+            continue
+
+        if (
+            can_detach_with_time_limit
+            and is_attached_by_current_user
+            and seconds_left > 0
+        ):
+            row["can_detach"] = True
+            row["detach_seconds_left"] = seconds_left
+
+    return rows
     
 def require_vehicle_equipment_manage(current_user: dict):
     if current_user["role"] not in WAREHOUSE_MANAGE_ROLES:
@@ -3865,10 +3925,17 @@ def get_request_equipment(
                     re.request_vehicle_id,
                     re.warehouse_item_id,
                     re.quantity,
+                    re.attached_by,
+                    re.attached_at,
+                    TIMESTAMPDIFF(SECOND, re.attached_at, NOW()) AS detach_age_seconds,
+                    DATE_ADD(
+                        re.attached_at,
+                        INTERVAL 120 SECOND
+                    ) AS detach_deadline_at,
+                    re.note,
+
                     wi.city_id,
                     city.name AS city_name,
-                    re.attached_at,
-                    re.note,
 
                     wi.category,
                     wi.name,
@@ -3899,7 +3966,8 @@ def get_request_equipment(
                 (request_id,)
             )
 
-            return cursor.fetchall()
+            rows = cursor.fetchall()
+            return enrich_request_equipment_detach_permissions(rows, current_user)
 
     finally:
         connection.close()
@@ -4633,22 +4701,44 @@ def detach_equipment_from_request(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Отвязать оборудование от заявки и вернуть на склад.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
+    Отвязать оборудование от заявки.
+
+    ADMIN / WAREHOUSE_MANAGER:
+    - могут отвязать всегда.
+
+    TECHNICIAN / SENIOR_TECHNICIAN:
+    - могут отвязать только то оборудование, которое сами привязали;
+    - только в течение 2 минут после attached_at.
     """
-    require_warehouse_manage(current_user)
+    require_request_equipment_read(current_user)
+
+    role = current_user.get("role")
+    user_id = int(current_user["id"])
 
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT 
+                SELECT
                     re.id,
                     re.request_id,
                     re.request_vehicle_id,
                     re.warehouse_item_id,
                     re.quantity,
+                    re.attached_by,
+                    re.attached_at,
+
+                    TIMESTAMPDIFF(SECOND, re.attached_at, NOW()) AS detach_age_seconds,
+
+                    r.is_deleted AS request_is_deleted,
+                    r.city,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+
+                    c.responsible_manager_id,
 
                     wi.name,
                     wi.model,
@@ -4660,20 +4750,55 @@ def detach_equipment_from_request(
                     city.name AS city_name,
                     wi.status,
 
+                    (
+                        SELECT wm.from_user_id
+                        FROM warehouse_item_movements wm
+                        WHERE wm.request_equipment_id = re.id
+                          AND wm.action IN (
+                              'INSTALLED_FROM_TECH',
+                              'INSTALLED_FROM_STOCK',
+                              'CONSUMABLE_USED_FROM_TECH',
+                              'CONSUMABLE_USED_FROM_STOCK'
+                          )
+                        ORDER BY wm.id ASC
+                        LIMIT 1
+                    ) AS source_user_id,
+
+                    (
+                        SELECT wm.action
+                        FROM warehouse_item_movements wm
+                        WHERE wm.request_equipment_id = re.id
+                          AND wm.action IN (
+                              'INSTALLED_FROM_TECH',
+                              'INSTALLED_FROM_STOCK',
+                              'CONSUMABLE_USED_FROM_TECH',
+                              'CONSUMABLE_USED_FROM_STOCK'
+                          )
+                        ORDER BY wm.id ASC
+                        LIMIT 1
+                    ) AS source_action,
+
                     v.id AS vehicle_id,
                     v.brand,
                     v.model AS vehicle_model,
                     v.plate_number
+
                 FROM request_equipment re
+                LEFT JOIN requests r ON re.request_id = r.id
+                LEFT JOIN clients c ON r.client_id = c.id
                 LEFT JOIN warehouse_items wi ON re.warehouse_item_id = wi.id
                 LEFT JOIN request_vehicles rv ON re.request_vehicle_id = rv.id
                 LEFT JOIN vehicles v ON rv.vehicle_id = v.id
                 LEFT JOIN cities city ON wi.city_id = city.id
+
                 WHERE re.id = %s
                   AND re.request_id = %s
+
+                FOR UPDATE
                 """,
                 (link_id, request_id)
             )
+
             link = cursor.fetchone()
 
             if not link:
@@ -4682,18 +4807,99 @@ def detach_equipment_from_request(
                     detail="Привязка оборудования не найдена"
                 )
 
+            if link.get("request_is_deleted"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя отвязать оборудование от удалённой заявки"
+                )
+
+            if not can_user_access_request_equipment(link, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для отвязки оборудования этой заявки"
+                )
+
+            can_detach = False
+            is_warehouse_manager = role in WAREHOUSE_MANAGE_ROLES
+            is_limited_detach_role = role in REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES
+
+            if is_warehouse_manager:
+                can_detach = True
+
+            elif is_limited_detach_role:
+                is_attached_by_current_user = (
+                    link.get("attached_by") is not None
+                    and int(link["attached_by"]) == user_id
+                )
+
+                if not is_attached_by_current_user:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Можно отвязать только оборудование, которое вы сами привязали"
+                    )
+
+                age_seconds = int(link.get("detach_age_seconds") or 0)
+
+                if age_seconds > REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Отвязать ошибочно привязанное оборудование можно только в течение 2 минут после привязки"
+                    )
+
+                can_detach = True
+
+            if not can_detach:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для отвязки оборудования"
+                )
+
             is_serialized = bool(link["is_serialized"])
+            source_user_id = link.get("source_user_id")
 
             if is_serialized:
-                cursor.execute(
-                    """
-                    UPDATE warehouse_items
-                    SET status = 'IN_STOCK',
-                        updated_at = NOW()
-                    WHERE id = %s
-                    """,
-                    (link["warehouse_item_id"],)
-                )
+                if source_user_id:
+                    cursor.execute(
+                        """
+                        UPDATE warehouse_items
+                        SET status = 'ASSIGNED_TO_TECH',
+                            assigned_to_user_id = %s,
+                            assigned_at = NOW(),
+                            assigned_by = %s,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (
+                            source_user_id,
+                            current_user["id"],
+                            link["warehouse_item_id"],
+                        )
+                    )
+
+                    new_status_for_history = "ASSIGNED_TO_TECH"
+                    detach_reason = (
+                        "Оборудование отвязано от заявки и возвращено в инвентарь монтажника"
+                    )
+
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE warehouse_items
+                        SET status = 'IN_STOCK',
+                            assigned_to_user_id = NULL,
+                            assigned_at = NULL,
+                            assigned_by = NULL,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (link["warehouse_item_id"],)
+                    )
+
+                    new_status_for_history = "IN_STOCK"
+                    detach_reason = (
+                        "Оборудование отвязано от заявки и возвращено на склад"
+                    )
+
             else:
                 new_quantity = int(link["current_quantity"] or 0) + int(link["quantity"] or 0)
 
@@ -4707,7 +4913,15 @@ def detach_equipment_from_request(
                         updated_at = NOW()
                     WHERE id = %s
                     """,
-                    (new_quantity, link["warehouse_item_id"])
+                    (
+                        new_quantity,
+                        link["warehouse_item_id"],
+                    )
+                )
+
+                new_status_for_history = link.get("status")
+                detach_reason = (
+                    "Расходник отвязан от заявки и возвращён в исходную складскую/инвентарную позицию"
                 )
 
             cursor.execute(
@@ -4729,10 +4943,11 @@ def detach_equipment_from_request(
                 request_vehicle_id=link.get("request_vehicle_id"),
                 vehicle_id=link.get("vehicle_id"),
                 request_equipment_id=link_id,
+                target_user_id=source_user_id,
                 quantity=link.get("quantity"),
                 old_status=link.get("status"),
-                new_status="IN_STOCK" if is_serialized else link.get("status"),
-                reason="Оборудование отвязано от заявки и возвращено на склад"
+                new_status=new_status_for_history,
+                reason=detach_reason
             )
 
             item_title = f"{link['name']}"
@@ -4744,6 +4959,12 @@ def detach_equipment_from_request(
             vehicle_title = f"{link['brand'] or ''} {link['vehicle_model'] or ''}".strip()
             if link["plate_number"]:
                 vehicle_title += f" ({link['plate_number']})"
+
+            history_action = (
+                "EQUIPMENT_DETACHED_BY_TECH_WITHIN_TIME_LIMIT"
+                if is_limited_detach_role and not is_warehouse_manager
+                else "EQUIPMENT_DETACHED"
+            )
 
             cursor.execute(
                 """
@@ -4759,7 +4980,7 @@ def detach_equipment_from_request(
                 (
                     request_id,
                     current_user["id"],
-                    "EQUIPMENT_DETACHED",
+                    history_action,
                     f"{item_title}, quantity={link['quantity']}, vehicle={vehicle_title}",
                     None
                 )
@@ -4768,7 +4989,7 @@ def detach_equipment_from_request(
             connection.commit()
 
             return {
-                "message": "Оборудование отвязано от заявки и возвращено на склад",
+                "message": "Оборудование отвязано от заявки",
                 "link_id": link_id,
                 "request_id": request_id,
                 "request_vehicle_id": link["request_vehicle_id"]
@@ -5482,10 +5703,17 @@ def get_request_vehicle_equipment(
                     re.request_vehicle_id,
                     re.warehouse_item_id,
                     re.quantity,
+                    re.attached_by,
+                    re.attached_at,
+                    TIMESTAMPDIFF(SECOND, re.attached_at, NOW()) AS detach_age_seconds,
+                    DATE_ADD(
+                        re.attached_at,
+                        INTERVAL 120 SECOND
+                    ) AS detach_deadline_at,
+                    re.note,
+
                     wi.city_id,
                     city.name AS city_name,
-                    re.attached_at,
-                    re.note,
 
                     wi.category,
                     wi.name,
@@ -5508,7 +5736,8 @@ def get_request_vehicle_equipment(
                 (request_vehicle_id,)
             )
 
-            return cursor.fetchall()
+            rows = cursor.fetchall()
+            return enrich_request_equipment_detach_permissions(rows, current_user)
 
     finally:
         connection.close()

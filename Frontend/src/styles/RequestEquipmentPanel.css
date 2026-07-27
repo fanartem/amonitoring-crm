@@ -441,3 +441,98 @@
     width: 100%;
   }
 }
+
+/* ==========================================================================
+   Request equipment detach window — 2-minute technician rollback
+   ========================================================================== */
+
+.equipment-attach-notice {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	background: #f1f8e9;
+	color: #2e5902;
+	border: 1px solid #c8e6c9;
+	border-radius: 10px;
+	padding: 12px 14px;
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1.4;
+}
+
+.equipment-attach-notice::before {
+	content: '✓';
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 999px;
+	background: #5e9424;
+	color: #ffffff;
+	font-size: 13px;
+	font-weight: 800;
+	flex: 0 0 auto;
+}
+
+.equipment-detach-actions {
+	display: inline-flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+.equipment-detach-timer {
+	--detach-progress: 360deg;
+
+	position: relative;
+	display: inline-flex;
+	width: 24px;
+	height: 24px;
+	border-radius: 999px;
+	background: conic-gradient(
+		#5e9424 var(--detach-progress),
+		#e5e7eb 0deg
+	);
+	flex: 0 0 auto;
+}
+
+.equipment-detach-timer::after {
+	content: '';
+	position: absolute;
+	inset: 5px;
+	border-radius: 999px;
+	background: #ffffff;
+	box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.equipment-detach-actions .equipment-detach-btn {
+	margin: 0;
+}
+
+@media (max-width: 768px) {
+	.equipment-detach-actions {
+		width: 100%;
+		justify-content: space-between;
+	}
+
+	.equipment-detach-actions .equipment-detach-btn {
+		width: calc(100% - 36px);
+	}
+}
+
+@media (max-width: 640px) {
+	.equipment-attach-notice {
+		align-items: flex-start;
+	}
+
+	.equipment-detach-actions {
+		width: 100%;
+	}
+
+	.equipment-detach-actions .equipment-detach-btn {
+		width: calc(100% - 36px);
+	}
+}

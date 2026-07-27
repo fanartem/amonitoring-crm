@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/RequestEquipmentPanel.css'
 
@@ -127,8 +127,6 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 		'TECHNICIAN',
 	].includes(userRole)
 
-	const canDetachEquipment = canManageEquipment
-
 	const [attachedItems, setAttachedItems] = useState([])
 	const [availableItems, setAvailableItems] = useState([])
 	const [technicians, setTechnicians] = useState([])
@@ -147,6 +145,10 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 	const [availableLoading, setAvailableLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState('')
+
+	const [attachNotice, setAttachNotice] = useState('')
+	const [timerTick, setTimerTick] = useState(0)
+	const attachNoticeTimeoutRef = useRef(null)
 
 	const vehiclesByRequestVehicleId = useMemo(() => {
 		const map = {}
@@ -168,6 +170,64 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 	const selectedAvailableQuantity = getAvailableQuantity(selectedItem)
 
+	const getDetachSecondsLeft = item => {
+		if (item?.detach_seconds_left === null) {
+			return null
+		}
+
+		const initialSecondsLeft = Number(item?.detach_seconds_left || 0)
+
+		if (initialSecondsLeft <= 0) {
+			return 0
+		}
+
+		const receivedAtMs = Number(item?.detach_received_at_ms || Date.now())
+		const elapsedSeconds = Math.floor((Date.now() - receivedAtMs) / 1000)
+
+		return Math.max(0, initialSecondsLeft - elapsedSeconds)
+	}
+
+	const getDetachProgress = item => {
+		const secondsLeft = getDetachSecondsLeft(item)
+
+		if (secondsLeft === null) {
+			return null
+		}
+
+		const limitSeconds = Number(item?.detach_time_limit_seconds || 120)
+
+		if (limitSeconds <= 0) {
+			return 0
+		}
+
+		return Math.max(0, Math.min(1, secondsLeft / limitSeconds))
+	}
+
+	const canDetachAttachedItem = item => {
+		if (!item?.can_detach) {
+			return false
+		}
+
+		const secondsLeft = getDetachSecondsLeft(item)
+
+		return secondsLeft === null || secondsLeft > 0
+	}
+
+	const showAttachSuccessNotice = () => {
+		setAttachNotice(
+			'Оборудование привязано. У вас есть 2 минуты, чтобы проверить и отвязать его при ошибке.',
+		)
+
+		if (attachNoticeTimeoutRef.current) {
+			clearTimeout(attachNoticeTimeoutRef.current)
+		}
+
+		attachNoticeTimeoutRef.current = setTimeout(() => {
+			setAttachNotice('')
+			attachNoticeTimeoutRef.current = null
+		}, 7000)
+	}
+
 	useEffect(() => {
 		if (!requestId) return
 
@@ -177,6 +237,31 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 			fetchTechnicians()
 		}
 	}, [requestId, canManageEquipment])
+
+	useEffect(() => {
+		const hasActiveDetachTimer = attachedItems.some(item => {
+			const secondsLeft = getDetachSecondsLeft(item)
+			return item?.can_detach && secondsLeft !== null && secondsLeft > 0
+		})
+
+		if (!hasActiveDetachTimer) {
+			return
+		}
+
+		const intervalId = setInterval(() => {
+			setTimerTick(value => value + 1)
+		}, 1000)
+
+		return () => clearInterval(intervalId)
+	}, [attachedItems, timerTick])
+
+	useEffect(() => {
+		return () => {
+			if (attachNoticeTimeoutRef.current) {
+				clearTimeout(attachNoticeTimeoutRef.current)
+			}
+		}
+	}, [])
 
 	useEffect(() => {
 		if (vehicles.length === 1 && !selectedRequestVehicleId) {
@@ -225,7 +310,16 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 			}
 
 			const data = await res.json()
-			setAttachedItems(Array.isArray(data) ? data : [])
+			const receivedAtMs = Date.now()
+
+			setAttachedItems(
+				Array.isArray(data)
+					? data.map(item => ({
+							...item,
+							detach_received_at_ms: receivedAtMs,
+						}))
+					: [],
+			)
 		} catch (err) {
 			setError(err.message)
 		} finally {
@@ -386,6 +480,8 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 			setNote('')
 			setInstalledByUserId('')
 
+			showAttachSuccessNotice()
+
 			await fetchAttachedItems()
 			await fetchAvailableInventory()
 		} catch (err) {
@@ -397,7 +493,9 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 	const handleDetach = async linkId => {
 		if (
-			!window.confirm('Отвязать оборудование от заявки и вернуть на склад?')
+			!window.confirm(
+				'Отвязать оборудование от заявки? Оборудование будет возвращено туда, откуда было взято.',
+			)
 		) {
 			return
 		}
@@ -467,6 +565,10 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 			</div>
 
 			{error && <div className='equipment-error'>{error}</div>}
+
+			{attachNotice && (
+				<div className='equipment-attach-notice'>{attachNotice}</div>
+			)}
 
 			{canAttachEquipment && (
 				<div className='equipment-attach-card'>
@@ -713,15 +815,29 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 														)}
 													</div>
 
-													{canDetachEquipment && (
-														<button
-															className='equipment-detach-btn'
-															type='button'
-															onClick={() => handleDetach(item.link_id)}
-															disabled={saving}
-														>
-															Отвязать
-														</button>
+													{canDetachAttachedItem(item) && (
+														<div className='equipment-detach-actions'>
+															{getDetachProgress(item) !== null && (
+																<span
+																	className='equipment-detach-timer'
+																	style={{
+																		'--detach-progress': `${Math.round(
+																			getDetachProgress(item) * 360,
+																		)}deg`,
+																	}}
+																	title='Время на отвязку ошибочно привязанного оборудования'
+																/>
+															)}
+
+															<button
+																className='equipment-detach-btn'
+																type='button'
+																onClick={() => handleDetach(item.link_id)}
+																disabled={saving}
+															>
+																Отвязать
+															</button>
+														</div>
 													)}
 												</div>
 											))}
