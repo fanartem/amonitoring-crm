@@ -1116,28 +1116,6 @@
 	flex: 0 0 auto !important;
 }
 
-.request-success-notice {
-	margin: 0 0 16px;
-	padding: 12px 14px;
-	border-radius: 12px;
-	background: #ecfdf3;
-	border: 1px solid #bbf7d0;
-	color: #166534;
-	font-size: 13px;
-	font-weight: 800;
-	line-height: 1.4;
-	opacity: 1;
-	transform: translateY(0);
-	transition:
-		opacity 0.45s ease,
-		transform 0.45s ease;
-}
-
-.request-success-notice.leaving {
-	opacity: 0;
-	transform: translateY(-6px);
-}
-
 .request-card.just-created {
 	animation: requestCreatedPulse 3.5s ease-out;
 }

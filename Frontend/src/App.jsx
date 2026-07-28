@@ -14,6 +14,7 @@ import Settings from './components/Settings'
 import Prices from './components/Prices'
 import MyInventory from './components/MyInventory'
 import Inventory from './components/Inventory'
+import NewRequestNotice from './components/notifications/NewRequestNotice'
 
 const isTokenExpired = token => {
 	try {
@@ -62,6 +63,7 @@ export default function App() {
 	return (
 		<div className='crm-app'>
 			<Header />
+			<NewRequestNotice />
 
 			<div className='body-row'>
 				<Sidebar />

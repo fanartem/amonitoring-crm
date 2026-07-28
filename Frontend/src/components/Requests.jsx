@@ -4,6 +4,7 @@ import { useLocation } from 'react-router'
 import '../styles/Requests.css'
 import CreateRequestModal from './CreateRequestModal'
 import RequestDetailModal from './RequestDetailModal'
+import { notifyNewRequestCreated } from './notifications/NewRequestNotice'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
 
 const getUserRole = () => {
@@ -73,13 +74,13 @@ export default function Requests() {
 		format: '',
 		date_from: '',
 		date_to: '',
+		sort_mode: 'STATUS_FLOW',
 	})
 
-	const [requestSuccessNotice, setRequestSuccessNotice] = useState('')
-	const [isRequestSuccessNoticeLeaving, setIsRequestSuccessNoticeLeaving] =
-		useState(false)
 	const [highlightedRequests, setHighlightedRequests] = useState({})
+	const [pendingScrollRequestId, setPendingScrollRequestId] = useState(null)
 	const requestsSnapshotRef = useRef({})
+	const requestRefs = useRef({})
 
 	const userRole = getUserRole()
 	const currentUserId = getCurrentUserId()
@@ -196,7 +197,37 @@ export default function Requests() {
 		}, 3500)
 	}
 
-	const fetchRequests = async ({ silent = false, initial = false } = {}) => {
+	useEffect(() => {
+		if (!pendingScrollRequestId) return
+
+		const requestExistsInFilteredList = filteredRequests.some(
+			req => Number(req.id) === Number(pendingScrollRequestId),
+		)
+
+		if (!requestExistsInFilteredList) return
+
+		const timeoutId = setTimeout(() => {
+			const el = requestRefs.current[Number(pendingScrollRequestId)]
+
+			if (el) {
+				el.scrollIntoView({
+					behavior: 'smooth',
+					block: 'center',
+				})
+			}
+
+			setPendingScrollRequestId(null)
+		}, 150)
+
+		return () => clearTimeout(timeoutId)
+	}, [filteredRequests, pendingScrollRequestId])
+
+	const fetchRequests = async ({
+		silent = false,
+		initial = false,
+		scrollToCreatedRequest = false,
+		showCreatedNotice = false,
+	} = {}) => {
 		try {
 			const res = await fetch(`${API_BASE_URL}/requests`, {
 				headers: getAuthHeaders(),
@@ -209,6 +240,7 @@ export default function Requests() {
 
 				const nextSnapshot = {}
 				const changes = {}
+				const createdRequests = []
 
 				data.forEach(req => {
 					const requestId = String(req.id)
@@ -219,6 +251,7 @@ export default function Requests() {
 					if (!initial && hasPreviousSnapshot) {
 						if (!previousSnapshot[requestId]) {
 							changes[requestId] = 'just-created'
+							createdRequests.push(req)
 						} else if (previousSnapshot[requestId] !== snapshot) {
 							changes[requestId] = 'just-updated'
 						}
@@ -227,6 +260,46 @@ export default function Requests() {
 
 				requestsSnapshotRef.current = nextSnapshot
 				setRequests(data)
+
+				if (scrollToCreatedRequest && createdRequests.length > 0) {
+					const ownCreatedRequests = currentUserId
+						? createdRequests.filter(
+								req => Number(req.created_by) === Number(currentUserId),
+							)
+						: []
+
+					const candidates =
+						ownCreatedRequests.length > 0 ? ownCreatedRequests : createdRequests
+
+					const newestCreatedRequest = [...candidates].sort((a, b) => {
+						const dateA = new Date(a.created_at).getTime()
+						const dateB = new Date(b.created_at).getTime()
+
+						const safeDateA = Number.isNaN(dateA) ? 0 : dateA
+						const safeDateB = Number.isNaN(dateB) ? 0 : dateB
+
+						if (safeDateA !== safeDateB) {
+							return safeDateB - safeDateA
+						}
+
+						return Number(b.id || 0) - Number(a.id || 0)
+					})[0]
+
+					if (newestCreatedRequest?.id) {
+						setPendingScrollRequestId(Number(newestCreatedRequest.id))
+
+						setHighlightedRequests(prev => ({
+							...prev,
+							[String(newestCreatedRequest.id)]: 'just-created',
+						}))
+
+						if (showCreatedNotice) {
+							notifyNewRequestCreated({
+								requestId: newestCreatedRequest.id,
+							})
+						}
+					}
+				}
 
 				if (silent) {
 					markRequestsHighlighted(changes)
@@ -528,6 +601,22 @@ export default function Requests() {
 			)
 		}
 
+		if (filters.sort_mode === 'NEWEST_FIRST') {
+			result = [...result].sort((a, b) => {
+				const dateA = getTime(a.created_at) || 0
+				const dateB = getTime(b.created_at) || 0
+
+				if (dateA !== dateB) {
+					return dateB - dateA
+				}
+
+				return Number(b.id || 0) - Number(a.id || 0)
+			})
+
+			setFilteredRequests(result)
+			return
+		}
+
 		result = [...result].sort((a, b) => {
 			const groupA = getRequestSortGroup(a)
 			const groupB = getRequestSortGroup(b)
@@ -586,6 +675,7 @@ export default function Requests() {
 			format: '',
 			date_from: '',
 			date_to: '',
+			sort_mode: 'STATUS_FLOW',
 		})
 
 	const statusLabels = {
@@ -921,20 +1011,6 @@ export default function Requests() {
 		setCreateModalOpen(true)
 	}
 
-	const showRequestSuccessNotice = message => {
-		setRequestSuccessNotice(message)
-		setIsRequestSuccessNoticeLeaving(false)
-
-		setTimeout(() => {
-			setIsRequestSuccessNoticeLeaving(true)
-		}, 6500)
-
-		setTimeout(() => {
-			setRequestSuccessNotice('')
-			setIsRequestSuccessNoticeLeaving(false)
-		}, 7000)
-	}
-
 	const getFilterClassName = filterName => {
 		const isActive = Boolean(filters[filterName])
 
@@ -1069,6 +1145,24 @@ export default function Requests() {
 						<option value='IN_OFFICE'>В офисе</option>
 					</select>
 				</div>
+				<div className='filter-group'>
+					<label>Сортировка</label>
+					<select
+						className={
+							filters.sort_mode === 'NEWEST_FIRST'
+								? 'filter-select filter-active'
+								: 'filter-select'
+						}
+						name='sort_mode'
+						value={filters.sort_mode}
+						onChange={handleFilterChange}
+					>
+						<option value='STATUS_FLOW'>
+							По статусам: ожидание старые → принятые → завершённые
+						</option>
+						<option value='NEWEST_FIRST'>Сначала новые</option>
+					</select>
+				</div>
 				<button className='btn-reset' onClick={resetFilters}>
 					Сбросить
 				</button>
@@ -1090,20 +1184,13 @@ export default function Requests() {
 				Кол-во заявок по фильтру: <strong>{filteredRequests.length}</strong>
 			</div>
 
-			{requestSuccessNotice && (
-				<div
-					className={`request-success-notice ${
-						isRequestSuccessNoticeLeaving ? 'leaving' : ''
-					}`}
-				>
-					{requestSuccessNotice}
-				</div>
-			)}
-
 			<div className='requests-list'>
 				{filteredRequests.map(req => (
 					<div
 						key={req.id}
+						ref={el => {
+							requestRefs.current[Number(req.id)] = el
+						}}
 						className={`request-card ${
 							isMyActiveRequest(req) ? 'request-card-my-active' : ''
 						} ${highlightedRequests[String(req.id)] || ''}`}
@@ -1540,18 +1627,16 @@ export default function Requests() {
 					setEditRequestData(null)
 				}}
 				onCreated={() => {
+					const wasEditMode = Boolean(editRequestData)
+
 					setCreateModalOpen(false)
 					setEditRequestData(null)
-					fetchRequests()
 
-					if (
-						!editRequestData &&
-						['MANAGER', 'TECH_SUPPORT'].includes(userRole)
-					) {
-						showRequestSuccessNotice(
-							'Заявка создана. У вас есть 2 минуты, чтобы проверить её и при необходимости удалить.',
-						)
-					}
+					fetchRequests({
+						scrollToCreatedRequest: !wasEditMode,
+						showCreatedNotice:
+							!wasEditMode && ['MANAGER', 'TECH_SUPPORT'].includes(userRole),
+					})
 				}}
 			/>
 			<RequestDetailModal
