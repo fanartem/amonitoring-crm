@@ -3370,7 +3370,8 @@ export default function Clients() {
 												</div>
 
 												{(canEditClient(selectedClient) ||
-													canTransferVehicle) && (
+													canTransferVehicle ||
+													canManageDirectVehicleEquipment) && (
 													<div className='vehicle-card-actions'>
 														{canManageDirectVehicleEquipment && (
 															<button
