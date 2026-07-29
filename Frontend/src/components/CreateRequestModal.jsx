@@ -320,6 +320,13 @@ export default function CreateRequestModal({
 	const [missingFields, setMissingFields] = useState([])
 	const [loading, setLoading] = useState(false)
 
+	const vehicleImportInputRef = useRef(null)
+	const vehicleImportNoticeTimeoutRef = useRef(null)
+	const [vehicleImportLoading, setVehicleImportLoading] = useState(false)
+	const [vehicleImportNotice, setVehicleImportNotice] = useState(null)
+	const [vehicleImportNoticeLeaving, setVehicleImportNoticeLeaving] =
+		useState(false)
+
 	const emptyForm = {
 		client_id: '',
 		client_type: 'Физ. лицо',
@@ -503,7 +510,250 @@ export default function CreateRequestModal({
 		}
 	}
 
+	useEffect(() => {
+		return () => {
+			if (vehicleImportNoticeTimeoutRef.current) {
+				clearTimeout(vehicleImportNoticeTimeoutRef.current)
+			}
+		}
+	}, [])
+
 	if (!isOpen) return null
+
+	const normalizeVinForForm = value =>
+		String(value || '')
+			.replace(/\s+/g, '')
+			.toUpperCase()
+
+	const normalizePlateForForm = value =>
+		String(value || '')
+			.replace(/\s+/g, '')
+			.toUpperCase()
+
+	const normalizeVehicleTextForForm = value =>
+		String(value || '')
+			.trim()
+			.replace(/\s+/g, ' ')
+
+	const isEmptyRequestVehicle = vehicle => {
+		return (
+			!vehicle.car_id &&
+			!vehicle.car_brand &&
+			!vehicle.car_model &&
+			!vehicle.car_vin &&
+			!vehicle.car_plate &&
+			!vehicle.car_year
+		)
+	}
+
+	const showVehicleImportNotice = ({
+		type = 'success',
+		title = '',
+		messages = [],
+	} = {}) => {
+		if (vehicleImportNoticeTimeoutRef.current) {
+			clearTimeout(vehicleImportNoticeTimeoutRef.current)
+		}
+
+		setVehicleImportNoticeLeaving(false)
+
+		setVehicleImportNotice({
+			type,
+			title,
+			messages,
+		})
+
+		vehicleImportNoticeTimeoutRef.current = setTimeout(() => {
+			setVehicleImportNoticeLeaving(true)
+
+			setTimeout(() => {
+				setVehicleImportNotice(null)
+				setVehicleImportNoticeLeaving(false)
+			}, 350)
+		}, 6000)
+	}
+
+	const downloadBlob = (blob, filename) => {
+		const url = URL.createObjectURL(blob)
+		const link = document.createElement('a')
+
+		link.href = url
+		link.setAttribute('download', filename)
+		document.body.appendChild(link)
+		link.click()
+		document.body.removeChild(link)
+		URL.revokeObjectURL(url)
+	}
+
+	const handleDownloadVehicleImportTemplate = async () => {
+		try {
+			const res = await fetch(`${API_BASE_URL}/vehicles/import-template`, {
+				headers: getAuthHeaders(),
+			})
+
+			if (!res.ok) {
+				throw new Error(await getErrorMessage(res))
+			}
+
+			const blob = await res.blob()
+			downloadBlob(blob, 'Шаблон_импорта_авто.xlsx')
+		} catch (err) {
+			setError(err.message)
+		}
+	}
+
+	const handleVehicleImportClick = () => {
+		if (isEditMode) return
+
+		vehicleImportInputRef.current?.click()
+	}
+
+	const handleVehicleImportFileChange = async e => {
+		const file = e.target.files?.[0]
+
+		e.target.value = ''
+
+		if (!file) return
+
+		if (!file.name.toLowerCase().endsWith('.xlsx')) {
+			showVehicleImportNotice({
+				type: 'warning',
+				title: 'Неверный формат файла',
+				messages: ['Загрузите Excel-файл в формате .xlsx'],
+			})
+
+			return
+		}
+
+		setVehicleImportLoading(true)
+		setError('')
+
+		try {
+			const form = new FormData()
+
+			if (clientKind === 'existing' && formData.client_id) {
+				form.append('client_id', String(formData.client_id))
+			}
+
+			form.append('file', file)
+
+			const res = await fetch(`${API_BASE_URL}/vehicles/import-preview`, {
+				method: 'POST',
+				headers: getAuthHeaders(),
+				body: form,
+			})
+
+			if (!res.ok) {
+				throw new Error(await getErrorMessage(res))
+			}
+
+			const data = await res.json()
+			const importedItems = Array.isArray(data.items) ? data.items : []
+			const warnings = Array.isArray(data.warnings) ? data.warnings : []
+
+			const currentVins = new Set(
+				requestVehicles
+					.map(vehicle => normalizeVinForForm(vehicle.car_vin))
+					.filter(Boolean),
+			)
+
+			const duplicateWarnings = []
+			const vehiclesToAdd = []
+
+			importedItems.forEach(item => {
+				const vin = normalizeVinForForm(item.vin)
+
+				if (!vin) return
+
+				if (currentVins.has(vin)) {
+					duplicateWarnings.push({
+						row: item.row,
+						vin,
+						message: `VIN ${vin} уже есть в текущей форме заявки. Строка пропущена.`,
+					})
+					return
+				}
+
+				currentVins.add(vin)
+
+				vehiclesToAdd.push({
+					...createVehicleWithDefaultGps(),
+
+					car_id: item.mode === 'existing' ? item.vehicle_id : '',
+					car_type: item.type || 'Легковая',
+					car_brand: item.brand || '',
+					car_model: item.model || '',
+					car_vin: vin,
+					car_plate: normalizePlateForForm(item.plate_number),
+					car_year: item.year || '',
+
+					import_mode: item.mode,
+					import_row: item.row,
+				})
+			})
+
+			if (vehiclesToAdd.length > 0) {
+				setRequestVehicles(prev => {
+					const base =
+						prev.length === 1 && isEmptyRequestVehicle(prev[0]) ? [] : prev
+
+					return [...base, ...vehiclesToAdd]
+				})
+
+				const importedExistingVehicles = importedItems
+					.filter(item => item.mode === 'existing' && item.vehicle_id)
+					.map(item => ({
+						id: item.vehicle_id,
+						client_id: item.client_id || Number(formData.client_id),
+						type: item.type,
+						brand: item.brand,
+						model: item.model,
+						plate_number: item.plate_number,
+						vin: item.vin,
+						year: item.year,
+					}))
+
+				if (importedExistingVehicles.length > 0) {
+					setClientVehicles(prev => {
+						const map = new Map()
+
+						prev.forEach(vehicle => {
+							map.set(Number(vehicle.id), vehicle)
+						})
+
+						importedExistingVehicles.forEach(vehicle => {
+							map.set(Number(vehicle.id), vehicle)
+						})
+
+						return Array.from(map.values())
+					})
+				}
+			}
+
+			const allWarnings = [...warnings, ...duplicateWarnings]
+
+			const summary = data.summary || {}
+
+			showVehicleImportNotice({
+				type: allWarnings.length > 0 ? 'warning' : 'success',
+				title: `Импорт авто: добавлено ${vehiclesToAdd.length}`,
+				messages: [
+					`Новые: ${summary.new_count || 0}. Существующие у клиента: ${summary.existing_count || 0}. Пропущено: ${allWarnings.length}.`,
+					...allWarnings.slice(0, 8).map(w => {
+						const rowText = w.row ? `Строка ${w.row}: ` : ''
+						return `${rowText}${w.message}`
+					}),
+					...(allWarnings.length > 8
+						? [`И ещё предупреждений: ${allWarnings.length - 8}`]
+						: []),
+				],
+			})
+		} catch (err) {
+			setError(err.message)
+		} finally {
+			setVehicleImportLoading(false)
+		}
+	}
 
 	const clearMissingField = fieldName => {
 		if (missingFields.includes(fieldName)) {
@@ -656,15 +906,15 @@ export default function CreateRequestModal({
 				prev.map(vehicle =>
 					vehicle.local_id === localId
 						? {
-							...vehicle,
-							car_id: '',
-							car_type: 'Легковая',
-							car_brand: '',
-							car_model: '',
-							car_plate: '',
-							car_vin: '',
-							car_year: '',
-						}
+								...vehicle,
+								car_id: '',
+								car_type: 'Легковая',
+								car_brand: '',
+								car_model: '',
+								car_plate: '',
+								car_vin: '',
+								car_year: '',
+							}
 						: vehicle,
 				),
 			)
@@ -682,15 +932,15 @@ export default function CreateRequestModal({
 			prev.map(vehicle =>
 				vehicle.local_id === localId
 					? {
-						...vehicle,
-						car_id: selectedVehicle.id,
-						car_type: selectedVehicle.type || 'Легковая',
-						car_brand: selectedVehicle.brand || '',
-						car_model: selectedVehicle.model || '',
-						car_plate: selectedVehicle.plate_number || '',
-						car_vin: selectedVehicle.vin || '',
-						car_year: selectedVehicle.year || '',
-					}
+							...vehicle,
+							car_id: selectedVehicle.id,
+							car_type: selectedVehicle.type || 'Легковая',
+							car_brand: selectedVehicle.brand || '',
+							car_model: selectedVehicle.model || '',
+							car_plate: selectedVehicle.plate_number || '',
+							car_vin: selectedVehicle.vin || '',
+							car_year: selectedVehicle.year || '',
+						}
 					: vehicle,
 			),
 		)
@@ -753,12 +1003,12 @@ export default function CreateRequestModal({
 			prev.map(vehicle =>
 				vehicle.local_id === vehicleLocalId
 					? {
-						...vehicle,
-						extra_sensors: [
-							...(vehicle.extra_sensors || []),
-							createEmptyExtraSensor(),
-						],
-					}
+							...vehicle,
+							extra_sensors: [
+								...(vehicle.extra_sensors || []),
+								createEmptyExtraSensor(),
+							],
+						}
 					: vehicle,
 			),
 		)
@@ -769,11 +1019,11 @@ export default function CreateRequestModal({
 			prev.map(vehicle =>
 				vehicle.local_id === vehicleLocalId
 					? {
-						...vehicle,
-						extra_sensors: (vehicle.extra_sensors || []).filter(
-							sensor => sensor.local_id !== sensorLocalId,
-						),
-					}
+							...vehicle,
+							extra_sensors: (vehicle.extra_sensors || []).filter(
+								sensor => sensor.local_id !== sensorLocalId,
+							),
+						}
 					: vehicle,
 			),
 		)
@@ -789,16 +1039,16 @@ export default function CreateRequestModal({
 			prev.map(vehicle =>
 				vehicle.local_id === vehicleLocalId
 					? {
-						...vehicle,
-						extra_sensors: (vehicle.extra_sensors || []).map(sensor =>
-							sensor.local_id === sensorLocalId
-								? {
-									...sensor,
-									[fieldName]: value,
-								}
-								: sensor,
-						),
-					}
+							...vehicle,
+							extra_sensors: (vehicle.extra_sensors || []).map(sensor =>
+								sensor.local_id === sensorLocalId
+									? {
+											...sensor,
+											[fieldName]: value,
+										}
+									: sensor,
+							),
+						}
 					: vehicle,
 			),
 		)
@@ -821,9 +1071,9 @@ export default function CreateRequestModal({
 			prev.map(line =>
 				line.local_id === localId
 					? {
-						...line,
-						[fieldName]: value,
-					}
+							...line,
+							[fieldName]: value,
+						}
 					: line,
 			),
 		)
@@ -844,6 +1094,12 @@ export default function CreateRequestModal({
 		setPriceLineOverrides({})
 		setEditingPriceLineKey(null)
 		setEditingPriceLineValue('')
+		setVehicleImportNotice(null)
+
+		if (vehicleImportNoticeTimeoutRef.current) {
+			clearTimeout(vehicleImportNoticeTimeoutRef.current)
+		}
+
 		setFormData(emptyForm)
 		onClose()
 	}
@@ -925,7 +1181,7 @@ export default function CreateRequestModal({
 				}
 
 				if (formData.work_type === 'Установка') {
-					; (vehicle.extra_sensors || []).forEach(sensor => {
+					;(vehicle.extra_sensors || []).forEach(sensor => {
 						if (!sensor.name.trim()) {
 							required.push(
 								`extra_sensor_name_${vehicle.local_id}_${sensor.local_id}`,
@@ -982,7 +1238,7 @@ export default function CreateRequestModal({
 	}
 
 	const checkVehicleVinExists = async vin => {
-		const normalizedVin = vin.trim().toUpperCase()
+		const normalizedVin = normalizeVinForForm(vin)
 
 		if (!normalizedVin) return null
 
@@ -1010,7 +1266,7 @@ export default function CreateRequestModal({
 		for (const vehicle of requestVehicles) {
 			if (vehicle.car_id) continue
 
-			const vin = vehicle.car_vin?.trim().toUpperCase()
+			const vin = normalizeVinForForm(vehicle.car_vin)
 
 			if (!vin) continue
 
@@ -1204,11 +1460,12 @@ export default function CreateRequestModal({
 						headers,
 						body: JSON.stringify({
 							client_id: finalClientId,
-							type: vehicle.car_type,
-							brand: vehicle.car_brand,
-							model: vehicle.car_model,
-							plate_number: vehicle.car_plate || 'без ГРНЗ',
-							vin: vehicle.car_vin.trim().toUpperCase(),
+							type: normalizeVehicleTextForForm(vehicle.car_type),
+							brand: normalizeVehicleTextForForm(vehicle.car_brand),
+							model: normalizeVehicleTextForForm(vehicle.car_model),
+							plate_number:
+								normalizePlateForForm(vehicle.car_plate) || 'БЕЗГРНЗ',
+							vin: normalizeVinForForm(vehicle.car_vin),
 							year: vehicle.car_year ? parseInt(vehicle.car_year, 10) : null,
 						}),
 					})
@@ -1237,11 +1494,11 @@ export default function CreateRequestModal({
 					extra_sensors:
 						formData.work_type === 'Установка'
 							? (vehicle.extra_sensors || [])
-								.filter(sensor => sensor.name.trim())
-								.map(sensor => ({
-									name: sensor.name.trim(),
-									price: sensor.price === '' ? 0 : Number(sensor.price),
-								}))
+									.filter(sensor => sensor.name.trim())
+									.map(sensor => ({
+										name: sensor.name.trim(),
+										price: sensor.price === '' ? 0 : Number(sensor.price),
+									}))
 							: [],
 				})
 			}
@@ -1346,8 +1603,8 @@ export default function CreateRequestModal({
 					: null,
 			visit_km:
 				visitType === 'ON_SITE' &&
-					formData.visit_price_code === 'BUSINESS_TRIP_KM' &&
-					formData.visit_km !== ''
+				formData.visit_price_code === 'BUSINESS_TRIP_KM' &&
+				formData.visit_km !== ''
 					? Number(formData.visit_km)
 					: null,
 			has_power_restore:
@@ -1374,11 +1631,11 @@ export default function CreateRequestModal({
 				extra_sensors:
 					workType === 'INSTALLATION'
 						? (vehicle.extra_sensors || [])
-							.filter(sensor => sensor.name.trim())
-							.map(sensor => ({
-								name: sensor.name.trim(),
-								price: sensor.price === '' ? 0 : Number(sensor.price),
-							}))
+								.filter(sensor => sensor.name.trim())
+								.map(sensor => ({
+									name: sensor.name.trim(),
+									price: sensor.price === '' ? 0 : Number(sensor.price),
+								}))
 						: [],
 			})),
 			manual_lines: manualPriceLines
@@ -1560,6 +1817,43 @@ export default function CreateRequestModal({
 				</div>
 
 				{error && <div className='request-modal-error-banner'>{error}</div>}
+
+				{vehicleImportNotice && (
+					<div
+						className={`vehicle-import-notice ${vehicleImportNotice.type} ${
+							vehicleImportNoticeLeaving ? 'leaving' : ''
+						}`}
+					>
+						<div className='vehicle-import-notice-title'>
+							{vehicleImportNotice.title}
+						</div>
+
+						{vehicleImportNotice.messages?.length > 0 && (
+							<div className='vehicle-import-notice-list'>
+								{vehicleImportNotice.messages.map((message, index) => (
+									<div key={index} className='vehicle-import-notice-line'>
+										{message}
+									</div>
+								))}
+							</div>
+						)}
+
+						<button
+							type='button'
+							className='vehicle-import-notice-close'
+							onClick={() => {
+								setVehicleImportNoticeLeaving(true)
+
+								setTimeout(() => {
+									setVehicleImportNotice(null)
+									setVehicleImportNoticeLeaving(false)
+								}, 350)
+							}}
+						>
+							×
+						</button>
+					</div>
+				)}
 
 				<div className='request-modal-body'>
 					<div className='request-modal-main-layout'>
@@ -2067,13 +2361,42 @@ export default function CreateRequestModal({
 											Автомобили в заявке
 										</div>
 
-										<button
-											type='button'
-											className='request-add-vehicle-btn'
-											onClick={addRequestVehicle}
-										>
-											+ Добавить автомобиль
-										</button>
+										<div className='request-vehicle-header-actions'>
+											<input
+												ref={vehicleImportInputRef}
+												type='file'
+												accept='.xlsx'
+												style={{ display: 'none' }}
+												onChange={handleVehicleImportFileChange}
+											/>
+
+											<button
+												type='button'
+												className='request-secondary-action-btn'
+												onClick={handleDownloadVehicleImportTemplate}
+												disabled={vehicleImportLoading}
+											>
+												Шаблон Excel
+											</button>
+
+											<button
+												type='button'
+												className='request-secondary-action-btn'
+												onClick={handleVehicleImportClick}
+												disabled={vehicleImportLoading}
+											>
+												{vehicleImportLoading ? 'Импорт...' : 'Импорт'}
+											</button>
+
+											<button
+												type='button'
+												className='request-add-vehicle-btn'
+												onClick={addRequestVehicle}
+												disabled={vehicleImportLoading}
+											>
+												+ Добавить автомобиль
+											</button>
+										</div>
 									</div>
 
 									<div className='request-vehicles-form-list'>

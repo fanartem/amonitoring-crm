@@ -1,8 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from app.database import get_connection
 from app.schemas import VehicleCreate, VehicleUpdate, VehicleClientTransfer, VehicleDeleteRequest
 from app.security import get_current_user
 from app.permissions import can_create_request_for_client
+
+import re
+from io import BytesIO
+from openpyxl import load_workbook, Workbook
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.styles import Font, PatternFill, Alignment
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
 
@@ -23,6 +30,126 @@ ALLOWED_VEHICLE_DELETE_REASON_TYPES = [
     "SERVICE_STOPPED_SIM_BLOCKED",
     "OTHER",
 ]
+
+VEHICLE_IMPORT_REQUIRED_FIELDS = {
+    "type": "Тип техники",
+    "brand": "Марка",
+    "model": "Модель",
+    "vin": "VIN-код",
+}
+
+VEHICLE_IMPORT_HEADER_ALIASES = {
+    "типтехники": "type",
+    "тип": "type",
+
+    "марка": "brand",
+    "бренд": "brand",
+
+    "модель": "model",
+
+    "vin": "vin",
+    "vinкод": "vin",
+    "вин": "vin",
+    "винкод": "vin",
+
+    "госномер": "plate_number",
+    "госномер": "plate_number",
+    "государственныйномер": "plate_number",
+    "номер": "plate_number",
+
+    "годвыпуска": "year",
+    "год": "year",
+}
+
+
+def clean_excel_cell(value) -> str:
+    if value is None:
+        return ""
+
+    text = str(value)
+    text = text.replace("\xa0", " ")
+    text = text.replace("\u200b", " ")
+
+    return " ".join(text.strip().split())
+
+
+def normalize_excel_header(value) -> str:
+    text = clean_excel_cell(value).lower().replace("ё", "е")
+
+    return re.sub(r"[^a-zа-я0-9]+", "", text)
+
+
+def normalize_vin(value) -> str:
+    return re.sub(r"\s+", "", clean_excel_cell(value)).upper()
+
+
+def normalize_plate_number(value) -> str | None:
+    plate = re.sub(r"\s+", "", clean_excel_cell(value)).upper()
+
+    return plate or None
+
+
+def normalize_vehicle_text(value) -> str:
+    return clean_excel_cell(value)
+
+
+def parse_vehicle_year(value):
+    text = clean_excel_cell(value)
+
+    if not text:
+        return None, None
+
+    try:
+        year = int(float(text))
+    except ValueError:
+        return None, f"Некорректный год выпуска: {text}"
+
+    if year < 1900 or year > 2100:
+        return None, f"Некорректный год выпуска: {text}"
+
+    return year, None
+
+
+def build_vehicle_import_header_map(header_row):
+    header_map = {}
+
+    for index, value in enumerate(header_row):
+        normalized_header = normalize_excel_header(value)
+
+        if not normalized_header:
+            continue
+
+        field_name = VEHICLE_IMPORT_HEADER_ALIASES.get(normalized_header)
+
+        if not field_name:
+            continue
+
+        if field_name not in header_map:
+            header_map[field_name] = index
+
+    missing_fields = [
+        label
+        for field_name, label in VEHICLE_IMPORT_REQUIRED_FIELDS.items()
+        if field_name not in header_map
+    ]
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail="В Excel-файле не найдены обязательные колонки: "
+            + ", ".join(missing_fields)
+        )
+
+    return header_map
+
+
+def get_import_row_value(row, header_map, field_name):
+    index = header_map.get(field_name)
+
+    if index is None or index >= len(row):
+        return None
+
+    return row[index]
 
 def get_client_display_name(client: dict) -> str:
     if not client:
@@ -86,7 +213,7 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
                 )
 
             # 2. Только после проверки прав нормализуем и проверяем VIN.
-            vin = data.vin.strip().upper() if data.vin else ""
+            vin = normalize_vin(data.vin)
 
             if not vin:
                 raise HTTPException(
@@ -135,13 +262,12 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
             cursor.execute(
                 sql,
                 (
-                    data.client_id,
-                    data.brand,
-                    data.model,
-                    data.plate_number,
+                    normalize_vehicle_text(data.brand),
+                    normalize_vehicle_text(data.model),
+                    normalize_plate_number(data.plate_number),
                     vin,
                     data.year,
-                    data.type,
+                    normalize_vehicle_text(data.type),
                 )
             )
 
@@ -390,6 +516,391 @@ def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
     finally:
         connection.close()
 
+@router.get("/import-template")
+def download_vehicle_import_template(
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user["role"] not in ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для скачивания шаблона импорта машин"
+        )
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Автомобили"
+
+    headers = [
+        "Тип техники",
+        "Марка",
+        "Модель",
+        "VIN-код",
+        "Гос. Номер (необязательно)",
+        "Год выпуска (необязательно)",
+    ]
+
+    example_rows = [
+        ["Легковая", "Toyota", "Camry", "VINTOYOTACAMRY123", "", ""],
+        ["Электромобиль", "BYD", "Han", "VINBYDHAN123123123", "", ""],
+        ["Спецтехника", "KAMAZ", "4310", "VINKAMAZ4310123123", "", ""],
+    ]
+
+    sheet.append(headers)
+
+    for row in example_rows:
+        sheet.append(row)
+
+    header_fill = PatternFill("solid", fgColor="5E9424")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_alignment = Alignment(horizontal="center", vertical="center")
+
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    sheet.column_dimensions["A"].width = 18
+    sheet.column_dimensions["B"].width = 18
+    sheet.column_dimensions["C"].width = 18
+    sheet.column_dimensions["D"].width = 24
+    sheet.column_dimensions["E"].width = 30
+    sheet.column_dimensions["F"].width = 30
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="vehicle_import_template.xlsx"'
+        },
+    )
+
+@router.post("/import-preview")
+def import_vehicles_preview(
+    client_id: int | None = Form(None),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Preview импорта авто из .xlsx для создания заявки.
+
+    Ничего не создаёт в базе.
+    Возвращает:
+    - existing: VIN найден у выбранного клиента
+    - new: VIN не найден в CRM
+    - warnings: строка пропущена
+    """
+    if current_user["role"] not in ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Только Админ, РОП, Менеджер и Тех. поддержка могут импортировать машины"
+        )
+
+    filename = file.filename or ""
+
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(
+            status_code=400,
+            detail="Можно импортировать только Excel-файл формата .xlsx"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            selected_client_id = int(client_id) if client_id else None
+            client = None
+
+            if selected_client_id:
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        type,
+                        name,
+                        company_name,
+                        status,
+                        created_by,
+                        responsible_manager_id,
+                        is_deleted
+                    FROM clients
+                    WHERE id = %s
+                    LIMIT 1
+                    """,
+                    (selected_client_id,)
+                )
+
+                client = cursor.fetchone()
+
+                if not client or client["is_deleted"]:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Клиент не найден"
+                    )
+
+                if client.get("status") == "BLOCKED":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Нельзя импортировать машины для заблокированного клиента"
+                    )
+
+                if not can_create_request_for_client(client, current_user):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для импорта машин этому клиенту"
+                    )
+
+            content = file.file.read()
+
+            if not content:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Excel-файл пустой"
+                )
+
+            if len(content) > 5 * 1024 * 1024:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Excel-файл слишком большой. Максимум 5 МБ"
+                )
+
+            try:
+                workbook = load_workbook(
+                    filename=BytesIO(content),
+                    read_only=True,
+                    data_only=True,
+                )
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Не удалось прочитать Excel-файл. Проверьте, что это настоящий .xlsx файл"
+                )
+
+            sheet = workbook.active
+
+            rows_iterator = sheet.iter_rows(values_only=True)
+
+            try:
+                header_row = next(rows_iterator)
+            except StopIteration:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Excel-файл пустой"
+                )
+
+            header_map = build_vehicle_import_header_map(header_row)
+
+            parsed_rows = []
+            warnings = []
+            seen_vins = set()
+            total_rows = 0
+
+            for row_number, row in enumerate(rows_iterator, start=2):
+                if row_number > 1002:
+                    warnings.append({
+                        "row": row_number,
+                        "vin": None,
+                        "message": "Строка пропущена: за один импорт можно загрузить максимум 1000 машин"
+                    })
+                    continue
+
+                row_has_value = any(clean_excel_cell(value) for value in row)
+
+                if not row_has_value:
+                    continue
+
+                total_rows += 1
+
+                vehicle_type = normalize_vehicle_text(
+                    get_import_row_value(row, header_map, "type")
+                )
+                brand = normalize_vehicle_text(
+                    get_import_row_value(row, header_map, "brand")
+                )
+                model = normalize_vehicle_text(
+                    get_import_row_value(row, header_map, "model")
+                )
+                vin = normalize_vin(
+                    get_import_row_value(row, header_map, "vin")
+                )
+                plate_number = normalize_plate_number(
+                    get_import_row_value(row, header_map, "plate_number")
+                )
+                year, year_warning = parse_vehicle_year(
+                    get_import_row_value(row, header_map, "year")
+                )
+
+                missing = []
+
+                if not vehicle_type:
+                    missing.append("Тип техники")
+
+                if not brand:
+                    missing.append("Марка")
+
+                if not model:
+                    missing.append("Модель")
+
+                if not vin:
+                    missing.append("VIN-код")
+
+                if missing:
+                    warnings.append({
+                        "row": row_number,
+                        "vin": vin or None,
+                        "message": "Строка пропущена: не заполнены обязательные поля: "
+                        + ", ".join(missing)
+                    })
+                    continue
+
+                if year_warning:
+                    warnings.append({
+                        "row": row_number,
+                        "vin": vin,
+                        "message": year_warning + ". Год будет оставлен пустым"
+                    })
+
+                if vin in seen_vins:
+                    warnings.append({
+                        "row": row_number,
+                        "vin": vin,
+                        "message": f"Строка пропущена: VIN {vin} повторяется внутри Excel-файла"
+                    })
+                    continue
+
+                seen_vins.add(vin)
+
+                parsed_rows.append({
+                    "row": row_number,
+                    "type": vehicle_type,
+                    "brand": brand,
+                    "model": model,
+                    "vin": vin,
+                    "plate_number": plate_number,
+                    "year": year,
+                })
+
+            if not parsed_rows:
+                return {
+                    "items": [],
+                    "warnings": warnings,
+                    "summary": {
+                        "total_rows": total_rows,
+                        "imported_count": 0,
+                        "existing_count": 0,
+                        "new_count": 0,
+                        "skipped_count": len(warnings),
+                    }
+                }
+
+            vins = [row["vin"] for row in parsed_rows]
+            placeholders = ", ".join(["%s"] * len(vins))
+
+            cursor.execute(
+                f"""
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    v.year,
+                    v.type,
+
+                    c.name AS client_name,
+                    c.company_name AS client_company_name
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.vin IN ({placeholders})
+                  AND v.is_deleted = 0
+                """,
+                tuple(vins)
+            )
+
+            existing_vehicles = cursor.fetchall()
+            existing_by_vin = {}
+
+            for vehicle in existing_vehicles:
+                vehicle_vin = normalize_vin(vehicle.get("vin"))
+
+                if vehicle_vin and vehicle_vin not in existing_by_vin:
+                    existing_by_vin[vehicle_vin] = vehicle
+
+            items = []
+            existing_count = 0
+            new_count = 0
+
+            for row in parsed_rows:
+                existing_vehicle = existing_by_vin.get(row["vin"])
+
+                if not existing_vehicle:
+                    new_count += 1
+
+                    items.append({
+                        "row": row["row"],
+                        "mode": "new",
+                        "vehicle_id": None,
+                        "client_id": selected_client_id,
+                        "type": row["type"],
+                        "brand": row["brand"],
+                        "model": row["model"],
+                        "vin": row["vin"],
+                        "plate_number": row["plate_number"],
+                        "year": row["year"],
+                    })
+                    continue
+
+                if (
+                    selected_client_id
+                    and int(existing_vehicle["client_id"]) == int(selected_client_id)
+                ):
+                    existing_count += 1
+
+                    items.append({
+                        "row": row["row"],
+                        "mode": "existing",
+                        "vehicle_id": existing_vehicle["id"],
+                        "client_id": existing_vehicle["client_id"],
+                        "type": existing_vehicle["type"],
+                        "brand": existing_vehicle["brand"],
+                        "model": existing_vehicle["model"],
+                        "vin": existing_vehicle["vin"],
+                        "plate_number": existing_vehicle["plate_number"],
+                        "year": existing_vehicle["year"],
+                    })
+                    continue
+
+                other_client_name = (
+                    existing_vehicle.get("client_company_name")
+                    or existing_vehicle.get("client_name")
+                    or f"ID клиента {existing_vehicle.get('client_id')}"
+                )
+
+                warnings.append({
+                    "row": row["row"],
+                    "vin": row["vin"],
+                    "message": f"VIN {row['vin']} уже привязан к другому клиенту: {other_client_name}. Машина пропущена."
+                })
+
+            return {
+                "items": items,
+                "warnings": warnings,
+                "summary": {
+                    "total_rows": total_rows,
+                    "imported_count": len(items),
+                    "existing_count": existing_count,
+                    "new_count": new_count,
+                    "skipped_count": len(warnings),
+                }
+            }
+
+    finally:
+        connection.close()
+
 @router.get("/deleted")
 def get_deleted_vehicles(
     client_id: int | None = Query(None),
@@ -597,7 +1108,7 @@ def update_vehicle(
                 return {"message": "Нет данных для обновления"}
             
             if "vin" in update_data:
-                new_vin = update_data["vin"].strip().upper() if update_data["vin"] else ""
+                new_vin = normalize_vin(update_data["vin"])
 
                 if not new_vin:
                     raise HTTPException(
@@ -629,6 +1140,13 @@ def update_vehicle(
 
             updates = []
             values = []
+
+            for text_field in ["brand", "model", "type"]:
+                if text_field in update_data:
+                    update_data[text_field] = normalize_vehicle_text(update_data[text_field])
+
+            if "plate_number" in update_data:
+                update_data["plate_number"] = normalize_plate_number(update_data["plate_number"])
 
             for field in allowed_fields:
                 if field in update_data:
