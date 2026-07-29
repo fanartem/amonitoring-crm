@@ -262,6 +262,7 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
             cursor.execute(
                 sql,
                 (
+                    data.client_id,
                     normalize_vehicle_text(data.brand),
                     normalize_vehicle_text(data.model),
                     normalize_plate_number(data.plate_number),
