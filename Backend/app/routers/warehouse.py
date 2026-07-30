@@ -4268,7 +4268,9 @@ def get_vehicle_equipment(
 
             result = []
 
-            for row in direct_rows + request_rows:
+            all_rows = list(direct_rows or []) + list(request_rows or [])
+
+            for row in all_rows:
                 row["source_key"] = f"{row['source_type']}-{row['link_id']}"
                 result.append(row)
 

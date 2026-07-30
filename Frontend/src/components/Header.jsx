@@ -216,7 +216,7 @@ export default function Header() {
 		const timeoutId = setTimeout(async () => {
 			try {
 				const res = await fetch(
-					`${API_BASE_URL}/vehicles/search?q=${encodeURIComponent(q)}&limit=8`,
+					`${API_BASE_URL}/vehicles/search?q=${encodeURIComponent(q)}&limit=12`,
 					{
 						headers: getJsonAuthHeaders(),
 					},
@@ -279,6 +279,46 @@ export default function Header() {
 		return 'Без идентификатора'
 	}
 
+	const isDeletedVehicle = vehicle => {
+		const value = vehicle?.is_deleted ?? vehicle?.vehicle_is_deleted
+
+		return value === true || value === 1 || value === '1'
+	}
+
+	const getVehicleClientName = vehicle => {
+		return (
+			vehicle.company_name ||
+			vehicle.client_company_name ||
+			vehicle.client_name ||
+			'Клиент'
+		)
+	}
+
+	const getVehicleSearchTitle = vehicle => {
+		const vehicleTitle =
+			`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() || 'Авто'
+
+		const plate = vehicle.plate_number ? ` · ${vehicle.plate_number}` : ''
+
+		return `${vehicleTitle}${plate}`
+	}
+
+	const getVehicleSearchSubtitle = vehicle => {
+		const clientName = getVehicleClientName(vehicle)
+		const vin = vehicle.vin ? `VIN: ${vehicle.vin}` : 'VIN не указан'
+
+		if (isDeletedVehicle(vehicle)) {
+			return `В КОРЗИНЕ У ${clientName}: ${vin}`
+		}
+
+		return `Актуальная машина клиента: ${clientName} · ${vin}`
+	}
+
+	const normalizeSearchVin = value =>
+		String(value || '')
+			.replace(/\s+/g, '')
+			.toLowerCase()
+
 	// --- ЛОГИКА КЛИЕНТСКОГО ПОИСКА ---
 	const searchResults = useMemo(() => {
 		const q = query.toLowerCase().trim()
@@ -304,9 +344,50 @@ export default function Header() {
 			})
 		})
 
-		// 2. Поиск по АВТОМОБИЛЯМ (через встроенные vehicles в заявках)
-		const vehicleResultsMap = new Map() // duplicate по vehicle id
+		// 2. Поиск по АВТОМОБИЛЯМ
+		const vehicleResultsMap = new Map()
 
+		const qVin = normalizeSearchVin(q)
+
+		const sortedVehicleSearchResults = [...vehicleSearchResults].sort(
+			(a, b) => {
+				const aDeleted = isDeletedVehicle(a)
+				const bDeleted = isDeletedVehicle(b)
+
+				if (aDeleted !== bDeleted) {
+					return aDeleted ? 1 : -1
+				}
+
+				const aVinExact = normalizeSearchVin(a.vin) === qVin ? 0 : 1
+				const bVinExact = normalizeSearchVin(b.vin) === qVin ? 0 : 1
+
+				if (aVinExact !== bVinExact) {
+					return aVinExact - bVinExact
+				}
+
+				return (
+					Number(b.id || b.vehicle_id || 0) - Number(a.id || a.vehicle_id || 0)
+				)
+			},
+		)
+
+		sortedVehicleSearchResults.forEach(v => {
+			const vehicleId = v.id || v.vehicle_id
+
+			if (!vehicleId || vehicleResultsMap.has(vehicleId)) return
+
+			vehicleResultsMap.set(vehicleId, {
+				id: vehicleId,
+				clientId: v.client_id,
+				vehicleId,
+				title: getVehicleSearchTitle(v),
+				subtitle: getVehicleSearchSubtitle(v),
+				type: 'vehicle',
+				isDeleted: isDeletedVehicle(v),
+			})
+		})
+
+		// Старый fallback через заявки оставляем, но только если /vehicles/search ещё не вернул эту машину.
 		requests.forEach(r => {
 			if (!Array.isArray(r.vehicles)) return
 
@@ -319,7 +400,6 @@ export default function Header() {
 
 				if (!matches) return
 
-				// id машины может быть в v.id или v.vehicle_id
 				const vehicleId = v.vehicle_id || v.id
 				if (!vehicleId || vehicleResultsMap.has(vehicleId)) return
 
@@ -327,38 +407,21 @@ export default function Header() {
 				const clientName = client
 					? client.company_name || client.name
 					: r.company_name || r.client_name || 'Клиент'
+
 				const vehicleTitle =
 					`${v.brand || ''} ${v.model || ''}`.trim() || 'Авто'
 				const plate = v.plate_number ? ` · ${v.plate_number}` : ''
+				const vin = v.vin ? ` · VIN: ${v.vin}` : ''
 
 				vehicleResultsMap.set(vehicleId, {
 					id: vehicleId,
 					clientId: r.client_id,
 					vehicleId,
 					title: `${vehicleTitle}${plate}`,
-					subtitle: `Автомобиль клиента: ${clientName}`,
+					subtitle: `Автомобиль клиента: ${clientName}${vin}`,
 					type: 'vehicle',
+					isDeleted: false,
 				})
-			})
-		})
-
-		vehicleSearchResults.forEach(v => {
-			const vehicleId = v.id || v.vehicle_id
-
-			if (!vehicleId || vehicleResultsMap.has(vehicleId)) return
-
-			const clientName = v.company_name || v.client_name || 'Клиент'
-			const vehicleTitle = `${v.brand || ''} ${v.model || ''}`.trim() || 'Авто'
-			const plate = v.plate_number ? ` · ${v.plate_number}` : ''
-			const vin = v.vin ? ` · VIN: ${v.vin}` : ''
-
-			vehicleResultsMap.set(vehicleId, {
-				id: vehicleId,
-				clientId: v.client_id,
-				vehicleId,
-				title: `${vehicleTitle}${plate}`,
-				subtitle: `Автомобиль клиента: ${clientName}${vin}`,
-				type: 'vehicle',
 			})
 		})
 
@@ -499,7 +562,8 @@ export default function Header() {
 			navigate('/clients', {
 				state: {
 					openClientId: item.clientId,
-					highlightVehicleId: item.vehicleId,
+					highlightVehicleId: item.isDeleted ? null : item.vehicleId,
+					highlightDeletedVehicleId: item.isDeleted ? item.vehicleId : null,
 					searchActionId: actionId,
 				},
 			})
@@ -568,7 +632,9 @@ export default function Header() {
 							{searchResults.map((item, index) => (
 								<div
 									key={index}
-									className='search-dropdown-item'
+									className={`search-dropdown-item ${
+										item.isDeleted ? 'search-dropdown-item-deleted' : ''
+									}`}
 									onClick={() => handleResultClick(item)}
 								>
 									<div className='search-dropdown-item-title'>{item.title}</div>

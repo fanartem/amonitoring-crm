@@ -254,6 +254,22 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
                     detail=f"Автомобиль с VIN {vin} уже существует у клиента: {client_name}"
                 )
 
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    client_id
+                FROM vehicles
+                WHERE vin = %s
+                AND is_deleted = 1
+                ORDER BY deleted_at DESC, id DESC
+                LIMIT 1
+                """,
+                (vin,)
+            )
+
+            previous_deleted_vehicle_with_same_vin = cursor.fetchone()
+
             sql = """
             INSERT INTO vehicles (client_id, brand, model, plate_number, vin, year, type)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -272,13 +288,40 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
                 )
             )
 
+            new_vehicle_id = cursor.lastrowid
+
+            if previous_deleted_vehicle_with_same_vin:
+                cursor.execute(
+                    """
+                    INSERT IGNORE INTO vehicle_vin_links (
+                        vin,
+                        old_vehicle_id,
+                        new_vehicle_id,
+                        old_client_id,
+                        new_client_id,
+                        created_by,
+                        created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (
+                        vin,
+                        previous_deleted_vehicle_with_same_vin["id"],
+                        new_vehicle_id,
+                        previous_deleted_vehicle_with_same_vin.get("client_id"),
+                        data.client_id,
+                        current_user["id"],
+                    )
+                )
+
             connection.commit()
 
             return {
                 "message": "created",
-                "vehicle_id": cursor.lastrowid
+                "vehicle_id": new_vehicle_id,
+                "linked_deleted_vehicles_count": 1 if previous_deleted_vehicle_with_same_vin else 0,
             }
-
+        
     except HTTPException:
         connection.rollback()
         raise
@@ -358,6 +401,7 @@ def search_vehicles(
     """
     Быстрый глобальный поиск автомобилей без загрузки всех машин на фронт.
     Ищет по гос. номеру, VIN, марке, модели, клиенту, компании, телефону, БИН/ИИН.
+    Для ролей с доступом к корзине также возвращает удалённые машины.
     """
     search = q.strip()
 
@@ -365,10 +409,9 @@ def search_vehicles(
         return []
 
     like_value = f"%{search}%"
-    vin_search = search.upper()
+    vin_search = normalize_vin(search)
 
     conditions = [
-        "v.is_deleted = 0",
         "c.is_deleted = 0",
         """
         (
@@ -395,6 +438,9 @@ def search_vehicles(
         like_value,
     ]
 
+    if current_user["role"] not in VEHICLE_TRASH_VIEW_ROLES:
+        conditions.append("v.is_deleted = 0")
+
     if current_user.get("client_access_scope") == "RESPONSIBLE_ONLY":
         conditions.append("c.responsible_manager_id = %s")
         values.append(current_user["id"])
@@ -415,6 +461,11 @@ def search_vehicles(
                 v.vin,
                 v.year,
                 v.type,
+                v.is_deleted,
+                v.deleted_at,
+                v.deleted_by,
+                v.delete_reason_type,
+                v.delete_reason,
 
                 c.name AS client_name,
                 c.company_name,
@@ -424,30 +475,39 @@ def search_vehicles(
                 c.status AS client_status,
                 c.responsible_manager_id,
 
-                responsible.name AS responsible_manager_name
+                responsible.name AS responsible_manager_name,
+
+                deleted_by_user.name AS deleted_by_name
             FROM vehicles v
             LEFT JOIN clients c ON v.client_id = c.id
             LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+            LEFT JOIN users deleted_by_user ON v.deleted_by = deleted_by_user.id
             WHERE {where_clause}
             ORDER BY
                 CASE
-                    WHEN v.plate_number = %s THEN 1
-                    WHEN v.vin = %s THEN 2
-                    WHEN v.plate_number LIKE %s THEN 3
-                    WHEN v.vin LIKE %s THEN 4
+                    WHEN v.is_deleted = 0 THEN 0
+                    ELSE 1
+                END,
+                CASE
+                    WHEN v.vin = %s THEN 1
+                    WHEN v.plate_number = %s THEN 2
+                    WHEN v.vin LIKE %s THEN 3
+                    WHEN v.plate_number LIKE %s THEN 4
                     WHEN c.bin_iin = %s THEN 5
                     WHEN c.phone = %s THEN 6
                     WHEN c.company_name LIKE %s THEN 7
                     WHEN c.name LIKE %s THEN 8
                     ELSE 9
                 END,
+                v.is_deleted ASC,
+                v.deleted_at DESC,
                 v.id DESC
             LIMIT %s
             """
 
             values.extend([
-                search,
                 vin_search,
+                search,
                 like_value,
                 like_value,
                 search,
@@ -469,7 +529,7 @@ def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
     Проверка VIN перед созданием автомобиля.
     Нужна, чтобы фронт мог проверить VIN до создания нового клиента.
     """
-    normalized_vin = vin.strip().upper() if vin else None
+    normalized_vin = normalize_vin(vin)
 
     if not normalized_vin:
         return {
@@ -512,6 +572,227 @@ def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
                 "exists": vehicle is not None,
                 "vin": normalized_vin,
                 "vehicle": vehicle
+            }
+
+    finally:
+        connection.close()
+
+@router.get("/{vehicle_id}/vin-history")
+def get_vehicle_vin_history(
+    vehicle_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    v.year,
+                    v.type,
+                    v.is_deleted,
+                    v.deleted_at,
+                    v.deleted_by,
+                    v.delete_reason_type,
+                    v.delete_reason,
+
+                    c.name AS client_name,
+                    c.company_name AS client_company_name,
+
+                    deleted_by_user.name AS deleted_by_name
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                LEFT JOIN users deleted_by_user ON v.deleted_by = deleted_by_user.id
+                WHERE v.id = %s
+                LIMIT 1
+                """,
+                (vehicle_id,)
+            )
+
+            current_vehicle = cursor.fetchone()
+
+            if not current_vehicle:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Машина не найдена"
+                )
+
+            vin = normalize_vin(current_vehicle.get("vin"))
+
+            if not vin:
+                return {
+                    "vehicle": current_vehicle,
+                    "vin": None,
+                    "related_vehicles": [],
+                    "links": [],
+                    "links_count": 0,
+                }
+
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    v.year,
+                    v.type,
+                    v.is_deleted,
+                    v.deleted_at,
+                    v.deleted_by,
+                    v.delete_reason_type,
+                    v.delete_reason,
+
+                    c.name AS client_name,
+                    c.company_name AS client_company_name,
+
+                    deleted_by_user.name AS deleted_by_name
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                LEFT JOIN users deleted_by_user ON v.deleted_by = deleted_by_user.id
+                WHERE v.vin = %s
+                ORDER BY
+                    v.is_deleted ASC,
+                    v.deleted_at DESC,
+                    v.id DESC
+                """,
+                (vin,)
+            )
+
+            related_vehicles = cursor.fetchall()
+
+            cursor.execute(
+                """
+                SELECT
+                    l.id,
+                    l.vin,
+                    l.old_vehicle_id,
+                    l.new_vehicle_id,
+                    l.old_client_id,
+                    l.new_client_id,
+                    l.created_by,
+                    l.created_at,
+
+                    creator.name AS created_by_name,
+
+                    old_v.brand AS old_brand,
+                    old_v.model AS old_model,
+                    old_v.plate_number AS old_plate_number,
+                    old_v.vin AS old_vin,
+                    old_v.year AS old_year,
+                    old_v.type AS old_type,
+                    old_v.is_deleted AS old_is_deleted,
+                    old_v.deleted_at AS old_deleted_at,
+                    old_v.delete_reason_type AS old_delete_reason_type,
+                    old_v.delete_reason AS old_delete_reason,
+
+                    old_client.name AS old_client_name,
+                    old_client.company_name AS old_client_company_name,
+
+                    old_deleted_by.name AS old_deleted_by_name,
+
+                    new_v.brand AS new_brand,
+                    new_v.model AS new_model,
+                    new_v.plate_number AS new_plate_number,
+                    new_v.vin AS new_vin,
+                    new_v.year AS new_year,
+                    new_v.type AS new_type,
+                    new_v.is_deleted AS new_is_deleted,
+                    new_v.deleted_at AS new_deleted_at,
+                    new_v.delete_reason_type AS new_delete_reason_type,
+                    new_v.delete_reason AS new_delete_reason,
+
+                    new_client.name AS new_client_name,
+                    new_client.company_name AS new_client_company_name,
+
+                    new_deleted_by.name AS new_deleted_by_name
+                FROM vehicle_vin_links l
+                LEFT JOIN users creator ON l.created_by = creator.id
+
+                LEFT JOIN vehicles old_v ON l.old_vehicle_id = old_v.id
+                LEFT JOIN clients old_client ON l.old_client_id = old_client.id
+                LEFT JOIN users old_deleted_by ON old_v.deleted_by = old_deleted_by.id
+
+                LEFT JOIN vehicles new_v ON l.new_vehicle_id = new_v.id
+                LEFT JOIN clients new_client ON l.new_client_id = new_client.id
+                LEFT JOIN users new_deleted_by ON new_v.deleted_by = new_deleted_by.id
+
+                WHERE l.vin = %s
+                   OR l.old_vehicle_id = %s
+                   OR l.new_vehicle_id = %s
+                ORDER BY l.created_at DESC, l.id DESC
+                """,
+                (
+                    vin,
+                    vehicle_id,
+                    vehicle_id,
+                )
+            )
+
+            link_rows = cursor.fetchall()
+
+            links = []
+
+            for row in link_rows:
+                links.append({
+                    "id": row["id"],
+                    "vin": row["vin"],
+                    "created_at": row["created_at"],
+                    "created_by": row["created_by"],
+                    "created_by_name": row["created_by_name"],
+
+                    "old_vehicle": {
+                        "id": row["old_vehicle_id"],
+                        "client_id": row["old_client_id"],
+                        "brand": row["old_brand"],
+                        "model": row["old_model"],
+                        "plate_number": row["old_plate_number"],
+                        "vin": row["old_vin"],
+                        "year": row["old_year"],
+                        "type": row["old_type"],
+                        "is_deleted": row["old_is_deleted"],
+                        "deleted_at": row["old_deleted_at"],
+                        "delete_reason_type": row["old_delete_reason_type"],
+                        "delete_reason": row["old_delete_reason"],
+                        "deleted_by_name": row["old_deleted_by_name"],
+                        "client_name": row["old_client_name"],
+                        "client_company_name": row["old_client_company_name"],
+                    },
+
+                    "new_vehicle": {
+                        "id": row["new_vehicle_id"],
+                        "client_id": row["new_client_id"],
+                        "brand": row["new_brand"],
+                        "model": row["new_model"],
+                        "plate_number": row["new_plate_number"],
+                        "vin": row["new_vin"],
+                        "year": row["new_year"],
+                        "type": row["new_type"],
+                        "is_deleted": row["new_is_deleted"],
+                        "deleted_at": row["new_deleted_at"],
+                        "delete_reason_type": row["new_delete_reason_type"],
+                        "delete_reason": row["new_delete_reason"],
+                        "deleted_by_name": row["new_deleted_by_name"],
+                        "client_name": row["new_client_name"],
+                        "client_company_name": row["new_client_company_name"],
+                    },
+                })
+
+            return {
+                "vehicle": current_vehicle,
+                "vin": vin,
+                "related_vehicles": related_vehicles,
+                "links": links,
+                "links_count": len(links),
             }
 
     finally:
@@ -1642,6 +1923,7 @@ def restore_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_us
                 SELECT 
                     v.id,
                     v.client_id,
+                    v.vin,
                     v.is_deleted,
                     c.is_deleted AS client_is_deleted
                 FROM vehicles v
@@ -1664,17 +1946,49 @@ def restore_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_us
                     detail="Нельзя восстановить машину: клиент не найден или находится в корзине"
                 )
 
+            restore_vin = normalize_vin(vehicle.get("vin"))
+
+            if restore_vin:
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        client_id,
+                        brand,
+                        model,
+                        plate_number
+                    FROM vehicles
+                    WHERE vin = %s
+                    AND id != %s
+                    AND is_deleted = 0
+                    LIMIT 1
+                    """,
+                    (restore_vin, vehicle_id)
+                )
+
+                active_duplicate = cursor.fetchone()
+
+                if active_duplicate:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Нельзя восстановить машину: VIN {restore_vin} уже используется "
+                            f"активной машиной ID {active_duplicate['id']}"
+                        )
+                    )
+
             cursor.execute(
                 """
                 UPDATE vehicles
-                SET is_deleted = 0,
+                SET vin = %s,
+                    is_deleted = 0,
                     deleted_at = NULL,
                     deleted_by = NULL,
                     delete_reason_type = NULL,
                     delete_reason = NULL
                 WHERE id = %s
                 """,
-                (vehicle_id,)
+                (restore_vin, vehicle_id)
             )
 
             connection.commit()

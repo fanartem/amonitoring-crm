@@ -333,3 +333,16 @@
 	color: #dc2626;
 	text-decoration: underline;
 }
+
+.search-dropdown-item-deleted {
+	background: #fff8f8;
+}
+
+.search-dropdown-item-deleted .search-dropdown-item-title {
+	color: #991b1b;
+}
+
+.search-dropdown-item-deleted .search-dropdown-item-subtitle {
+	color: #b91c1c;
+	font-weight: 800;
+}

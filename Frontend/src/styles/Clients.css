@@ -1545,6 +1545,166 @@
 	border-color: #4f7f1e;
 }
 
+.vehicle-vin-history-btn {
+	border-color: #bbd7ff;
+	color: #1d4ed8;
+	background: #eff6ff;
+}
+
+.vehicle-vin-history-btn:hover {
+	background: #dbeafe;
+	border-color: #60a5fa;
+}
+
+.vin-history-modal-window {
+	max-width: 980px;
+}
+
+.vin-history-current-card {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	font-size: 13px;
+	color: #374151;
+}
+
+.vin-history-list,
+.vin-history-link-list {
+	display: grid;
+	gap: 10px;
+}
+
+.vin-history-card,
+.vin-history-link-card {
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	background: #ffffff;
+	padding: 12px;
+}
+
+.vin-history-card.active {
+	border-left: 4px solid #5e9424;
+}
+
+.vin-history-card.deleted {
+	border-left: 4px solid #c62828;
+	background: #fffafa;
+}
+
+.vin-history-card-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-bottom: 6px;
+}
+
+.vin-history-status {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 999px;
+	padding: 3px 9px;
+	font-size: 11px;
+	font-weight: 900;
+	white-space: nowrap;
+}
+
+.vin-history-status.active {
+	background: #e8f5e9;
+	color: #2e7d32;
+}
+
+.vin-history-status.deleted {
+	background: #ffebee;
+	color: #c62828;
+}
+
+.vin-history-meta,
+.vin-history-delete-info {
+	font-size: 12px;
+	color: #5f6368;
+	line-height: 1.45;
+}
+
+.vin-history-delete-info {
+	margin-top: 8px;
+	padding: 9px;
+	border-radius: 8px;
+	background: #fff5f5;
+	border: 1px solid #ffcdd2;
+	color: #7f1d1d;
+}
+
+.vin-history-empty {
+	padding: 12px;
+	border-radius: 8px;
+	background: #f9fafb;
+	border: 1px dashed #d1d5db;
+	color: #6b7280;
+	font-size: 13px;
+	font-weight: 700;
+}
+
+.vin-history-link-arrow {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+	gap: 12px;
+	align-items: center;
+}
+
+.vin-history-link-arrow > div:not(.vin-history-arrow-symbol) {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.vin-history-link-label {
+	font-size: 11px;
+	font-weight: 900;
+	color: #6b7280;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.vin-history-arrow-symbol {
+	width: 34px;
+	height: 34px;
+	border-radius: 999px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #eef7e6;
+	color: #5e9424;
+	font-size: 20px;
+	font-weight: 900;
+}
+
+.vehicle-trash-card.vehicle-highlighted {
+	box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.22);
+	border-color: #c62828;
+	background: #fff1f1;
+}
+
+@media (max-width: 768px) {
+	.vin-history-link-arrow {
+		grid-template-columns: 1fr;
+	}
+
+	.vin-history-arrow-symbol {
+		width: 100%;
+		height: auto;
+		padding: 6px 0;
+		border-radius: 8px;
+	}
+
+	.vin-history-card-top {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+}
+
 @media (max-width: 768px) {
 	.vehicle-trash-card {
 		flex-direction: column;

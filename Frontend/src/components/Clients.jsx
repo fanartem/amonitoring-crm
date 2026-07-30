@@ -103,6 +103,10 @@ export default function Clients() {
 	const [transferVehicleHistoryLoading, setTransferVehicleHistoryLoading] =
 		useState(false)
 
+	const [vinHistoryVehicle, setVinHistoryVehicle] = useState(null)
+	const [vinHistoryData, setVinHistoryData] = useState(null)
+	const [vinHistoryLoading, setVinHistoryLoading] = useState(false)
+
 	const [showVehicles, setShowVehicles] = useState(false)
 
 	const userRole = getUserRole()
@@ -322,6 +326,7 @@ export default function Clients() {
 		setEditingVehicle(null)
 		setPendingOpenClientId(null)
 		setPendingHighlightVehicleId(null)
+		setPendingHighlightDeletedVehicleId(null)
 		setPendingListClientId(Number(client.id))
 	}
 
@@ -381,6 +386,11 @@ export default function Clients() {
 
 	const [pendingHighlightVehicleId, setPendingHighlightVehicleId] =
 		useState(null)
+
+	const [
+		pendingHighlightDeletedVehicleId,
+		setPendingHighlightDeletedVehicleId,
+	] = useState(null)
 
 	const [highlightedVehicleId, setHighlightedVehicleId] = useState(null)
 	const [highlightedClientId, setHighlightedClientId] = useState(null)
@@ -466,6 +476,7 @@ export default function Clients() {
 	useEffect(() => {
 		const openClientId = location.state?.openClientId
 		const highlightVehicleId = location.state?.highlightVehicleId
+		const highlightDeletedVehicleId = location.state?.highlightDeletedVehicleId
 
 		if (!openClientId) return
 
@@ -474,9 +485,19 @@ export default function Clients() {
 		setEditingVehicle(null)
 
 		if (highlightVehicleId) {
-			// Поиск машины: открываем детали клиента и подсвечиваем машину.
+			// Поиск активной машины: открываем детали клиента, список машин и подсвечиваем машину.
 			setPendingOpenClientId(Number(openClientId))
 			setPendingHighlightVehicleId(Number(highlightVehicleId))
+			setPendingHighlightDeletedVehicleId(null)
+			setPendingListClientId(null)
+			return
+		}
+
+		if (highlightDeletedVehicleId) {
+			// Поиск машины из корзины: открываем детали клиента, корзину машин и подсвечиваем удалённую машину.
+			setPendingOpenClientId(Number(openClientId))
+			setPendingHighlightVehicleId(null)
+			setPendingHighlightDeletedVehicleId(Number(highlightDeletedVehicleId))
 			setPendingListClientId(null)
 			return
 		}
@@ -486,12 +507,16 @@ export default function Clients() {
 		setSelectedClient(null)
 		setPendingOpenClientId(null)
 		setPendingHighlightVehicleId(null)
+		setPendingHighlightDeletedVehicleId(null)
 		setPendingListClientId(Number(openClientId))
 	}, [location.state?.searchActionId])
 
 	// 2. Когда клиенты загружены + есть pending → открываем нужного клиента
 	useEffect(() => {
-		if (!pendingOpenClientId || !pendingHighlightVehicleId) {
+		if (
+			!pendingOpenClientId ||
+			(!pendingHighlightVehicleId && !pendingHighlightDeletedVehicleId)
+		) {
 			return
 		}
 
@@ -513,7 +538,12 @@ export default function Clients() {
 		}
 
 		openClient()
-	}, [clientGroups, pendingOpenClientId, pendingHighlightVehicleId])
+	}, [
+		clientGroups,
+		pendingOpenClientId,
+		pendingHighlightVehicleId,
+		pendingHighlightDeletedVehicleId,
+	])
 
 	useEffect(() => {
 		if (!pendingListClientId) return
@@ -638,6 +668,42 @@ export default function Clients() {
 			setHighlightedVehicleId(null)
 		}, 2500)
 	}, [clientVehicles, pendingHighlightVehicleId])
+
+	// 5. Когда клиент открыт + нужна подсветка машины из корзины → показываем корзину
+	useEffect(() => {
+		if (!selectedClient || !pendingHighlightDeletedVehicleId) return
+
+		setShowVehicles(false)
+		setShowDeletedVehicles(true)
+		fetchDeletedVehicles(selectedClient.id)
+	}, [selectedClient?.id, pendingHighlightDeletedVehicleId])
+
+	// 6. Когда корзина загрузилась + есть pending highlight → скролл и подсветка
+	useEffect(() => {
+		if (!pendingHighlightDeletedVehicleId || deletedVehicles.length === 0)
+			return
+
+		const vehicleId = Number(pendingHighlightDeletedVehicleId)
+		const vehicleExists = deletedVehicles.some(v => Number(v.id) === vehicleId)
+
+		if (!vehicleExists) return
+
+		setPendingHighlightDeletedVehicleId(null)
+		setShowDeletedVehicles(true)
+		setHighlightedVehicleId(vehicleId)
+
+		setTimeout(() => {
+			const el = vehicleRefs.current[vehicleId]
+
+			if (el) {
+				el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+			}
+		}, 150)
+
+		setTimeout(() => {
+			setHighlightedVehicleId(null)
+		}, 2500)
+	}, [deletedVehicles, pendingHighlightDeletedVehicleId])
 
 	const flattenClientsFromGroups = groups => {
 		const result = []
@@ -1954,6 +2020,68 @@ export default function Clients() {
 		} finally {
 			setClientActionLoading(false)
 		}
+	}
+
+	const getVinHistoryClientName = vehicle => {
+		if (!vehicle) return 'Клиент не указан'
+
+		return (
+			vehicle.client_company_name ||
+			vehicle.company_name ||
+			vehicle.client_name ||
+			vehicle.name ||
+			`ID клиента ${vehicle.client_id || '—'}`
+		)
+	}
+
+	const getVinHistoryVehicleTitle = vehicle => {
+		if (!vehicle) return 'Автомобиль не найден'
+
+		const title =
+			`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() ||
+			`Автомобиль ID ${vehicle.id || '—'}`
+
+		const plate = vehicle.plate_number || 'б/н'
+
+		return `${title} · ${plate}`
+	}
+
+	const fetchVehicleVinHistory = async vehicleId => {
+		setVinHistoryLoading(true)
+		setVinHistoryData(null)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/vehicles/${vehicleId}/vin-history`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Не удалось загрузить историю VIN')
+			}
+
+			const data = await res.json()
+			setVinHistoryData(data)
+		} catch (err) {
+			alert(err.message)
+			setVinHistoryData(null)
+		} finally {
+			setVinHistoryLoading(false)
+		}
+	}
+
+	const openVinHistoryModal = vehicle => {
+		setVinHistoryVehicle(vehicle)
+		fetchVehicleVinHistory(vehicle.id)
+	}
+
+	const closeVinHistoryModal = () => {
+		setVinHistoryVehicle(null)
+		setVinHistoryData(null)
+		setVinHistoryLoading(false)
 	}
 
 	const fetchVehicleTransferHistory = async vehicleId => {
@@ -3369,7 +3497,8 @@ export default function Clients() {
 													</div>
 												</div>
 
-												{(canEditClient(selectedClient) ||
+												{(v.vin ||
+													canEditClient(selectedClient) ||
 													canTransferVehicle ||
 													canManageDirectVehicleEquipment) && (
 													<div className='vehicle-card-actions'>
@@ -3381,6 +3510,14 @@ export default function Clients() {
 																}
 															>
 																+ Оборудование
+															</button>
+														)}
+														{v.vin && (
+															<button
+																className='btn-details vehicle-vin-history-btn'
+																onClick={() => openVinHistoryModal(v)}
+															>
+																История VIN
 															</button>
 														)}
 														{canEditClient(selectedClient) && (
@@ -3457,7 +3594,17 @@ export default function Clients() {
 									) : (
 										<div style={{ display: 'grid', gap: '10px' }}>
 											{deletedVehicles.map(vehicle => (
-												<div key={vehicle.id} className='vehicle-trash-card'>
+												<div
+													key={vehicle.id}
+													ref={el => {
+														vehicleRefs.current[Number(vehicle.id)] = el
+													}}
+													className={`vehicle-trash-card${
+														Number(highlightedVehicleId) === Number(vehicle.id)
+															? ' vehicle-highlighted'
+															: ''
+													}`}
+												>
 													<div className='vehicle-card-main'>
 														<div className='vehicle-card-header'>
 															<strong className='vehicle-card-title'>
@@ -4296,6 +4443,196 @@ export default function Clients() {
 								</button>
 							</div>
 						</form>
+					</div>
+				</div>
+			)}
+
+			{vinHistoryVehicle && (
+				<div className='modal-overlay open' onClick={closeVinHistoryModal}>
+					<div
+						className='modal-window vehicle-modal-window vin-history-modal-window'
+						onClick={e => e.stopPropagation()}
+					>
+						<div className='modal-header'>
+							<span className='modal-title'>История VIN</span>
+
+							<button
+								className='modal-close'
+								onClick={closeVinHistoryModal}
+								type='button'
+							>
+								&times;
+							</button>
+						</div>
+
+						<div className='vehicle-modal-body'>
+							<div className='vehicle-form-card'>
+								<div className='vehicle-form-section-title'>Текущая машина</div>
+
+								<div className='vin-history-current-card'>
+									<strong>
+										{vinHistoryVehicle.brand} {vinHistoryVehicle.model}
+									</strong>
+
+									<span>
+										VIN: {vinHistoryVehicle.vin || '—'}
+										<br />
+										Гос. номер: {vinHistoryVehicle.plate_number || 'б/н'}
+									</span>
+
+									<span>Клиент: {getClientDisplayName(selectedClient)}</span>
+								</div>
+							</div>
+
+							{vinHistoryLoading ? (
+								<div className='vehicle-form-card'>
+									<div className='vin-history-empty'>
+										Загрузка истории VIN...
+									</div>
+								</div>
+							) : (
+								<>
+									<div className='vehicle-form-card'>
+										<div className='vehicle-form-section-title'>
+											История машины с этим VIN
+										</div>
+
+										{!vinHistoryData?.related_vehicles ||
+										vinHistoryData.related_vehicles.length === 0 ? (
+											<div className='vin-history-empty'>
+												Других машин с этим VIN не найдено.
+											</div>
+										) : (
+											<div className='vin-history-list'>
+												{vinHistoryData.related_vehicles.map(vehicle => (
+													<div
+														key={vehicle.id}
+														className={`vin-history-card ${
+															vehicle.is_deleted ? 'deleted' : 'active'
+														}`}
+													>
+														<div className='vin-history-card-top'>
+															<strong>
+																{getVinHistoryVehicleTitle(vehicle)}
+															</strong>
+
+															<span
+																className={`vin-history-status ${
+																	vehicle.is_deleted ? 'deleted' : 'active'
+																}`}
+															>
+																{vehicle.is_deleted ? 'В корзине' : 'Активная'}
+															</span>
+														</div>
+
+														<div className='vin-history-meta'>
+															Клиент: {getVinHistoryClientName(vehicle)}
+														</div>
+
+														{vehicle.is_deleted && (
+															<div className='vin-history-delete-info'>
+																Удалил: {vehicle.deleted_by_name || '—'} ·{' '}
+																{vehicle.deleted_at
+																	? new Date(vehicle.deleted_at).toLocaleString(
+																			'ru-RU',
+																		)
+																	: 'дата не указана'}
+																{vehicle.delete_reason_type && (
+																	<>
+																		<br />
+																		Причина:{' '}
+																		{getVehicleDeleteReasonTypeLabel(
+																			vehicle.delete_reason_type,
+																		)}
+																	</>
+																)}
+																{vehicle.delete_reason && (
+																	<>
+																		<br />
+																		Комментарий: {vehicle.delete_reason}
+																	</>
+																)}
+															</div>
+														)}
+													</div>
+												))}
+											</div>
+										)}
+									</div>
+
+									<div className='vehicle-form-card'>
+										<div className='vehicle-form-section-title'>
+											Связи переиспользования VIN
+										</div>
+
+										{!vinHistoryData?.links ||
+										vinHistoryData.links.length === 0 ? (
+											<div className='vin-history-empty'>
+												Связей переиспользования VIN пока нет. Если машина была
+												создана до добавления этой функции, связь могла не
+												сохраниться в отдельной таблице.
+											</div>
+										) : (
+											<div className='vin-history-link-list'>
+												{vinHistoryData.links.map(link => (
+													<div key={link.id} className='vin-history-link-card'>
+														<div className='vin-history-link-arrow'>
+															<div>
+																<span className='vin-history-link-label'>
+																	Старая машина
+																</span>
+																<strong>
+																	{getVinHistoryVehicleTitle(link.old_vehicle)}
+																</strong>
+																<span>
+																	Клиент:{' '}
+																	{getVinHistoryClientName(link.old_vehicle)}
+																</span>
+															</div>
+
+															<div className='vin-history-arrow-symbol'>→</div>
+
+															<div>
+																<span className='vin-history-link-label'>
+																	Новая машина
+																</span>
+																<strong>
+																	{getVinHistoryVehicleTitle(link.new_vehicle)}
+																</strong>
+																<span>
+																	Клиент:{' '}
+																	{getVinHistoryClientName(link.new_vehicle)}
+																</span>
+															</div>
+														</div>
+
+														<div className='vin-history-meta'>
+															Связь создана:{' '}
+															{link.created_at
+																? new Date(link.created_at).toLocaleString(
+																		'ru-RU',
+																	)
+																: 'дата не указана'}{' '}
+															· Пользователь: {link.created_by_name || '—'}
+														</div>
+													</div>
+												))}
+											</div>
+										)}
+									</div>
+								</>
+							)}
+						</div>
+
+						<div className='modal-footer vehicle-modal-footer'>
+							<button
+								className='vehicle-cancel-btn'
+								type='button'
+								onClick={closeVinHistoryModal}
+							>
+								Закрыть
+							</button>
+						</div>
 					</div>
 				</div>
 			)}
