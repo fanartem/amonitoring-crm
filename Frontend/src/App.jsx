@@ -14,6 +14,7 @@ import Settings from './components/Settings'
 import Prices from './components/Prices'
 import MyInventory from './components/MyInventory'
 import Inventory from './components/Inventory'
+import Reports from './components/Reports'
 import NewRequestNotice from './components/notifications/NewRequestNotice'
 
 const isTokenExpired = token => {
@@ -93,6 +94,7 @@ export default function App() {
 							<Route path='/prices' element={<Prices />} />
 							<Route path='/my-inventory' element={<MyInventory />} />
 							<Route path='/inventory' element={<Inventory />} />
+							<Route path='/reports' element={<Reports />} />
 
 							<Route path='*' element={<Navigate to='/requests' replace />} />
 						</Routes>

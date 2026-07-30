@@ -42,6 +42,15 @@ export default function Sidebar() {
 	const canViewWarehouse = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
 	const canViewTrash = ['ADMIN', 'ROP'].includes(userRole)
 
+	// Тот же набор ролей, что видит цены — отчёт про заявки логически рядом.
+	const canViewReports = [
+		'ADMIN',
+		'ROP',
+		'MANAGER',
+		'TECH_SUPPORT',
+		'ACCOUNTANT',
+	].includes(userRole)
+
 	// Закрытие сайдбара при клике вне его (для мобилок)
 	useEffect(() => {
 		const handleOutsideClick = e => {
@@ -103,6 +112,17 @@ export default function Sidebar() {
 						<span className='link-text'>Цены</span>
 					</NavLink>
 				)}
+
+				{/* {canViewReports && (
+					<NavLink
+						to='/reports'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
+					>
+						<i className='fa-solid fa-chart-column'></i>
+						<span className='link-text'>Отчёты</span>
+					</NavLink>
+				)} */}
 
 				<NavLink
 					to='/employees'

@@ -1,0 +1,220 @@
+.reports-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 4px;
+}
+
+.reports-header h2 {
+	margin: 0;
+	color: #2e5902;
+	font-size: 22px;
+}
+
+.reports-subtitle {
+	margin: 4px 0 0;
+	color: #8a8a8a;
+	font-size: 13px;
+}
+
+.reports-scope-note {
+	margin: 10px 0 16px;
+	padding: 10px 14px;
+	border-radius: 8px;
+	background: #fff8e6;
+	border: 1px solid #f2dfa3;
+	color: #7a5c00;
+	font-size: 12.5px;
+}
+
+/* === Карточки-итоги === */
+
+.reports-summary-cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	gap: 12px;
+	margin: 18px 0;
+}
+
+.reports-summary-card {
+	background: #fff;
+	border: 1px solid #e2e8dc;
+	border-radius: 12px;
+	padding: 14px 16px;
+	text-align: left;
+}
+
+.reports-summary-card-main {
+	background: #eaf4df;
+	border-color: #d4e6c3;
+}
+
+.reports-summary-value {
+	font-size: 26px;
+	font-weight: 800;
+	color: #2e5902;
+	line-height: 1.1;
+}
+
+.reports-summary-label {
+	margin-top: 4px;
+	color: #6b7280;
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+/* === Карточки с графиками === */
+
+.reports-card {
+	background: #fff;
+	border: 1px solid #e2e8dc;
+	border-radius: 12px;
+	padding: 16px 18px 18px;
+	margin-bottom: 16px;
+}
+
+.reports-card-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+	margin-bottom: 12px;
+}
+
+.reports-card-header h3 {
+	margin: 0;
+	color: #333;
+	font-size: 15px;
+}
+
+.reports-card-header-note {
+	color: #6b7280;
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.reports-grid-2 {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 16px;
+}
+
+.reports-empty {
+	padding: 24px 0;
+	text-align: center;
+	color: #9ca3af;
+	font-size: 13px;
+}
+
+/* === Переключатель день/неделя/месяц === */
+
+.reports-granularity-toggle {
+	display: flex;
+	gap: 6px;
+	background: #f4f8ef;
+	border-radius: 8px;
+	padding: 3px;
+}
+
+.reports-granularity-btn {
+	border: none;
+	background: transparent;
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	font-weight: 600;
+	color: #5c6f4e;
+	cursor: pointer;
+	transition: background 0.15s ease, color 0.15s ease;
+}
+
+.reports-granularity-btn:hover {
+	background: #e6f0da;
+}
+
+.reports-granularity-btn.active {
+	background: #5e9424;
+	color: #fff;
+}
+
+/* === Столбчатый график (SVG) === */
+
+.reports-chart-scroll {
+	overflow-x: auto;
+	padding-bottom: 2px;
+}
+
+.reports-chart-svg {
+	display: block;
+}
+
+/* === Горизонтальные списки-полоски === */
+
+.reports-bar-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.reports-bar-row {
+	display: grid;
+	grid-template-columns: minmax(90px, 160px) 1fr 36px;
+	align-items: center;
+	gap: 10px;
+}
+
+.reports-bar-row-label {
+	font-size: 13px;
+	color: #333;
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.reports-bar-row-track {
+	height: 10px;
+	border-radius: 999px;
+	background: #f1f3f5;
+	overflow: hidden;
+}
+
+.reports-bar-row-fill {
+	height: 100%;
+	border-radius: 999px;
+	transition: width 0.2s ease;
+}
+
+.reports-bar-row-count {
+	text-align: right;
+	font-size: 13px;
+	font-weight: 700;
+	color: #333;
+}
+
+@media (max-width: 900px) {
+	.reports-grid-2 {
+		grid-template-columns: 1fr;
+	}
+}
+
+@media (max-width: 768px) {
+	.reports-header {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+
+	.reports-summary-cards {
+		grid-template-columns: repeat(2, 1fr);
+	}
+
+	.reports-bar-row {
+		grid-template-columns: 90px 1fr 30px;
+	}
+
+	.reports-bar-row-label {
+		font-size: 12px;
+	}
+}
