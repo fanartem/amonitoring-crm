@@ -1496,13 +1496,86 @@
 /* --- Responsive --- */
 
 @media (max-width: 900px) {
+  /* Карточка заявки: вместо стопки из 4 колонок в столбик — сетка 2 колонки.
+     Короткие поля (статус, город, даты, цена, оплата) встают парами и
+     заполняют пустое место; текстовые поля (клиент, авто, параметры,
+     формат, создатель) занимают всю ширину. Порядок (order) поднимает
+     самое важное (клиент/статус/город/даты/цена) наверх карточки. */
   .request-card {
-    flex-direction: column;
-    padding: 20px 70px 72px 20px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 14px;
+    row-gap: 14px;
+    padding: 56px 16px 20px 16px;
   }
 
+  /* "Растворяем" колонки-обёртки — их card-item становятся прямыми
+     элементами грида карточки и подчиняются своим order/grid-column. */
   .card-column {
+    display: contents;
+  }
+
+  .card-item {
+    grid-column: span 1;
+  }
+
+  .card-item-client,
+  .card-item-format,
+  .card-item-vehicles,
+  .card-item-params,
+  .card-item-created,
+  .card-item-responsible,
+  .card-item-executors,
+  .request-card-price-box,
+  .card-item-payment {
+    grid-column: 1 / -1;
+  }
+
+  .card-item-client { order: 10; }
+  .card-item-status { order: 20; }
+  .card-item-city { order: 21; }
+  .card-item-created-date { order: 22; }
+  .card-item-scheduled-date { order: 23; }
+  .request-card-price-box { order: 24; }
+  .card-item-payment { order: 25; }
+
+  .card-item-format { order: 30; }
+  .card-item-vehicles { order: 31; }
+  .card-item-params { order: 32; }
+  .card-item-created { order: 33; }
+  .card-item-responsible { order: 34; }
+  .card-item-executors { order: 35; }
+
+  /* Кнопки действий больше не требуют постоянного отступа на всю высоту
+     карточки — теперь под них зарезервирован только верхний угол. */
+  .card-actions-wrapper {
+    top: 12px !important;
+    right: 12px !important;
+  }
+
+  /* Ролевые кнопки (Оборудование/Оплатить/Принять заявку/Завершить) были
+     absolute-позиционированы под них резервировался большой padding-bottom
+     на десктопе. В гриде это уже не нужно и конфликтует с раскладкой —
+     переводим их в обычный поток, на всю ширину, последней строкой карточки,
+     и центрируем саму группу кнопок (не растягиваем на всю ширину). */
+  .role-actions-wrapper {
+    position: static !important;
+    grid-column: 1 / -1;
+    order: 40;
     width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: none;
+    gap: 8px;
+  }
+
+  .role-actions-wrapper .btn-green,
+  .role-actions-wrapper .btn-complete-request {
+    flex: 0 1 auto;
+    width: auto;
+    max-width: none;
+    min-width: 120px;
   }
 }
 
@@ -1537,16 +1610,5 @@
     flex: 1;
   }
 
-  .role-actions-wrapper {
-    position: static !important;
-    width: 100%;
-    flex-wrap: wrap;
-    flex: 1 1 calc(50% - 4px);
-  }
-
-  .btn-complete-request {
-    width: 100%;
-    min-width: 20px;
-    max-width: 120px;
-  }
+ 
 }
