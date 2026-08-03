@@ -1063,11 +1063,49 @@ export default function Requests() {
 	return (
 		<div className='requests-page-container'>
 			<div className='requests-toolbar-sticky'>
+				<div className='filters-bar filters-bar-top filters-bar-always-visible'>
+					<div className='filter-group filter-main'>
+						<label>Глобальный поиск</label>
+						<input
+							className={getFilterClassName('search')}
+							type='text'
+							name='search'
+							placeholder='ФИО, Телефон, Гос.номер, VIN, Марка...'
+							value={filters.search}
+							onChange={handleFilterChange}
+						/>
+					</div>
+
+					<div className='filter-group filter-creator'>
+						<label>Создатель заявки</label>
+						<input
+							className={getFilterClassName('created_by')}
+							type='text'
+							name='created_by'
+							placeholder='ФИО...'
+							value={filters.created_by || ''}
+							onChange={handleFilterChange}
+						/>
+					</div>
+
+					<div className='filter-group filter-creator'>
+						<label>Исполнитель заявки</label>
+						<input
+							className={getFilterClassName('assigned_to')}
+							type='text'
+							name='assigned_to'
+							placeholder='ФИО исполнителя...'
+							value={filters.assigned_to || ''}
+							onChange={handleFilterChange}
+						/>
+					</div>
+				</div>
+
 				{/* Кнопка видна только на мобилке — на десктопе фильтры всегда открыты. */}
 				<button
 					type='button'
 					className='mobile-filters-toggle'
-					onClick={() => setShowMobileFilters((prev) => !prev)}
+					onClick={() => setShowMobileFilters(prev => !prev)}
 				>
 					<span className='mobile-filters-toggle-label'>
 						<i className='fa-solid fa-filter'></i>
@@ -1086,42 +1124,6 @@ export default function Requests() {
 				<div
 					className={`filters-panel ${showMobileFilters ? 'mobile-open' : ''}`}
 				>
-					<div className='filters-bar filters-bar-top'>
-						<div className='filter-group filter-main'>
-							<label>Глобальный поиск</label>
-							<input
-								className={getFilterClassName('search')}
-								type='text'
-								name='search'
-								placeholder='ФИО, Телефон, Гос.номер, VIN, Марка...'
-								value={filters.search}
-								onChange={handleFilterChange}
-							/>
-						</div>
-						<div className='filter-group filter-creator'>
-							<label>Создатель заявки</label>
-							<input
-								className={getFilterClassName('created_by')}
-								type='text'
-								name='created_by'
-								placeholder='ФИО...'
-								value={filters.created_by || ''}
-								onChange={handleFilterChange}
-							/>
-						</div>
-						<div className='filter-group filter-creator'>
-							<label>Исполнитель заявки</label>
-							<input
-								className={getFilterClassName('assigned_to')}
-								type='text'
-								name='assigned_to'
-								placeholder='ФИО исполнителя...'
-								value={filters.assigned_to || ''}
-								onChange={handleFilterChange}
-							/>
-						</div>
-					</div>
-
 					<div className='filters-bar'>
 						<div className='filter-group'>
 							<label>Дата создания от:</label>
@@ -1185,7 +1187,7 @@ export default function Requests() {
 								>
 									<option value=''>Все города</option>
 
-									{cities.map((city) => (
+									{cities.map(city => (
 										<option key={city.id} value={city.name}>
 											{city.name}
 										</option>
@@ -1234,7 +1236,7 @@ export default function Requests() {
 								<input
 									type='checkbox'
 									checked={myRequestsFirst}
-									onChange={(e) => setMyRequestsFirst(e.target.checked)}
+									onChange={e => setMyRequestsFirst(e.target.checked)}
 								/>
 								<span>Мои заявки сверху</span>
 							</label>
@@ -1248,10 +1250,10 @@ export default function Requests() {
 			</div>
 
 			<div className='requests-list'>
-				{filteredRequests.map((req) => (
+				{filteredRequests.map(req => (
 					<div
 						key={req.id}
-						ref={(el) => {
+						ref={el => {
 							requestRefs.current[Number(req.id)] = el
 						}}
 						className={`request-card ${
@@ -1535,7 +1537,7 @@ export default function Requests() {
 						>
 							<button
 								className='btn-details'
-								onClick={(e) => {
+								onClick={e => {
 									e.stopPropagation()
 									setDetailModalTab('info')
 									setSelectedRequestId(req.id)
@@ -1545,7 +1547,7 @@ export default function Requests() {
 							</button>
 							<div
 								className='card-actions'
-								onClick={(e) => toggleDropdown(e, req.id)}
+								onClick={e => toggleDropdown(e, req.id)}
 							>
 								&#8942;
 							</div>
@@ -1557,7 +1559,7 @@ export default function Requests() {
 								>
 									<div
 										className='dropdown-item'
-										onClick={(e) => handleMenuOpen(e, req.id)}
+										onClick={e => handleMenuOpen(e, req.id)}
 									>
 										<svg viewBox='0 0 24 24'>
 											<path d='M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2z' />
@@ -1567,7 +1569,7 @@ export default function Requests() {
 									{Boolean(req.can_edit) && (
 										<div
 											className='dropdown-item'
-											onClick={(e) => handleMenuEdit(e, req)}
+											onClick={e => handleMenuEdit(e, req)}
 										>
 											<svg viewBox='0 0 24 24'>
 												<path d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z' />
@@ -1577,7 +1579,7 @@ export default function Requests() {
 									)}
 									<div
 										className='dropdown-item'
-										onClick={(e) => handleMenuDownload(e, req.id)}
+										onClick={e => handleMenuDownload(e, req.id)}
 									>
 										<svg viewBox='0 0 24 24'>
 											<path d='M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z' />
@@ -1587,7 +1589,7 @@ export default function Requests() {
 									<div className='dropdown-divider'></div>
 									<div
 										className='dropdown-item'
-										onClick={(e) => handleMenuHistory(e, req.id)}
+										onClick={e => handleMenuHistory(e, req.id)}
 									>
 										<svg viewBox='0 0 24 24'>
 											<path d='M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z' />
@@ -1601,7 +1603,7 @@ export default function Requests() {
 											<div
 												className='dropdown-item'
 												style={{ color: '#c62828' }}
-												onClick={(e) => handleDeleteRequest(e, req.id)}
+												onClick={e => handleDeleteRequest(e, req.id)}
 											>
 												<svg viewBox='0 0 24 24' fill='#c62828'>
 													<path d='M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z' />
@@ -1627,7 +1629,7 @@ export default function Requests() {
 							{canViewEquipmentButton && (
 								<button
 									className='btn-green'
-									onClick={(e) => {
+									onClick={e => {
 										e.stopPropagation()
 										setDetailModalTab('equipment')
 										setSelectedRequestId(req.id)
@@ -1640,7 +1642,7 @@ export default function Requests() {
 							{canPayRequests && !req.is_paid && (
 								<button
 									className='btn-green'
-									onClick={(e) => handlePayRequest(e, req.id)}
+									onClick={e => handlePayRequest(e, req.id)}
 								>
 									Оплатить
 								</button>
@@ -1655,7 +1657,7 @@ export default function Requests() {
 								) && (
 									<button
 										className='btn-green'
-										onClick={(e) => handleAcceptRequest(e, req)}
+										onClick={e => handleAcceptRequest(e, req)}
 									>
 										Принять заявку
 									</button>
@@ -1664,7 +1666,7 @@ export default function Requests() {
 							{canCompleteRequest(req) && (
 								<button
 									className='btn-complete-request'
-									onClick={(e) => handleCompleteRequest(e, req)}
+									onClick={e => handleCompleteRequest(e, req)}
 								>
 									Завершить
 								</button>
