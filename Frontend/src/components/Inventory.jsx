@@ -46,18 +46,18 @@ const CATEGORY_ICONS = {
 	OTHER: 'fa-cube',
 }
 
-const getInitials = name => {
+const getInitials = (name) => {
 	if (!name) return '?'
 
 	const parts = name.trim().split(/\s+/).slice(0, 2)
 
 	return parts
-		.map(part => part[0])
+		.map((part) => part[0])
 		.join('')
 		.toUpperCase()
 }
 
-const getStatusClassName = status => {
+const getStatusClassName = (status) => {
 	if (status === 'ASSIGNED_TO_TECH') return 'status-progress'
 	if (status === 'INSTALLED' || status === 'USED') return 'status-done'
 	if (status === 'REPAIR' || status === 'RESERVED') return 'status-new'
@@ -76,7 +76,7 @@ const getTokenPayload = () => {
 		const jsonPayload = decodeURIComponent(
 			atob(base64)
 				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+				.map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
 				.join(''),
 		)
 
@@ -86,7 +86,7 @@ const getTokenPayload = () => {
 	}
 }
 
-const buildParams = params => {
+const buildParams = (params) => {
 	const searchParams = new URLSearchParams()
 
 	Object.entries(params).forEach(([key, value]) => {
@@ -102,13 +102,13 @@ const buildParams = params => {
 	return searchParams.toString()
 }
 
-const getItemQuantity = item => {
+const getItemQuantity = (item) => {
 	if (Boolean(item.is_serialized)) return 1
 
 	return Number(item.quantity || 0)
 }
 
-const getItemIdentity = item => {
+const getItemIdentity = (item) => {
 	if (item.identifier_value) {
 		return `${item.identifier_type || 'ID'}: ${item.identifier_value}`
 	}
@@ -120,7 +120,7 @@ const getItemIdentity = item => {
 	return 'Без идентификатора'
 }
 
-const normalizeNullable = value => {
+const normalizeNullable = (value) => {
 	const trimmed = String(value || '').trim()
 
 	return trimmed ? trimmed : null
@@ -140,7 +140,7 @@ function TechnicianAutocomplete({
 	const [isOpen, setIsOpen] = useState(false)
 	const containerRef = useRef(null)
 
-	const formatLabel = tech =>
+	const formatLabel = (tech) =>
 		tech ? `${tech.name}${tech.city ? ` · ${tech.city}` : ''}` : ''
 
 	// Синхронизируем текст поля с выбранным id (например, при сбросе формы
@@ -151,12 +151,12 @@ function TechnicianAutocomplete({
 			return
 		}
 
-		const selected = technicians.find(t => String(t.id) === String(value))
+		const selected = technicians.find((t) => String(t.id) === String(value))
 		setQuery(selected ? formatLabel(selected) : '')
 	}, [value, technicians])
 
 	useEffect(() => {
-		const handleClickOutside = e => {
+		const handleClickOutside = (e) => {
 			if (containerRef.current && !containerRef.current.contains(e.target)) {
 				setIsOpen(false)
 			}
@@ -169,24 +169,24 @@ function TechnicianAutocomplete({
 	const excludeSet = new Set(excludeIds.map(String))
 
 	const filtered = technicians
-		.filter(t => !excludeSet.has(String(t.id)))
-		.filter(t => {
+		.filter((t) => !excludeSet.has(String(t.id)))
+		.filter((t) => {
 			const q = query.trim().toLowerCase()
 			if (!q) return true
 
 			return [t.name, t.city]
 				.filter(Boolean)
-				.some(field => String(field).toLowerCase().includes(q))
+				.some((field) => String(field).toLowerCase().includes(q))
 		})
 		.slice(0, 50)
 
-	const handlePick = tech => {
+	const handlePick = (tech) => {
 		onChange(String(tech.id))
 		setQuery(formatLabel(tech))
 		setIsOpen(false)
 	}
 
-	const handleInputChange = e => {
+	const handleInputChange = (e) => {
 		const nextValue = e.target.value
 		setQuery(nextValue)
 		setIsOpen(true)
@@ -215,7 +215,7 @@ function TechnicianAutocomplete({
 					{filtered.length === 0 ? (
 						<div className='tech-picker-empty'>Никого не найдено</div>
 					) : (
-						filtered.map(tech => (
+						filtered.map((tech) => (
 							<button
 								key={tech.id}
 								type='button'
@@ -242,7 +242,7 @@ function HistoryModal({ item, history, onClose }) {
 		<div className='modal-overlay open' onClick={onClose}>
 			<div
 				className='modal-window inventory-modal-wide inventory-history-modal'
-				onClick={e => e.stopPropagation()}
+				onClick={(e) => e.stopPropagation()}
 			>
 				<div className='modal-header'>
 					<span className='modal-title'>История предмета</span>
@@ -261,7 +261,7 @@ function HistoryModal({ item, history, onClose }) {
 					<div className='empty-state'>История пока пустая</div>
 				) : (
 					<div className='inventory-history-list'>
-						{history.map(row => (
+						{history.map((row) => (
 							<div key={row.id} className='inventory-history-row'>
 								<div className='inventory-history-main'>
 									<strong>{row.action}</strong>
@@ -316,10 +316,7 @@ export default function Inventory() {
 		'WAREHOUSE_MANAGER',
 		'SENIOR_TECHNICIAN',
 	].includes(userRole)
-	const canSeeHistory = [
-		'ADMIN',
-		'WAREHOUSE_MANAGER',
-	].includes(userRole)
+	const canSeeHistory = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
 
 	const [inventory, setInventory] = useState([])
 	const [cities, setCities] = useState([])
@@ -344,6 +341,11 @@ export default function Inventory() {
 	// Текст поиска вводится сразу, но в filters.search попадает с задержкой
 	// (debounce) — иначе запрос на сервер улетал бы на каждое нажатие клавиши.
 	const [searchInput, setSearchInput] = useState('')
+
+	// Панель фильтров на мобилке свёрнута по умолчанию — разворачивается
+	// по кнопке, чтобы не занимать экран постоянно (тот же паттерн, что
+	// и на вкладке "Заявки").
+	const [showMobileFilters, setShowMobileFilters] = useState(false)
 
 	const [historyItem, setHistoryItem] = useState(null)
 	const [historyRows, setHistoryRows] = useState([])
@@ -412,7 +414,7 @@ export default function Inventory() {
 	// через паузу в наборе, чтобы не дёргать сервер на каждую букву.
 	useEffect(() => {
 		const timeoutId = setTimeout(() => {
-			setFilters(prev => {
+			setFilters((prev) => {
 				const trimmed = searchInput.trim()
 				if (prev.search === trimmed) return prev
 				return { ...prev, search: trimmed }
@@ -477,7 +479,7 @@ export default function Inventory() {
 		}
 	}
 
-	const fetchHistory = async item => {
+	const fetchHistory = async (item) => {
 		setHistoryItem(item)
 		setHistoryRows([])
 		setHistoryLoading(true)
@@ -503,10 +505,10 @@ export default function Inventory() {
 		}
 	}
 
-	const handleFilterChange = e => {
+	const handleFilterChange = (e) => {
 		const { name, value, type, checked } = e.target
 
-		setFilters(prev => ({
+		setFilters((prev) => ({
 			...prev,
 			[name]: type === 'checkbox' ? checked : value,
 		}))
@@ -524,28 +526,28 @@ export default function Inventory() {
 		})
 	}
 
-	const toggleUser = userKey => {
-		setExpandedUsers(prev => ({
+	const toggleUser = (userKey) => {
+		setExpandedUsers((prev) => ({
 			...prev,
 			[userKey]: !prev[userKey],
 		}))
 	}
 
-	const toggleUserCategory = key => {
-		setExpandedUserCategories(prev => ({
+	const toggleUserCategory = (key) => {
+		setExpandedUserCategories((prev) => ({
 			...prev,
 			[key]: !prev[key],
 		}))
 	}
 
-	const toggleGroup = groupKey => {
-		setExpandedGroups(prev => ({
+	const toggleGroup = (groupKey) => {
+		setExpandedGroups((prev) => ({
 			...prev,
 			[groupKey]: !prev[groupKey],
 		}))
 	}
 
-	const openTransferModal = item => {
+	const openTransferModal = (item) => {
 		setTransferItem(item)
 		setTransferForm({
 			mode: 'user',
@@ -556,7 +558,7 @@ export default function Inventory() {
 		})
 	}
 
-	const submitTransfer = async e => {
+	const submitTransfer = async (e) => {
 		e.preventDefault()
 
 		if (!transferItem) return
@@ -602,7 +604,7 @@ export default function Inventory() {
 		}
 	}
 
-	const openEditModal = item => {
+	const openEditModal = (item) => {
 		const serialized = Boolean(item.is_serialized)
 
 		setEditItem(item)
@@ -621,7 +623,7 @@ export default function Inventory() {
 		})
 	}
 
-	const submitEdit = async e => {
+	const submitEdit = async (e) => {
 		e.preventDefault()
 
 		if (!editItem) return
@@ -668,7 +670,7 @@ export default function Inventory() {
 		}
 	}
 
-	const deleteItem = async item => {
+	const deleteItem = async (item) => {
 		if (
 			!window.confirm(
 				`Удалить/переместить в корзину "${item.name}" из инвентаря монтажника?`,
@@ -694,7 +696,7 @@ export default function Inventory() {
 		}
 	}
 
-	const submitManualAdd = async e => {
+	const submitManualAdd = async (e) => {
 		e.preventDefault()
 
 		if (!manualForm.target_user_id) {
@@ -761,14 +763,14 @@ export default function Inventory() {
 		}
 	}
 
-	const openThresholdModal = item => {
+	const openThresholdModal = (item) => {
 		setThresholdItem(item)
 		setThresholdForm({
 			threshold_quantity: item.threshold_quantity || 20,
 		})
 	}
 
-	const submitThreshold = async e => {
+	const submitThreshold = async (e) => {
 		e.preventDefault()
 
 		if (!thresholdItem) return
@@ -804,19 +806,19 @@ export default function Inventory() {
 		}
 	}
 
-	const handleManualChange = e => {
+	const handleManualChange = (e) => {
 		const { name, value, type, checked } = e.target
 
 		if (name === 'is_serialized') {
 			if (checked) {
-				setManualForm(prev => ({
+				setManualForm((prev) => ({
 					...prev,
 					is_serialized: true,
 					quantity: 1,
 					identifier_type: 'SERIAL',
 				}))
 			} else {
-				setManualForm(prev => ({
+				setManualForm((prev) => ({
 					...prev,
 					is_serialized: false,
 					identifier_type: 'NONE',
@@ -828,23 +830,23 @@ export default function Inventory() {
 			return
 		}
 
-		setManualForm(prev => ({
+		setManualForm((prev) => ({
 			...prev,
 			[name]: type === 'checkbox' ? checked : value,
 		}))
 	}
 
-	const buildInventoryByUsers = source => {
+	const buildInventoryByUsers = (source) => {
 		const usersMap = new Map()
 
-		const normalizeKey = value =>
+		const normalizeKey = (value) =>
 			String(value || '')
 				.trim()
 				.toLowerCase()
 
-		const getUserKey = item => String(item.assigned_to_user_id || 'unknown')
+		const getUserKey = (item) => String(item.assigned_to_user_id || 'unknown')
 
-		const getItemGroupKey = item =>
+		const getItemGroupKey = (item) =>
 			[
 				item.category || 'OTHER',
 				item.name || '',
@@ -854,81 +856,81 @@ export default function Inventory() {
 				.map(normalizeKey)
 				.join('|')
 
-			; (source || []).forEach(category => {
-				; (category.groups || []).forEach(group => {
-					; (group.items || []).forEach(item => {
-						const itemQuantity = getItemQuantity(item)
-						const userKey = getUserKey(item)
+		;(source || []).forEach((category) => {
+			;(category.groups || []).forEach((group) => {
+				;(group.items || []).forEach((item) => {
+					const itemQuantity = getItemQuantity(item)
+					const userKey = getUserKey(item)
 
-						if (!usersMap.has(userKey)) {
-							usersMap.set(userKey, {
-								user_key: userKey,
-								user_id: item.assigned_to_user_id || null,
-								user_name: item.assigned_to_user_name || 'Без монтажника',
-								user_city: item.assigned_to_user_city || item.city_name || '',
-								total_quantity: 0,
-								total_rows: 0,
-								categoriesMap: new Map(),
-							})
-						}
+					if (!usersMap.has(userKey)) {
+						usersMap.set(userKey, {
+							user_key: userKey,
+							user_id: item.assigned_to_user_id || null,
+							user_name: item.assigned_to_user_name || 'Без монтажника',
+							user_city: item.assigned_to_user_city || item.city_name || '',
+							total_quantity: 0,
+							total_rows: 0,
+							categoriesMap: new Map(),
+						})
+					}
 
-						const userGroup = usersMap.get(userKey)
+					const userGroup = usersMap.get(userKey)
 
-						userGroup.total_quantity += itemQuantity
-						userGroup.total_rows += 1
+					userGroup.total_quantity += itemQuantity
+					userGroup.total_rows += 1
 
-						const categoryKey = item.category || category.category || 'OTHER'
+					const categoryKey = item.category || category.category || 'OTHER'
 
-						if (!userGroup.categoriesMap.has(categoryKey)) {
-							userGroup.categoriesMap.set(categoryKey, {
-								category: categoryKey,
-								category_name: CATEGORIES[categoryKey] || categoryKey,
-								total_quantity: 0,
-								total_rows: 0,
-								groupsMap: new Map(),
-							})
-						}
+					if (!userGroup.categoriesMap.has(categoryKey)) {
+						userGroup.categoriesMap.set(categoryKey, {
+							category: categoryKey,
+							category_name: CATEGORIES[categoryKey] || categoryKey,
+							total_quantity: 0,
+							total_rows: 0,
+							groupsMap: new Map(),
+						})
+					}
 
-						const categoryGroup = userGroup.categoriesMap.get(categoryKey)
+					const categoryGroup = userGroup.categoriesMap.get(categoryKey)
 
-						categoryGroup.total_quantity += itemQuantity
-						categoryGroup.total_rows += 1
+					categoryGroup.total_quantity += itemQuantity
+					categoryGroup.total_rows += 1
 
-						const itemGroupKey = getItemGroupKey(item)
+					const itemGroupKey = getItemGroupKey(item)
 
-						if (!categoryGroup.groupsMap.has(itemGroupKey)) {
-							categoryGroup.groupsMap.set(itemGroupKey, {
-								group_key: itemGroupKey,
-								name: item.name || group.name || 'Без наименования',
-								manufacturer: item.manufacturer || null,
-								model: item.model || null,
-								is_consumable_group: !Boolean(item.is_serialized),
-								total_quantity: 0,
-								total_rows: 0,
-								items: [],
-							})
-						}
+					if (!categoryGroup.groupsMap.has(itemGroupKey)) {
+						categoryGroup.groupsMap.set(itemGroupKey, {
+							group_key: itemGroupKey,
+							name: item.name || group.name || 'Без наименования',
+							manufacturer: item.manufacturer || null,
+							model: item.model || null,
+							is_consumable_group: !Boolean(item.is_serialized),
+							total_quantity: 0,
+							total_rows: 0,
+							items: [],
+						})
+					}
 
-						const itemGroup = categoryGroup.groupsMap.get(itemGroupKey)
+					const itemGroup = categoryGroup.groupsMap.get(itemGroupKey)
 
-						itemGroup.total_quantity += itemQuantity
-						itemGroup.total_rows += 1
+					itemGroup.total_quantity += itemQuantity
+					itemGroup.total_rows += 1
 
-						if (Boolean(item.is_serialized)) {
-							itemGroup.is_consumable_group = false
-						}
+					if (Boolean(item.is_serialized)) {
+						itemGroup.is_consumable_group = false
+					}
 
-						itemGroup.items.push(item)
-					})
+					itemGroup.items.push(item)
 				})
 			})
+		})
 
 		return Array.from(usersMap.values())
-			.map(userGroup => {
+			.map((userGroup) => {
 				const categories = Array.from(userGroup.categoriesMap.values())
-					.map(categoryGroup => {
+					.map((categoryGroup) => {
 						const groups = Array.from(categoryGroup.groupsMap.values())
-							.map(group => ({
+							.map((group) => ({
 								...group,
 								items: group.items.sort((a, b) => {
 									const statusCompare = String(a.status || '').localeCompare(
@@ -983,6 +985,13 @@ export default function Inventory() {
 		0,
 	)
 
+	// Для бейджа на кнопке "Фильтры" на мобилке.
+	const activeFiltersCount =
+		(searchInput ? 1 : 0) +
+		Object.entries(filters).filter(
+			([key, value]) => key !== 'search' && Boolean(value),
+		).length
+
 	if (!canViewInventory) {
 		return (
 			<div className='requests-page-container'>
@@ -1013,103 +1022,132 @@ export default function Inventory() {
 				)}
 			</div>
 
-			<div className='filters-bar inventory-filters'>
-				<div className='filter-group filter-main'>
-					<label>Поиск</label>
-					<input
-						className={
-							searchInput ? 'filter-input filter-active' : 'filter-input'
-						}
-						name='search'
-						value={searchInput}
-						onChange={e => setSearchInput(e.target.value)}
-						placeholder='Название, IMEI, серийник, монтажник...'
-					/>
-				</div>
+			<button
+				type='button'
+				className='mobile-filters-toggle'
+				onClick={() => setShowMobileFilters((prev) => !prev)}
+			>
+				<span className='mobile-filters-toggle-label'>
+					<i className='fa-solid fa-filter'></i>
+					Фильтры
+					{activeFiltersCount > 0 && (
+						<span className='mobile-filters-badge'>{activeFiltersCount}</span>
+					)}
+				</span>
+				<i
+					className={`fa-solid fa-chevron-down mobile-filters-chevron ${
+						showMobileFilters ? 'is-open' : ''
+					}`}
+				></i>
+			</button>
 
-				<div className='filter-group'>
-					<label>Город</label>
-					<select
-						className={
-							filters.city_id ? 'filter-select filter-active' : 'filter-select'
-						}
-						name='city_id'
-						value={filters.city_id}
-						onChange={handleFilterChange}
+			<div
+				className={`filters-panel ${showMobileFilters ? 'mobile-open' : ''}`}
+			>
+				<div className='filters-bar inventory-filters'>
+					<div className='filter-group filter-main'>
+						<label>Поиск</label>
+						<input
+							className={
+								searchInput ? 'filter-input filter-active' : 'filter-input'
+							}
+							name='search'
+							value={searchInput}
+							onChange={(e) => setSearchInput(e.target.value)}
+							placeholder='Название, IMEI, серийник, монтажник...'
+						/>
+					</div>
+
+					<div className='filter-group'>
+						<label>Город</label>
+						<select
+							className={
+								filters.city_id
+									? 'filter-select filter-active'
+									: 'filter-select'
+							}
+							name='city_id'
+							value={filters.city_id}
+							onChange={handleFilterChange}
+						>
+							<option value=''>Все города</option>
+							{cities.map((city) => (
+								<option key={city.id} value={city.id}>
+									{city.name}
+								</option>
+							))}
+						</select>
+					</div>
+
+					<div className='filter-group'>
+						<label>Монтажник</label>
+						<TechnicianAutocomplete
+							id='filter-technician'
+							technicians={technicians}
+							value={filters.user_id}
+							onChange={(id) =>
+								setFilters((prev) => ({ ...prev, user_id: id }))
+							}
+							placeholder='Все монтажники...'
+						/>
+					</div>
+
+					<div className='filter-group'>
+						<label>Категория</label>
+						<select
+							className={
+								filters.category
+									? 'filter-select filter-active'
+									: 'filter-select'
+							}
+							name='category'
+							value={filters.category}
+							onChange={handleFilterChange}
+						>
+							<option value=''>Все категории</option>
+							{Object.entries(CATEGORIES).map(([value, label]) => (
+								<option key={value} value={value}>
+									{label}
+								</option>
+							))}
+						</select>
+					</div>
+
+					<div className='filter-group'>
+						<label>Статус</label>
+						<select
+							className={
+								filters.status ? 'filter-select filter-active' : 'filter-select'
+							}
+							name='status'
+							value={filters.status}
+							onChange={handleFilterChange}
+						>
+							<option value=''>Все статусы</option>
+							{Object.entries(STATUSES).map(([value, label]) => (
+								<option key={value} value={value}>
+									{label}
+								</option>
+							))}
+						</select>
+					</div>
+
+					<label
+						className={`my-requests-toggle ${filters.low_stock ? 'active' : ''}`}
 					>
-						<option value=''>Все города</option>
-						{cities.map(city => (
-							<option key={city.id} value={city.id}>
-								{city.name}
-							</option>
-						))}
-					</select>
+						<input
+							type='checkbox'
+							name='low_stock'
+							checked={filters.low_stock}
+							onChange={handleFilterChange}
+						/>
+						<span>Низкий остаток</span>
+					</label>
+
+					<button className='btn-reset' onClick={resetFilters}>
+						Сбросить
+					</button>
 				</div>
-
-				<div className='filter-group'>
-					<label>Монтажник</label>
-					<TechnicianAutocomplete
-						id='filter-technician'
-						technicians={technicians}
-						value={filters.user_id}
-						onChange={id => setFilters(prev => ({ ...prev, user_id: id }))}
-						placeholder='Все монтажники...'
-					/>
-				</div>
-
-				<div className='filter-group'>
-					<label>Категория</label>
-					<select
-						className={
-							filters.category ? 'filter-select filter-active' : 'filter-select'
-						}
-						name='category'
-						value={filters.category}
-						onChange={handleFilterChange}
-					>
-						<option value=''>Все категории</option>
-						{Object.entries(CATEGORIES).map(([value, label]) => (
-							<option key={value} value={value}>
-								{label}
-							</option>
-						))}
-					</select>
-				</div>
-
-				<div className='filter-group'>
-					<label>Статус</label>
-					<select
-						className={
-							filters.status ? 'filter-select filter-active' : 'filter-select'
-						}
-						name='status'
-						value={filters.status}
-						onChange={handleFilterChange}
-					>
-						<option value=''>Все статусы</option>
-						{Object.entries(STATUSES).map(([value, label]) => (
-							<option key={value} value={value}>
-								{label}
-							</option>
-						))}
-					</select>
-				</div>
-
-				<label
-					className={`my-requests-toggle ${filters.low_stock ? 'active' : ''}`}
-				>
-					<input
-						type='checkbox'
-						name='low_stock'
-						checked={filters.low_stock}
-						onChange={handleFilterChange}
-					/>
-					<span>Низкий остаток</span>
-				</label>
-
-				<button className='btn-reset' onClick={resetFilters}>
-					Сбросить
-				</button>
 			</div>
 
 			<div className='requests-count'>
@@ -1124,7 +1162,7 @@ export default function Inventory() {
 				<div className='empty-state'>Инвентарь пуст</div>
 			) : (
 				<div className='inventory-tree'>
-					{userInventoryGroups.map(userGroup => {
+					{userInventoryGroups.map((userGroup) => {
 						// Для админа/склад-менеджера инвентарь каждого монтажника
 						// свёрнут по умолчанию — разворачивается по клику.
 						const isUserOpen = expandedUsers[userGroup.user_key] ?? false
@@ -1161,15 +1199,12 @@ export default function Inventory() {
 										<span className='inventory-pill'>
 											{userGroup.total_quantity} ед.
 										</span>
-										<span className='inventory-pill inventory-pill-muted'>
-											{userGroup.total_rows} строк
-										</span>
 									</span>
 								</button>
 
 								{isUserOpen && (
 									<div className='inventory-user-body inventory-reveal'>
-										{userGroup.categories.map(category => {
+										{userGroup.categories.map((category) => {
 											const userCategoryKey = `${userGroup.user_key}-${category.category}`
 											const isCategoryOpen =
 												expandedUserCategories[userCategoryKey] ?? true
@@ -1214,15 +1249,12 @@ export default function Inventory() {
 															<span className='inventory-pill'>
 																{category.total_quantity} ед.
 															</span>
-															<span className='inventory-pill inventory-pill-muted'>
-																{category.total_rows} строк
-															</span>
 														</span>
 													</button>
 
 													{isCategoryOpen && (
 														<div className='inventory-category-body inventory-reveal'>
-															{category.groups.map(group => {
+															{category.groups.map((group) => {
 																const groupKey = `${userGroup.user_key}-${category.category}-${group.group_key}`
 																const isGroupOpen =
 																	expandedGroups[groupKey] ?? true
@@ -1264,7 +1296,7 @@ export default function Inventory() {
 
 																		{isGroupOpen && (
 																			<div className='inventory-items-list inventory-reveal'>
-																				{group.items.map(item => (
+																				{group.items.map((item) => (
 																					<div
 																						key={item.id}
 																						className={`inventory-item-card ${getStatusClassName(
@@ -1276,8 +1308,7 @@ export default function Inventory() {
 																								<strong>{item.name}</strong>
 
 																								<div className='inventory-item-subtitle'>
-																									{item.manufacturer ||
-																										'—'}{' '}
+																									{item.manufacturer || '—'}{' '}
 																									{item.model
 																										? `· ${item.model}`
 																										: ''}
@@ -1290,8 +1321,7 @@ export default function Inventory() {
 																								<div className='inventory-item-subtitle'>
 																									Город:{' '}
 																									<strong>
-																										{item.city_name ||
-																											'—'}
+																										{item.city_name || '—'}
 																									</strong>
 																								</div>
 																							</div>
@@ -1342,9 +1372,7 @@ export default function Inventory() {
 																									<button
 																										className='btn-green'
 																										onClick={() =>
-																											openTransferModal(
-																												item,
-																											)
+																											openTransferModal(item)
 																										}
 																									>
 																										Перенос
@@ -1365,9 +1393,7 @@ export default function Inventory() {
 																										<button
 																											className='btn-details'
 																											onClick={() =>
-																												openThresholdModal(
-																													item,
-																												)
+																												openThresholdModal(item)
 																											}
 																										>
 																											Порог
@@ -1424,7 +1450,7 @@ export default function Inventory() {
 					<form
 						className='modal-window inventory-modal-wide inventory-transfer-modal'
 						onSubmit={submitTransfer}
-						onClick={e => e.stopPropagation()}
+						onClick={(e) => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<h3>Перенос предмета</h3>
@@ -1446,8 +1472,8 @@ export default function Inventory() {
 							<label>Куда перенести</label>
 							<select
 								value={transferForm.mode}
-								onChange={e =>
-									setTransferForm(prev => ({
+								onChange={(e) =>
+									setTransferForm((prev) => ({
 										...prev,
 										mode: e.target.value,
 										target_user_id: '',
@@ -1468,8 +1494,8 @@ export default function Inventory() {
 									technicians={technicians}
 									excludeIds={[transferItem.assigned_to_user_id]}
 									value={transferForm.target_user_id}
-									onChange={id =>
-										setTransferForm(prev => ({
+									onChange={(id) =>
+										setTransferForm((prev) => ({
 											...prev,
 											target_user_id: id,
 										}))
@@ -1482,8 +1508,8 @@ export default function Inventory() {
 								<label>Город склада</label>
 								<select
 									value={transferForm.to_city_id}
-									onChange={e =>
-										setTransferForm(prev => ({
+									onChange={(e) =>
+										setTransferForm((prev) => ({
 											...prev,
 											to_city_id: e.target.value,
 										}))
@@ -1491,7 +1517,7 @@ export default function Inventory() {
 									required
 								>
 									<option value=''>Выберите город</option>
-									{cities.map(city => (
+									{cities.map((city) => (
 										<option key={city.id} value={city.id}>
 											{city.name}
 										</option>
@@ -1508,8 +1534,8 @@ export default function Inventory() {
 								max={getItemQuantity(transferItem)}
 								value={transferForm.quantity}
 								disabled={Boolean(transferItem.is_serialized)}
-								onChange={e =>
-									setTransferForm(prev => ({
+								onChange={(e) =>
+									setTransferForm((prev) => ({
 										...prev,
 										quantity: e.target.value,
 									}))
@@ -1521,8 +1547,8 @@ export default function Inventory() {
 							<label>Комментарий</label>
 							<textarea
 								value={transferForm.reason}
-								onChange={e =>
-									setTransferForm(prev => ({
+								onChange={(e) =>
+									setTransferForm((prev) => ({
 										...prev,
 										reason: e.target.value,
 									}))
@@ -1552,7 +1578,7 @@ export default function Inventory() {
 					<form
 						className='modal-window inventory-modal-wide inventory-edit-modal'
 						onSubmit={submitEdit}
-						onClick={e => e.stopPropagation()}
+						onClick={(e) => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<h3>Редактировать предмет</h3>
@@ -1570,8 +1596,11 @@ export default function Inventory() {
 								<label>Категория</label>
 								<select
 									value={editForm.category}
-									onChange={e =>
-										setEditForm(prev => ({ ...prev, category: e.target.value }))
+									onChange={(e) =>
+										setEditForm((prev) => ({
+											...prev,
+											category: e.target.value,
+										}))
 									}
 								>
 									{Object.entries(CATEGORIES).map(([value, label]) => (
@@ -1586,8 +1615,8 @@ export default function Inventory() {
 								<label>Наименование</label>
 								<input
 									value={editForm.name}
-									onChange={e =>
-										setEditForm(prev => ({ ...prev, name: e.target.value }))
+									onChange={(e) =>
+										setEditForm((prev) => ({ ...prev, name: e.target.value }))
 									}
 									required
 								/>
@@ -1597,8 +1626,8 @@ export default function Inventory() {
 								<label>Производитель</label>
 								<input
 									value={editForm.manufacturer}
-									onChange={e =>
-										setEditForm(prev => ({
+									onChange={(e) =>
+										setEditForm((prev) => ({
 											...prev,
 											manufacturer: e.target.value,
 										}))
@@ -1610,8 +1639,8 @@ export default function Inventory() {
 								<label>Модель</label>
 								<input
 									value={editForm.model}
-									onChange={e =>
-										setEditForm(prev => ({ ...prev, model: e.target.value }))
+									onChange={(e) =>
+										setEditForm((prev) => ({ ...prev, model: e.target.value }))
 									}
 								/>
 							</div>
@@ -1620,8 +1649,8 @@ export default function Inventory() {
 								<label>Статус</label>
 								<select
 									value={editForm.status}
-									onChange={e =>
-										setEditForm(prev => ({ ...prev, status: e.target.value }))
+									onChange={(e) =>
+										setEditForm((prev) => ({ ...prev, status: e.target.value }))
 									}
 								>
 									<option value='ASSIGNED_TO_TECH'>У монтажника</option>
@@ -1638,8 +1667,8 @@ export default function Inventory() {
 									min='1'
 									value={editForm.quantity}
 									disabled={Boolean(editForm.is_serialized)}
-									onChange={e =>
-										setEditForm(prev => ({
+									onChange={(e) =>
+										setEditForm((prev) => ({
 											...prev,
 											quantity: e.target.value,
 										}))
@@ -1653,15 +1682,15 @@ export default function Inventory() {
 										<label>Тип идентификатора</label>
 										<select
 											value={editForm.identifier_type}
-											onChange={e =>
-												setEditForm(prev => ({
+											onChange={(e) =>
+												setEditForm((prev) => ({
 													...prev,
 													identifier_type: e.target.value,
 												}))
 											}
 										>
-											{IDENTIFIER_TYPES.filter(type => type !== 'NONE').map(
-												type => (
+											{IDENTIFIER_TYPES.filter((type) => type !== 'NONE').map(
+												(type) => (
 													<option key={type} value={type}>
 														{type}
 													</option>
@@ -1674,8 +1703,8 @@ export default function Inventory() {
 										<label>Идентификатор</label>
 										<input
 											value={editForm.identifier_value}
-											onChange={e =>
-												setEditForm(prev => ({
+											onChange={(e) =>
+												setEditForm((prev) => ({
 													...prev,
 													identifier_value: e.target.value,
 												}))
@@ -1687,8 +1716,8 @@ export default function Inventory() {
 										<label>Серийный номер</label>
 										<input
 											value={editForm.serial_number}
-											onChange={e =>
-												setEditForm(prev => ({
+											onChange={(e) =>
+												setEditForm((prev) => ({
 													...prev,
 													serial_number: e.target.value,
 												}))
@@ -1702,8 +1731,8 @@ export default function Inventory() {
 								<label>Примечание</label>
 								<textarea
 									value={editForm.note}
-									onChange={e =>
-										setEditForm(prev => ({ ...prev, note: e.target.value }))
+									onChange={(e) =>
+										setEditForm((prev) => ({ ...prev, note: e.target.value }))
 									}
 								/>
 							</div>
@@ -1733,7 +1762,7 @@ export default function Inventory() {
 					<form
 						className='modal-window inventory-modal-wide inventory-manual-modal'
 						onSubmit={submitManualAdd}
-						onClick={e => e.stopPropagation()}
+						onClick={(e) => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<h3>Добавить предмет монтажнику</h3>
@@ -1753,8 +1782,8 @@ export default function Inventory() {
 									id='manual-add-technician'
 									technicians={technicians}
 									value={manualForm.target_user_id}
-									onChange={id =>
-										setManualForm(prev => ({ ...prev, target_user_id: id }))
+									onChange={(id) =>
+										setManualForm((prev) => ({ ...prev, target_user_id: id }))
 									}
 									placeholder='Введите имя монтажника...'
 								/>
@@ -1769,7 +1798,7 @@ export default function Inventory() {
 									required
 								>
 									<option value=''>Выберите город</option>
-									{cities.map(city => (
+									{cities.map((city) => (
 										<option key={city.id} value={city.id}>
 											{city.name}
 										</option>
@@ -1839,8 +1868,8 @@ export default function Inventory() {
 											value={manualForm.identifier_type}
 											onChange={handleManualChange}
 										>
-											{IDENTIFIER_TYPES.filter(type => type !== 'NONE').map(
-												type => (
+											{IDENTIFIER_TYPES.filter((type) => type !== 'NONE').map(
+												(type) => (
 													<option key={type} value={type}>
 														{type}
 													</option>
@@ -1926,7 +1955,7 @@ export default function Inventory() {
 					<form
 						className='modal-window inventory-modal-wide inventory-threshold-modal'
 						onSubmit={submitThreshold}
-						onClick={e => e.stopPropagation()}
+						onClick={(e) => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<h3>Порог расходника</h3>
@@ -1950,7 +1979,7 @@ export default function Inventory() {
 								type='number'
 								min='0'
 								value={thresholdForm.threshold_quantity}
-								onChange={e =>
+								onChange={(e) =>
 									setThresholdForm({
 										threshold_quantity: e.target.value,
 									})

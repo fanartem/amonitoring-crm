@@ -44,7 +44,7 @@ const CATEGORY_ICONS = {
 	OTHER: 'fa-cube',
 }
 
-const getStatusClassName = status => {
+const getStatusClassName = (status) => {
 	if (status === 'ASSIGNED_TO_TECH') return 'status-progress'
 	if (status === 'INSTALLED' || status === 'USED') return 'status-done'
 	if (status === 'REPAIR' || status === 'RESERVED') return 'status-new'
@@ -53,13 +53,13 @@ const getStatusClassName = status => {
 	return 'status-new'
 }
 
-const getItemQuantity = item => {
+const getItemQuantity = (item) => {
 	if (Boolean(item.is_serialized)) return 1
 
 	return Number(item.quantity || 0)
 }
 
-const getItemIdentity = item => {
+const getItemIdentity = (item) => {
 	if (item.identifier_value) {
 		return `${item.identifier_type || 'ID'}: ${item.identifier_value}`
 	}
@@ -71,7 +71,7 @@ const getItemIdentity = item => {
 	return 'Без идентификатора'
 }
 
-const buildParams = params => {
+const buildParams = (params) => {
 	const searchParams = new URLSearchParams()
 
 	Object.entries(params).forEach(([key, value]) => {
@@ -109,7 +109,7 @@ function HistoryModal({ item, history, onClose }) {
 					<div className='empty-state'>История пока пустая</div>
 				) : (
 					<div className='inventory-history-list'>
-						{history.map(row => (
+						{history.map((row) => (
 							<div key={row.id} className='inventory-history-row'>
 								<div className='inventory-history-main'>
 									<strong>{row.action}</strong>
@@ -167,6 +167,11 @@ export default function MyInventory() {
 	// (debounce) — иначе запрос на сервер улетал бы на каждое нажатие клавиши.
 	const [searchInput, setSearchInput] = useState('')
 
+	// Панель фильтров на мобилке свёрнута по умолчанию — разворачивается
+	// по кнопке, чтобы не занимать экран постоянно (тот же паттерн, что
+	// и на вкладке "Заявки"/"Инвентарь").
+	const [showMobileFilters, setShowMobileFilters] = useState(false)
+
 	const [historyItem, setHistoryItem] = useState(null)
 	const [historyRows, setHistoryRows] = useState([])
 	const [historyLoading, setHistoryLoading] = useState(false)
@@ -179,7 +184,7 @@ export default function MyInventory() {
 	// через паузу в наборе, чтобы не дёргать сервер на каждую букву.
 	useEffect(() => {
 		const timeoutId = setTimeout(() => {
-			setFilters(prev => {
+			setFilters((prev) => {
 				const trimmed = searchInput.trim()
 				if (prev.search === trimmed) return prev
 				return { ...prev, search: trimmed }
@@ -217,7 +222,7 @@ export default function MyInventory() {
 		}
 	}
 
-	const fetchHistory = async item => {
+	const fetchHistory = async (item) => {
 		setHistoryItem(item)
 		setHistoryRows([])
 		setHistoryLoading(true)
@@ -243,10 +248,10 @@ export default function MyInventory() {
 		}
 	}
 
-	const handleFilterChange = e => {
+	const handleFilterChange = (e) => {
 		const { name, value, type, checked } = e.target
 
-		setFilters(prev => ({
+		setFilters((prev) => ({
 			...prev,
 			[name]: type === 'checkbox' ? checked : value,
 		}))
@@ -262,15 +267,15 @@ export default function MyInventory() {
 		})
 	}
 
-	const toggleCategory = category => {
-		setExpandedCategories(prev => ({
+	const toggleCategory = (category) => {
+		setExpandedCategories((prev) => ({
 			...prev,
 			[category]: !prev[category],
 		}))
 	}
 
-	const toggleGroup = groupKey => {
-		setExpandedGroups(prev => ({
+	const toggleGroup = (groupKey) => {
+		setExpandedGroups((prev) => ({
 			...prev,
 			[groupKey]: !prev[groupKey],
 		}))
@@ -281,79 +286,111 @@ export default function MyInventory() {
 		0,
 	)
 
+	// Для бейджа на кнопке "Фильтры" на мобилке.
+	const activeFiltersCount =
+		(searchInput ? 1 : 0) +
+		Object.entries(filters).filter(
+			([key, value]) => key !== 'search' && Boolean(value),
+		).length
+
 	return (
 		<div className='requests-page-container'>
 			<div className='employees-header'>
 				<h2>Мой инвентарь</h2>
 			</div>
 
-			<div className='filters-bar inventory-filters'>
-				<div className='filter-group filter-main'>
-					<label>Поиск</label>
-					<input
-						className={
-							searchInput ? 'filter-input filter-active' : 'filter-input'
-						}
-						name='search'
-						value={searchInput}
-						onChange={e => setSearchInput(e.target.value)}
-						placeholder='Название, IMEI, серийник...'
-					/>
-				</div>
+			<button
+				type='button'
+				className='mobile-filters-toggle'
+				onClick={() => setShowMobileFilters((prev) => !prev)}
+			>
+				<span className='mobile-filters-toggle-label'>
+					<i className='fa-solid fa-filter'></i>
+					Фильтры
+					{activeFiltersCount > 0 && (
+						<span className='mobile-filters-badge'>{activeFiltersCount}</span>
+					)}
+				</span>
+				<i
+					className={`fa-solid fa-chevron-down mobile-filters-chevron ${
+						showMobileFilters ? 'is-open' : ''
+					}`}
+				></i>
+			</button>
 
-				<div className='filter-group'>
-					<label>Категория</label>
-					<select
-						className={
-							filters.category ? 'filter-select filter-active' : 'filter-select'
-						}
-						name='category'
-						value={filters.category}
-						onChange={handleFilterChange}
+			<div
+				className={`filters-panel ${showMobileFilters ? 'mobile-open' : ''}`}
+			>
+				<div className='filters-bar inventory-filters'>
+					<div className='filter-group filter-main'>
+						<label>Поиск</label>
+						<input
+							className={
+								searchInput ? 'filter-input filter-active' : 'filter-input'
+							}
+							name='search'
+							value={searchInput}
+							onChange={(e) => setSearchInput(e.target.value)}
+							placeholder='Название, IMEI, серийник...'
+						/>
+					</div>
+
+					<div className='filter-group'>
+						<label>Категория</label>
+						<select
+							className={
+								filters.category
+									? 'filter-select filter-active'
+									: 'filter-select'
+							}
+							name='category'
+							value={filters.category}
+							onChange={handleFilterChange}
+						>
+							<option value=''>Все категории</option>
+							{Object.entries(CATEGORIES).map(([value, label]) => (
+								<option key={value} value={value}>
+									{label}
+								</option>
+							))}
+						</select>
+					</div>
+
+					<div className='filter-group'>
+						<label>Статус</label>
+						<select
+							className={
+								filters.status ? 'filter-select filter-active' : 'filter-select'
+							}
+							name='status'
+							value={filters.status}
+							onChange={handleFilterChange}
+						>
+							<option value=''>Все статусы</option>
+							{Object.entries(STATUSES).map(([value, label]) => (
+								<option key={value} value={value}>
+									{label}
+								</option>
+							))}
+						</select>
+					</div>
+
+					<label
+						className={`my-requests-toggle ${filters.low_stock ? 'active' : ''}`}
 					>
-						<option value=''>Все категории</option>
-						{Object.entries(CATEGORIES).map(([value, label]) => (
-							<option key={value} value={value}>
-								{label}
-							</option>
-						))}
-					</select>
+						<input
+							type='checkbox'
+							name='low_stock'
+							checked={filters.low_stock}
+							onChange={handleFilterChange}
+						/>
+						<span>Низкий остаток</span>
+					</label>
+
+					<button className='btn-reset' onClick={resetFilters}>
+						Сбросить
+					</button>
 				</div>
-
-				<div className='filter-group'>
-					<label>Статус</label>
-					<select
-						className={
-							filters.status ? 'filter-select filter-active' : 'filter-select'
-						}
-						name='status'
-						value={filters.status}
-						onChange={handleFilterChange}
-					>
-						<option value=''>Все статусы</option>
-						{Object.entries(STATUSES).map(([value, label]) => (
-							<option key={value} value={value}>
-								{label}
-							</option>
-						))}
-					</select>
-				</div>
-
-				<label
-					className={`my-requests-toggle ${filters.low_stock ? 'active' : ''}`}
-				>
-					<input
-						type='checkbox'
-						name='low_stock'
-						checked={filters.low_stock}
-						onChange={handleFilterChange}
-					/>
-					<span>Низкий остаток</span>
-				</label>
-
-				<button className='btn-reset' onClick={resetFilters}>
-					Сбросить
-				</button>
 			</div>
 
 			<div className='requests-count'>
@@ -368,7 +405,7 @@ export default function MyInventory() {
 				<div className='empty-state'>Инвентарь пуст</div>
 			) : (
 				<div className='inventory-tree'>
-					{inventory.map(category => {
+					{inventory.map((category) => {
 						// У монтажника собственный инвентарь всегда развёрнут по умолчанию.
 						const isCategoryOpen = expandedCategories[category.category] ?? true
 
@@ -407,15 +444,12 @@ export default function MyInventory() {
 										<span className='inventory-pill'>
 											{category.total_quantity} ед.
 										</span>
-										<span className='inventory-pill inventory-pill-muted'>
-											{category.total_rows} строк
-										</span>
 									</span>
 								</button>
 
 								{isCategoryOpen && (
 									<div className='inventory-category-body inventory-reveal'>
-										{category.groups.map(group => {
+										{category.groups.map((group) => {
 											const groupKey = `${category.category}-${group.group_key}`
 											const isGroupOpen = expandedGroups[groupKey] ?? true
 
@@ -451,7 +485,7 @@ export default function MyInventory() {
 
 													{isGroupOpen && (
 														<div className='inventory-items-list inventory-reveal'>
-															{group.items.map(item => (
+															{group.items.map((item) => (
 																<div
 																	key={item.id}
 																	className={`inventory-item-card ${getStatusClassName(
@@ -463,9 +497,7 @@ export default function MyInventory() {
 																			<strong>{item.name}</strong>
 																			<div className='inventory-item-subtitle'>
 																				{item.manufacturer || '—'}{' '}
-																				{item.model
-																					? `· ${item.model}`
-																					: ''}
+																				{item.model ? `· ${item.model}` : ''}
 																			</div>
 																			<div className='inventory-item-subtitle'>
 																				{getItemIdentity(item)}

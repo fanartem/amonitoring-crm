@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
-import { useLocation } from 'react-router'
+import { useLocation, useSearchParams } from 'react-router'
 import '../styles/Requests.css'
 import CreateRequestModal from './CreateRequestModal'
 import RequestDetailModal from './RequestDetailModal'
@@ -64,27 +64,57 @@ export default function Requests() {
 	const [activeDropdown, setActiveDropdown] = useState(null)
 	const [detailModalTab, setDetailModalTab] = useState('info')
 
-	const [filters, setFilters] = useState({
-		search: '',
-		created_by: '',
-		assigned_to: '',
-		status: '',
-		payment: '',
-		city: '',
-		format: '',
-		date_from: '',
-		date_to: '',
-		sort_mode: 'STATUS_FLOW',
-	})
+	// Фильтры хранятся и в URL (query-параметры) — так отфильтрованный вид
+	// можно скинуть ссылкой, и он переживает обновление страницы/кнопку "назад".
+	const [searchParams, setSearchParams] = useSearchParams()
+
+	const [filters, setFilters] = useState(() => ({
+		search: searchParams.get('search') || '',
+		created_by: searchParams.get('created_by') || '',
+		assigned_to: searchParams.get('assigned_to') || '',
+		status: searchParams.get('status') || '',
+		payment: searchParams.get('payment') || '',
+		city: searchParams.get('city') || '',
+		format: searchParams.get('format') || '',
+		date_from: searchParams.get('date_from') || '',
+		date_to: searchParams.get('date_to') || '',
+		sort_mode: searchParams.get('sort_mode') || 'STATUS_FLOW',
+	}))
 
 	const [highlightedRequests, setHighlightedRequests] = useState({})
 	const [pendingScrollRequestId, setPendingScrollRequestId] = useState(null)
 	const requestsSnapshotRef = useRef({})
 	const requestRefs = useRef({})
 
+	// Панель фильтров на мобилке свёрнута по умолчанию — разворачивается
+	// по кнопке, чтобы не занимать экран постоянно.
+	const [showMobileFilters, setShowMobileFilters] = useState(false)
+
 	const userRole = getUserRole()
 	const currentUserId = getCurrentUserId()
 	const location = useLocation()
+
+	// Пишем текущие фильтры в URL с небольшой задержкой — чтобы не дёргать
+	// history API на каждую нажатую клавишу в текстовых полях поиска.
+	// Пустые/дефолтные значения в URL не попадают, чтобы адрес оставался чистым.
+	useEffect(() => {
+		const timeoutId = setTimeout(() => {
+			const next = new URLSearchParams()
+
+			Object.entries(filters).forEach(([key, value]) => {
+				if (key === 'sort_mode') {
+					if (value && value !== 'STATUS_FLOW') next.set(key, value)
+					return
+				}
+
+				if (value) next.set(key, value)
+			})
+
+			setSearchParams(next, { replace: true })
+		}, 300)
+
+		return () => clearTimeout(timeoutId)
+	}, [filters]) // eslint-disable-line react-hooks/exhaustive-deps
 
 	const canViewRequestPrice =
 		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
@@ -154,7 +184,7 @@ export default function Requests() {
 		return () => document.removeEventListener('click', handleClickOutside)
 	}, [])
 
-	const buildRequestSnapshot = req => {
+	const buildRequestSnapshot = (req) => {
 		return JSON.stringify({
 			id: req.id,
 			status: req.status,
@@ -176,19 +206,19 @@ export default function Requests() {
 		})
 	}
 
-	const markRequestsHighlighted = changes => {
+	const markRequestsHighlighted = (changes) => {
 		if (!changes || Object.keys(changes).length === 0) return
 
-		setHighlightedRequests(prev => ({
+		setHighlightedRequests((prev) => ({
 			...prev,
 			...changes,
 		}))
 
 		setTimeout(() => {
-			setHighlightedRequests(prev => {
+			setHighlightedRequests((prev) => {
 				const next = { ...prev }
 
-				Object.keys(changes).forEach(id => {
+				Object.keys(changes).forEach((id) => {
 					delete next[id]
 				})
 
@@ -201,7 +231,7 @@ export default function Requests() {
 		if (!pendingScrollRequestId) return
 
 		const requestExistsInFilteredList = filteredRequests.some(
-			req => Number(req.id) === Number(pendingScrollRequestId),
+			(req) => Number(req.id) === Number(pendingScrollRequestId),
 		)
 
 		if (!requestExistsInFilteredList) return
@@ -242,7 +272,7 @@ export default function Requests() {
 				const changes = {}
 				const createdRequests = []
 
-				data.forEach(req => {
+				data.forEach((req) => {
 					const requestId = String(req.id)
 					const snapshot = buildRequestSnapshot(req)
 
@@ -264,7 +294,7 @@ export default function Requests() {
 				if (scrollToCreatedRequest && createdRequests.length > 0) {
 					const ownCreatedRequests = currentUserId
 						? createdRequests.filter(
-								req => Number(req.created_by) === Number(currentUserId),
+								(req) => Number(req.created_by) === Number(currentUserId),
 							)
 						: []
 
@@ -288,7 +318,7 @@ export default function Requests() {
 					if (newestCreatedRequest?.id) {
 						setPendingScrollRequestId(Number(newestCreatedRequest.id))
 
-						setHighlightedRequests(prev => ({
+						setHighlightedRequests((prev) => ({
 							...prev,
 							[String(newestCreatedRequest.id)]: 'just-created',
 						}))
@@ -347,10 +377,10 @@ export default function Requests() {
 		}
 	}
 
-	const getTechName = techId => {
+	const getTechName = (techId) => {
 		if (!techId) return null
 
-		const tech = techniciansLookup.find(t => Number(t.id) === Number(techId))
+		const tech = techniciansLookup.find((t) => Number(t.id) === Number(techId))
 
 		if (!tech) return `ID: ${techId}`
 
@@ -361,9 +391,9 @@ export default function Requests() {
 		return tech.name
 	}
 
-	const getRequestExecutors = req => {
+	const getRequestExecutors = (req) => {
 		if (Array.isArray(req.executors) && req.executors.length > 0) {
-			return req.executors.map(executor => ({
+			return req.executors.map((executor) => ({
 				id: executor.user_id,
 				name: executor.user_name || getTechName(executor.user_id),
 			}))
@@ -381,7 +411,7 @@ export default function Requests() {
 		return []
 	}
 
-	const getExecutorsLabel = req => {
+	const getExecutorsLabel = (req) => {
 		const executors = getRequestExecutors(req)
 
 		if (executors.length === 0) return null
@@ -389,22 +419,22 @@ export default function Requests() {
 		return executors.length === 1 ? 'Исполнитель' : 'Исполнители'
 	}
 
-	const getExecutorsText = req => {
+	const getExecutorsText = (req) => {
 		const executors = getRequestExecutors(req)
 
 		if (executors.length === 0) return null
 
 		return executors
-			.map(executor => executor.name || `ID: ${executor.id}`)
+			.map((executor) => executor.name || `ID: ${executor.id}`)
 			.join(', ')
 	}
 
-	const getClientPaymentTypeLabel = paymentType => {
+	const getClientPaymentTypeLabel = (paymentType) => {
 		if (paymentType === 'POSTPAYMENT') return 'Постоплата'
 		return 'Предоплата'
 	}
 
-	const getRequestPaymentText = req => {
+	const getRequestPaymentText = (req) => {
 		const paymentType = req.client_payment_type || 'PREPAYMENT'
 		const isPaid = Boolean(req.is_paid)
 
@@ -415,7 +445,7 @@ export default function Requests() {
 		return isPaid ? 'Предоплата · оплачено' : 'Предоплата · не оплачено'
 	}
 
-	const getRequestPaymentClass = req => {
+	const getRequestPaymentClass = (req) => {
 		if (req.client_payment_type === 'POSTPAYMENT') {
 			return req.is_paid ? 'payment-postpaid-paid' : 'payment-postpaid-unpaid'
 		}
@@ -423,13 +453,13 @@ export default function Requests() {
 		return req.is_paid ? 'payment-paid' : 'payment-unpaid'
 	}
 
-	const isCurrentUserExecutor = req => {
+	const isCurrentUserExecutor = (req) => {
 		if (!currentUserId) return false
 
 		const executors = getRequestExecutors(req)
 
 		return executors.some(
-			executor => Number(executor.id) === Number(currentUserId),
+			(executor) => Number(executor.id) === Number(currentUserId),
 		)
 	}
 
@@ -439,7 +469,7 @@ export default function Requests() {
 		INDIVIDUAL: 'Физ. лицо',
 	}
 
-	const getClientDisplayName = req => {
+	const getClientDisplayName = (req) => {
 		const clientType = req.client_type || req.type
 
 		if (clientType === 'TOO' || clientType === 'IP') {
@@ -449,7 +479,7 @@ export default function Requests() {
 		return req.client_name || req.company_name || 'Не указано'
 	}
 
-	const getClientSubtitle = req => {
+	const getClientSubtitle = (req) => {
 		const clientType = req.client_type || req.type
 
 		if ((clientType === 'TOO' || clientType === 'IP') && req.client_name) {
@@ -473,17 +503,17 @@ export default function Requests() {
 		return `${title} (${plate})`
 	}
 
-	const getVehicleInstallText = vehicle => {
+	const getVehicleInstallText = (vehicle) => {
 		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${
 			vehicle.has_beacon ? 'Маяк' : 'Без маяка'
 		}`
 	}
 
-	const getCreatorName = req => {
+	const getCreatorName = (req) => {
 		return req.created_by_name || 'Создатель не указан'
 	}
 
-	const getCreatorRoleLabel = req => {
+	const getCreatorRoleLabel = (req) => {
 		if (!req.created_by_role) return null
 		return roleLabels[req.created_by_role] || req.created_by_role
 	}
@@ -493,7 +523,7 @@ export default function Requests() {
 		if (filters.search) {
 			const s = filters.search.toLowerCase()
 
-			result = result.filter(r => {
+			result = result.filter((r) => {
 				const clientMatch =
 					(r.client_name && r.client_name.toLowerCase().includes(s)) ||
 					(r.company_name && r.company_name.toLowerCase().includes(s)) ||
@@ -502,7 +532,7 @@ export default function Requests() {
 				const vehicleMatch =
 					Array.isArray(r.vehicles) &&
 					r.vehicles.some(
-						v =>
+						(v) =>
 							(v.plate_number && v.plate_number.toLowerCase().includes(s)) ||
 							(v.vin && v.vin.toLowerCase().includes(s)) ||
 							(v.brand && v.brand.toLowerCase().includes(s)) ||
@@ -516,7 +546,7 @@ export default function Requests() {
 		if (filters.created_by) {
 			const creatorFilter = filters.created_by.toLowerCase()
 			result = result.filter(
-				r =>
+				(r) =>
 					r.created_by_name &&
 					r.created_by_name.toLowerCase().includes(creatorFilter),
 			)
@@ -525,7 +555,7 @@ export default function Requests() {
 		if (filters.assigned_to) {
 			const assigneeFilter = filters.assigned_to.toLowerCase()
 
-			result = result.filter(r => {
+			result = result.filter((r) => {
 				const executorsText = getExecutorsText(r)
 
 				return (
@@ -537,32 +567,33 @@ export default function Requests() {
 		if (filters.date_from) {
 			const fromDate = new Date(filters.date_from)
 			fromDate.setHours(0, 0, 0, 0)
-			result = result.filter(r => new Date(r.created_at) >= fromDate)
+			result = result.filter((r) => new Date(r.created_at) >= fromDate)
 		}
 		if (filters.date_to) {
 			const toDate = new Date(filters.date_to)
 			toDate.setHours(23, 59, 59, 999)
-			result = result.filter(r => new Date(r.created_at) <= toDate)
+			result = result.filter((r) => new Date(r.created_at) <= toDate)
 		}
 
-		if (filters.status) result = result.filter(r => r.status === filters.status)
+		if (filters.status)
+			result = result.filter((r) => r.status === filters.status)
 
 		if (canUsePaymentFilter && filters.payment === 'PAID') {
-			result = result.filter(r => Boolean(r.is_paid))
+			result = result.filter((r) => Boolean(r.is_paid))
 		}
 
 		if (canUsePaymentFilter && filters.payment === 'UNPAID') {
-			result = result.filter(r => !Boolean(r.is_paid))
+			result = result.filter((r) => !Boolean(r.is_paid))
 		}
 
 		if (filters.format)
-			result = result.filter(r => r.visit_type === filters.format)
+			result = result.filter((r) => r.visit_type === filters.format)
 
 		if (canUseCityFilter && filters.city) {
-			result = result.filter(r => r.city === filters.city)
+			result = result.filter((r) => r.city === filters.city)
 		}
 
-		const getRequestSortGroup = req => {
+		const getRequestSortGroup = (req) => {
 			if (isMyActiveRequest(req)) return 0
 
 			if (req.status === 'NEW') return 1
@@ -573,7 +604,7 @@ export default function Requests() {
 			return 99
 		}
 
-		const getTime = value => {
+		const getTime = (value) => {
 			if (!value) return null
 
 			const time = new Date(value).getTime()
@@ -581,7 +612,7 @@ export default function Requests() {
 			return Number.isNaN(time) ? null : time
 		}
 
-		const getOldRequestTime = req => {
+		const getOldRequestTime = (req) => {
 			return (
 				getTime(req.scheduled_at) ||
 				getTime(req.created_at) ||
@@ -589,7 +620,7 @@ export default function Requests() {
 			)
 		}
 
-		const getFreshRequestTime = req => {
+		const getFreshRequestTime = (req) => {
 			return (
 				getTime(req.completed_at) ||
 				getTime(req.cancelled_at) ||
@@ -661,7 +692,7 @@ export default function Requests() {
 		canUsePaymentFilter,
 	])
 
-	const handleFilterChange = e =>
+	const handleFilterChange = (e) =>
 		setFilters({ ...filters, [e.target.name]: e.target.value })
 
 	const resetFilters = () =>
@@ -728,7 +759,7 @@ export default function Requests() {
 		WAREHOUSE_MANAGER: 'role-warehouse',
 	}
 
-	const formatDate = dateString => {
+	const formatDate = (dateString) => {
 		if (!dateString) return '—'
 		const d = new Date(dateString)
 		return (
@@ -738,7 +769,7 @@ export default function Requests() {
 		)
 	}
 
-	const formatMoney = value => {
+	const formatMoney = (value) => {
 		const number = Number(value || 0)
 
 		if (Number.isNaN(number)) return `${value} тг`
@@ -746,7 +777,7 @@ export default function Requests() {
 		return `${number.toLocaleString('ru-RU')} тг`
 	}
 
-	const escapeCsvValue = value => {
+	const escapeCsvValue = (value) => {
 		if (value === null || value === undefined) return ''
 
 		const str = String(value)
@@ -760,7 +791,7 @@ export default function Requests() {
 
 	const downloadCsv = (rows, filename) => {
 		const csvContent = rows
-			.map(row => row.map(escapeCsvValue).join(';'))
+			.map((row) => row.map(escapeCsvValue).join(';'))
 			.join('\n')
 
 		const blob = new Blob(['\ufeff' + csvContent], {
@@ -780,7 +811,7 @@ export default function Requests() {
 
 	const toggleDropdown = (e, reqId) => {
 		e.stopPropagation()
-		setActiveDropdown(prev => (prev === reqId ? null : reqId))
+		setActiveDropdown((prev) => (prev === reqId ? null : reqId))
 	}
 
 	// --- ИСПРАВЛЕННЫЕ ФУНКЦИИ КНОПОК ---
@@ -827,7 +858,7 @@ export default function Requests() {
 		}
 	}
 
-	const canCompleteRequest = req => {
+	const canCompleteRequest = (req) => {
 		if (req.status !== 'IN_PROGRESS') return false
 
 		const executors = getRequestExecutors(req)
@@ -1005,179 +1036,211 @@ export default function Requests() {
 		setSelectedRequestId(reqId)
 	}
 
-	const handleOpenEditFromDetail = reqData => {
+	const handleOpenEditFromDetail = (reqData) => {
 		setSelectedRequestId(null)
 		setEditRequestData(reqData)
 		setCreateModalOpen(true)
 	}
 
-	const getFilterClassName = filterName => {
+	const getFilterClassName = (filterName) => {
 		const isActive = Boolean(filters[filterName])
 
 		return isActive ? 'filter-input filter-active' : 'filter-input'
 	}
 
-	const getFilterSelectClassName = filterName => {
+	const getFilterSelectClassName = (filterName) => {
 		const isActive = Boolean(filters[filterName])
 
 		return isActive ? 'filter-select filter-active' : 'filter-select'
 	}
 
+	// Для бейджа на кнопке "Фильтры" — sort_mode это сортировка, а не фильтр,
+	// в счётчик её не включаем.
+	const activeFiltersCount = Object.entries(filters).filter(
+		([key, value]) => key !== 'sort_mode' && Boolean(value),
+	).length
+
 	return (
 		<div className='requests-page-container'>
-			<div className='filters-bar filters-bar-top'>
-				<div className='filter-group filter-main'>
-					<label>Глобальный поиск</label>
-					<input
-						className={getFilterClassName('search')}
-						type='text'
-						name='search'
-						placeholder='ФИО, Телефон, Гос.номер, VIN, Марка...'
-						value={filters.search}
-						onChange={handleFilterChange}
-					/>
-				</div>
-				<div className='filter-group filter-creator'>
-					<label>Создатель заявки</label>
-					<input
-						className={getFilterClassName('created_by')}
-						type='text'
-						name='created_by'
-						placeholder='ФИО...'
-						value={filters.created_by || ''}
-						onChange={handleFilterChange}
-					/>
-				</div>
-				<div className='filter-group filter-creator'>
-					<label>Исполнитель заявки</label>
-					<input
-						className={getFilterClassName('assigned_to')}
-						type='text'
-						name='assigned_to'
-						placeholder='ФИО исполнителя...'
-						value={filters.assigned_to || ''}
-						onChange={handleFilterChange}
-					/>
-				</div>
-			</div>
-
-			<div className='filters-bar'>
-				<div className='filter-group'>
-					<label>Дата создания от:</label>
-					<input
-						className={getFilterClassName('date_from')}
-						type='date'
-						name='date_from'
-						value={filters.date_from}
-						onChange={handleFilterChange}
-					/>
-				</div>
-
-				<div className='filter-group'>
-					<label>до:</label>
-					<input
-						className={getFilterClassName('date_to')}
-						type='date'
-						name='date_to'
-						value={filters.date_to}
-						onChange={handleFilterChange}
-					/>
-				</div>
-				<div className='filter-group'>
-					<label>Статус</label>
-					<select
-						className={getFilterSelectClassName('status')}
-						name='status'
-						value={filters.status}
-						onChange={handleFilterChange}
-					>
-						<option value=''>Все статусы</option>
-						<option value='NEW'>В ожидании</option>
-						<option value='IN_PROGRESS'>Принято в работу</option>
-						<option value='COMPLETED'>Работы завершены</option>
-						<option value='CANCELLED'>Отмененные заявки</option>
-					</select>
-				</div>
-				{canUsePaymentFilter && (
-					<div className='filter-group'>
-						<label>Оплата</label>
-						<select
-							className={getFilterSelectClassName('payment')}
-							name='payment'
-							value={filters.payment}
-							onChange={handleFilterChange}
-						>
-							<option value=''>Все оплаты</option>
-							<option value='PAID'>Оплачено</option>
-							<option value='UNPAID'>Не оплачено</option>
-						</select>
-					</div>
-				)}
-				{canUseCityFilter && (
-					<div className='filter-group'>
-						<label>Город</label>
-						<select
-							className={getFilterSelectClassName('city')}
-							name='city'
-							value={filters.city}
-							onChange={handleFilterChange}
-						>
-							<option value=''>Все города</option>
-
-							{cities.map(city => (
-								<option key={city.id} value={city.name}>
-									{city.name}
-								</option>
-							))}
-						</select>
-					</div>
-				)}
-				<div className='filter-group'>
-					<label>Формат работы</label>
-					<select
-						className={getFilterSelectClassName('format')}
-						name='format'
-						value={filters.format}
-						onChange={handleFilterChange}
-					>
-						<option value=''>Все форматы</option>
-						<option value='ON_SITE'>Выезд к клиенту</option>
-						<option value='IN_OFFICE'>В офисе</option>
-					</select>
-				</div>
-				<div className='filter-group'>
-					<label>Сортировка</label>
-					<select
-						className={
-							filters.sort_mode === 'NEWEST_FIRST'
-								? 'filter-select filter-active'
-								: 'filter-select'
-						}
-						name='sort_mode'
-						value={filters.sort_mode}
-						onChange={handleFilterChange}
-					>
-						<option value='STATUS_FLOW'>
-							По статусам: ожидание старые → принятые → завершённые
-						</option>
-						<option value='NEWEST_FIRST'>Сначала новые</option>
-					</select>
-				</div>
-				<button className='btn-reset' onClick={resetFilters}>
-					Сбросить
+			<div className='requests-toolbar-sticky'>
+				{/* Кнопка видна только на мобилке — на десктопе фильтры всегда открыты. */}
+				<button
+					type='button'
+					className='mobile-filters-toggle'
+					onClick={() => setShowMobileFilters((prev) => !prev)}
+				>
+					<span className='mobile-filters-toggle-label'>
+						<i className='fa-solid fa-filter'></i>
+						Фильтры
+						{activeFiltersCount > 0 && (
+							<span className='mobile-filters-badge'>{activeFiltersCount}</span>
+						)}
+					</span>
+					<i
+						className={`fa-solid fa-chevron-down mobile-filters-chevron ${
+							showMobileFilters ? 'is-open' : ''
+						}`}
+					></i>
 				</button>
-				{isTechnicianUser && (
-					<label
-						className={`my-requests-toggle ${myRequestsFirst ? 'active' : ''}`}
-					>
-						<input
-							type='checkbox'
-							checked={myRequestsFirst}
-							onChange={e => setMyRequestsFirst(e.target.checked)}
-						/>
-						<span>Мои заявки сверху</span>
-					</label>
-				)}
+
+				<div
+					className={`filters-panel ${showMobileFilters ? 'mobile-open' : ''}`}
+				>
+					<div className='filters-bar filters-bar-top'>
+						<div className='filter-group filter-main'>
+							<label>Глобальный поиск</label>
+							<input
+								className={getFilterClassName('search')}
+								type='text'
+								name='search'
+								placeholder='ФИО, Телефон, Гос.номер, VIN, Марка...'
+								value={filters.search}
+								onChange={handleFilterChange}
+							/>
+						</div>
+						<div className='filter-group filter-creator'>
+							<label>Создатель заявки</label>
+							<input
+								className={getFilterClassName('created_by')}
+								type='text'
+								name='created_by'
+								placeholder='ФИО...'
+								value={filters.created_by || ''}
+								onChange={handleFilterChange}
+							/>
+						</div>
+						<div className='filter-group filter-creator'>
+							<label>Исполнитель заявки</label>
+							<input
+								className={getFilterClassName('assigned_to')}
+								type='text'
+								name='assigned_to'
+								placeholder='ФИО исполнителя...'
+								value={filters.assigned_to || ''}
+								onChange={handleFilterChange}
+							/>
+						</div>
+					</div>
+
+					<div className='filters-bar'>
+						<div className='filter-group'>
+							<label>Дата создания от:</label>
+							<input
+								className={getFilterClassName('date_from')}
+								type='date'
+								name='date_from'
+								value={filters.date_from}
+								onChange={handleFilterChange}
+							/>
+						</div>
+
+						<div className='filter-group'>
+							<label>до:</label>
+							<input
+								className={getFilterClassName('date_to')}
+								type='date'
+								name='date_to'
+								value={filters.date_to}
+								onChange={handleFilterChange}
+							/>
+						</div>
+						<div className='filter-group'>
+							<label>Статус</label>
+							<select
+								className={getFilterSelectClassName('status')}
+								name='status'
+								value={filters.status}
+								onChange={handleFilterChange}
+							>
+								<option value=''>Все статусы</option>
+								<option value='NEW'>В ожидании</option>
+								<option value='IN_PROGRESS'>Принято в работу</option>
+								<option value='COMPLETED'>Работы завершены</option>
+								<option value='CANCELLED'>Отмененные заявки</option>
+							</select>
+						</div>
+						{canUsePaymentFilter && (
+							<div className='filter-group'>
+								<label>Оплата</label>
+								<select
+									className={getFilterSelectClassName('payment')}
+									name='payment'
+									value={filters.payment}
+									onChange={handleFilterChange}
+								>
+									<option value=''>Все оплаты</option>
+									<option value='PAID'>Оплачено</option>
+									<option value='UNPAID'>Не оплачено</option>
+								</select>
+							</div>
+						)}
+						{canUseCityFilter && (
+							<div className='filter-group'>
+								<label>Город</label>
+								<select
+									className={getFilterSelectClassName('city')}
+									name='city'
+									value={filters.city}
+									onChange={handleFilterChange}
+								>
+									<option value=''>Все города</option>
+
+									{cities.map((city) => (
+										<option key={city.id} value={city.name}>
+											{city.name}
+										</option>
+									))}
+								</select>
+							</div>
+						)}
+						<div className='filter-group'>
+							<label>Формат работы</label>
+							<select
+								className={getFilterSelectClassName('format')}
+								name='format'
+								value={filters.format}
+								onChange={handleFilterChange}
+							>
+								<option value=''>Все форматы</option>
+								<option value='ON_SITE'>Выезд к клиенту</option>
+								<option value='IN_OFFICE'>В офисе</option>
+							</select>
+						</div>
+						<div className='filter-group'>
+							<label>Сортировка</label>
+							<select
+								className={
+									filters.sort_mode === 'NEWEST_FIRST'
+										? 'filter-select filter-active'
+										: 'filter-select'
+								}
+								name='sort_mode'
+								value={filters.sort_mode}
+								onChange={handleFilterChange}
+							>
+								<option value='STATUS_FLOW'>
+									По статусам: ожидание старые → принятые → завершённые
+								</option>
+								<option value='NEWEST_FIRST'>Сначала новые</option>
+							</select>
+						</div>
+						<button className='btn-reset' onClick={resetFilters}>
+							Сбросить
+						</button>
+						{isTechnicianUser && (
+							<label
+								className={`my-requests-toggle ${myRequestsFirst ? 'active' : ''}`}
+							>
+								<input
+									type='checkbox'
+									checked={myRequestsFirst}
+									onChange={(e) => setMyRequestsFirst(e.target.checked)}
+								/>
+								<span>Мои заявки сверху</span>
+							</label>
+						)}
+					</div>
+				</div>
 			</div>
 
 			<div className='requests-count'>
@@ -1185,10 +1248,10 @@ export default function Requests() {
 			</div>
 
 			<div className='requests-list'>
-				{filteredRequests.map(req => (
+				{filteredRequests.map((req) => (
 					<div
 						key={req.id}
-						ref={el => {
+						ref={(el) => {
 							requestRefs.current[Number(req.id)] = el
 						}}
 						className={`request-card ${
@@ -1201,7 +1264,7 @@ export default function Requests() {
 						}}
 					>
 						<div className='card-column'>
-							<div className='card-item'>
+							<div className='card-item card-item-client'>
 								<span className='card-label'>Клиент</span>
 
 								<span className='card-value'>{getClientDisplayName(req)}</span>
@@ -1244,7 +1307,7 @@ export default function Requests() {
 								)}
 							</div>
 
-							<div className='card-item'>
+							<div className='card-item card-item-status'>
 								<span className='card-label'>Статус</span>
 								<div
 									className={`status-badge ${statusClasses[req.status] || 'status-new'}`}
@@ -1256,7 +1319,7 @@ export default function Requests() {
 								)}
 							</div>
 
-							<div className='card-item request-creator-card-item'>
+							<div className='card-item request-creator-card-item card-item-created'>
 								<span className='card-label'>Создано</span>
 
 								<div className='request-creator-row'>
@@ -1275,7 +1338,7 @@ export default function Requests() {
 							</div>
 
 							{req.responsible_manager_name && (
-								<div className='card-item request-creator-card-item'>
+								<div className='card-item request-creator-card-item card-item-responsible'>
 									<span className='card-label'>Ответственный за клиента </span>
 									<span className='request-creator-name'>
 										{req.responsible_manager_name}
@@ -1284,7 +1347,10 @@ export default function Requests() {
 							)}
 
 							{getRequestExecutors(req).length > 0 && (
-								<div className='card-item' style={{ marginTop: '5px' }}>
+								<div
+									className='card-item card-item-executors'
+									style={{ marginTop: '5px' }}
+								>
 									<span className='card-label'>{getExecutorsLabel(req)}</span>
 									<span
 										className='card-value'
@@ -1302,7 +1368,7 @@ export default function Requests() {
 						</div>
 
 						<div className='card-column'>
-							<div className='card-item'>
+							<div className='card-item card-item-vehicles'>
 								<span className='card-label'>Авто</span>
 
 								<div className='client-request-lines'>
@@ -1320,14 +1386,14 @@ export default function Requests() {
 									)}
 								</div>
 							</div>
-							<div className='card-item'>
+							<div className='card-item card-item-city'>
 								<span className='card-label'>Город</span>
 								<span className='card-value'>{req.city || 'Не указан'}</span>
 							</div>
 						</div>
 
 						<div className='card-column'>
-							<div className='card-item'>
+							<div className='card-item card-item-params'>
 								<span className='card-label'>Параметры</span>
 
 								<div className='client-request-lines'>
@@ -1353,7 +1419,7 @@ export default function Requests() {
 									)}
 								</div>
 							</div>
-							<div className='card-item'>
+							<div className='card-item card-item-format'>
 								<span className='card-label'>Формат</span>
 								<span className='card-value'>
 									{req.visit_type === 'ON_SITE' ? (
@@ -1381,11 +1447,11 @@ export default function Requests() {
 						</div>
 
 						<div className='card-column'>
-							<div className='card-item'>
+							<div className='card-item card-item-created-date'>
 								<span className='card-label'>Дата создания</span>
 								<span className='card-value'>{formatDate(req.created_at)}</span>
 							</div>
-							<div className='card-item'>
+							<div className='card-item card-item-scheduled-date'>
 								<span className='card-label'>
 									Желаемая дата/время выполнения
 								</span>
@@ -1420,7 +1486,7 @@ export default function Requests() {
 								</div>
 							)}
 							{canViewRequestPrice && (
-								<div className='card-item'>
+								<div className='card-item card-item-payment'>
 									<span className='card-label'>Оплата</span>
 
 									<div
@@ -1469,7 +1535,7 @@ export default function Requests() {
 						>
 							<button
 								className='btn-details'
-								onClick={e => {
+								onClick={(e) => {
 									e.stopPropagation()
 									setDetailModalTab('info')
 									setSelectedRequestId(req.id)
@@ -1479,7 +1545,7 @@ export default function Requests() {
 							</button>
 							<div
 								className='card-actions'
-								onClick={e => toggleDropdown(e, req.id)}
+								onClick={(e) => toggleDropdown(e, req.id)}
 							>
 								&#8942;
 							</div>
@@ -1491,7 +1557,7 @@ export default function Requests() {
 								>
 									<div
 										className='dropdown-item'
-										onClick={e => handleMenuOpen(e, req.id)}
+										onClick={(e) => handleMenuOpen(e, req.id)}
 									>
 										<svg viewBox='0 0 24 24'>
 											<path d='M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2z' />
@@ -1501,7 +1567,7 @@ export default function Requests() {
 									{Boolean(req.can_edit) && (
 										<div
 											className='dropdown-item'
-											onClick={e => handleMenuEdit(e, req)}
+											onClick={(e) => handleMenuEdit(e, req)}
 										>
 											<svg viewBox='0 0 24 24'>
 												<path d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z' />
@@ -1511,7 +1577,7 @@ export default function Requests() {
 									)}
 									<div
 										className='dropdown-item'
-										onClick={e => handleMenuDownload(e, req.id)}
+										onClick={(e) => handleMenuDownload(e, req.id)}
 									>
 										<svg viewBox='0 0 24 24'>
 											<path d='M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z' />
@@ -1521,7 +1587,7 @@ export default function Requests() {
 									<div className='dropdown-divider'></div>
 									<div
 										className='dropdown-item'
-										onClick={e => handleMenuHistory(e, req.id)}
+										onClick={(e) => handleMenuHistory(e, req.id)}
 									>
 										<svg viewBox='0 0 24 24'>
 											<path d='M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z' />
@@ -1535,7 +1601,7 @@ export default function Requests() {
 											<div
 												className='dropdown-item'
 												style={{ color: '#c62828' }}
-												onClick={e => handleDeleteRequest(e, req.id)}
+												onClick={(e) => handleDeleteRequest(e, req.id)}
 											>
 												<svg viewBox='0 0 24 24' fill='#c62828'>
 													<path d='M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z' />
@@ -1561,7 +1627,7 @@ export default function Requests() {
 							{canViewEquipmentButton && (
 								<button
 									className='btn-green'
-									onClick={e => {
+									onClick={(e) => {
 										e.stopPropagation()
 										setDetailModalTab('equipment')
 										setSelectedRequestId(req.id)
@@ -1574,7 +1640,7 @@ export default function Requests() {
 							{canPayRequests && !req.is_paid && (
 								<button
 									className='btn-green'
-									onClick={e => handlePayRequest(e, req.id)}
+									onClick={(e) => handlePayRequest(e, req.id)}
 								>
 									Оплатить
 								</button>
@@ -1589,7 +1655,7 @@ export default function Requests() {
 								) && (
 									<button
 										className='btn-green'
-										onClick={e => handleAcceptRequest(e, req)}
+										onClick={(e) => handleAcceptRequest(e, req)}
 									>
 										Принять заявку
 									</button>
@@ -1598,7 +1664,7 @@ export default function Requests() {
 							{canCompleteRequest(req) && (
 								<button
 									className='btn-complete-request'
-									onClick={e => handleCompleteRequest(e, req)}
+									onClick={(e) => handleCompleteRequest(e, req)}
 								>
 									Завершить
 								</button>

@@ -28,6 +28,28 @@
   margin-bottom: 12px;
 }
 
+/* Кнопка "Фильтры" — видна только на мобилке (см. медиа-запрос ниже).
+   На десктопе фильтры всегда открыты, кнопка скрыта. */
+.mobile-filters-toggle {
+  display: none;
+}
+
+/* Липнет к верху при скролле длинного списка заявок — не нужно скроллить
+   обратно наверх, чтобы поменять фильтр. Фон белый — совпадает с фоном
+   страницы, поэтому не видно "разрыва" при прилипании. */
+.requests-toolbar-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: #fff;
+}
+
+/* На десктопе панель фильтров всегда видна, класс mobile-open ни на что
+   не влияет — переопределяется только в мобильном медиа-запросе. */
+.filters-panel {
+  display: block;
+}
+
 .filter-group {
   display: flex;
   flex-direction: column;
@@ -1579,6 +1601,92 @@
   }
 }
 
+@media (max-width: 768px) {
+  /* Кнопка "Фильтры": показываем на мобилке, панель по умолчанию скрыта
+     и разворачивается только при нажатии (класс mobile-open из React). */
+  .mobile-filters-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    background: #fff;
+    border: 1px solid #d9e6ce;
+    border-radius: 10px;
+    color: #2e5902;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .mobile-filters-toggle:hover {
+    background: #f4f8ef;
+  }
+
+  .mobile-filters-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mobile-filters-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #5e9424;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .mobile-filters-chevron {
+    font-size: 13px;
+    color: #6b9b3a;
+    transition: transform 0.18s ease;
+  }
+
+  .mobile-filters-chevron.is-open {
+    transform: rotate(180deg);
+  }
+
+  /* Панель скрыта, пока не нажали кнопку выше */
+  .filters-panel {
+    display: none;
+  }
+
+  .filters-panel.mobile-open {
+    display: block;
+    animation: filtersPanelReveal 0.18s ease;
+  }
+}
+
+@keyframes filtersPanelReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .filters-panel.mobile-open {
+    animation: none;
+  }
+
+  .mobile-filters-chevron {
+    transition: none;
+  }
+}
+
 @media (max-width: 640px) {
   .filters-bar {
     flex-direction: column;
@@ -1610,5 +1718,5 @@
     flex: 1;
   }
 
- 
+
 }
