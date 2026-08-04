@@ -2403,6 +2403,9 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
 
             if req.get("work_type") == "REMOVAL":
                 # 1. Оборудование, привязанное напрямую к авто через vehicle_equipment.
+                # Берём:
+                # - серийные устройства;
+                # - возвратные расходники, например RELAY.
                 cursor.execute(
                     """
                     SELECT
@@ -2417,13 +2420,17 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                         ve.warehouse_item_id,
                         ve.quantity,
 
+                        wi.category,
                         wi.name,
+                        wi.manufacturer,
                         wi.model,
                         wi.identifier_type,
                         wi.identifier_value,
+                        wi.serial_number,
                         wi.is_serialized,
                         wi.status AS warehouse_status,
                         wi.condition_status,
+                        wi.returnable_on_removal,
                         wi.city_id,
 
                         v.brand,
@@ -2438,8 +2445,16 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                         ON wi.id = ve.warehouse_item_id
                     LEFT JOIN vehicles v ON rv.vehicle_id = v.id
                     WHERE rv.request_id = %s
-                      AND wi.is_deleted = 0
-                      AND wi.is_serialized = 1
+                      AND (
+                            (
+                                wi.is_serialized = 1
+                                AND wi.is_deleted = 0
+                            )
+                            OR (
+                                wi.is_serialized = 0
+                                AND wi.returnable_on_removal = 1
+                            )
+                      )
                     FOR UPDATE
                     """,
                     (request_id,)
@@ -2448,7 +2463,9 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                 direct_removal_rows = cursor.fetchall()
 
                 # 2. Оборудование, которое было установлено через старую заявку установки.
-                # У request_equipment нет is_active, поэтому активность определяем по warehouse_items.status = INSTALLED.
+                # Серийные устройства считаем активными по wi.status = INSTALLED.
+                # Возвратные расходники считаем по request_equipment, но защищаемся
+                # от повторного возврата через warehouse_item_movements.
                 cursor.execute(
                     """
                     SELECT
@@ -2463,13 +2480,17 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                         re.warehouse_item_id,
                         re.quantity,
 
+                        wi.category,
                         wi.name,
+                        wi.manufacturer,
                         wi.model,
                         wi.identifier_type,
                         wi.identifier_value,
+                        wi.serial_number,
                         wi.is_serialized,
                         wi.status AS warehouse_status,
                         wi.condition_status,
+                        wi.returnable_on_removal,
                         wi.city_id,
 
                         v.brand,
@@ -2489,9 +2510,24 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                     LEFT JOIN vehicles v ON removal_rv.vehicle_id = v.id
                     WHERE removal_rv.request_id = %s
                       AND re.request_id <> %s
-                      AND wi.is_deleted = 0
-                      AND wi.is_serialized = 1
-                      AND wi.status = 'INSTALLED'
+                      AND source_r.work_type = 'INSTALLATION'
+                      AND (
+                            (
+                                wi.is_serialized = 1
+                                AND wi.is_deleted = 0
+                                AND wi.status = 'INSTALLED'
+                            )
+                            OR (
+                                wi.is_serialized = 0
+                                AND wi.returnable_on_removal = 1
+                                AND NOT EXISTS (
+                                    SELECT 1
+                                    FROM warehouse_item_movements wm
+                                    WHERE wm.request_equipment_id = re.id
+                                      AND wm.action = 'RETURNABLE_CONSUMABLE_RETURNED_AFTER_REMOVAL'
+                                )
+                            )
+                      )
                     ORDER BY re.attached_at DESC, re.id DESC
                     FOR UPDATE
                     """,
@@ -2508,16 +2544,35 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                     + list(request_source_removal_rows or [])
                 )
 
-                processed_warehouse_item_ids = set()
+                processed_keys = set()
                 removed_equipment_count = 0
+                returned_consumables_count = 0
 
                 for equipment_row in removal_equipment_rows:
                     warehouse_item_id = int(equipment_row["warehouse_item_id"])
+                    is_serialized = bool(equipment_row.get("is_serialized"))
+                    is_returnable_consumable = (
+                        not is_serialized
+                        and bool(equipment_row.get("returnable_on_removal"))
+                    )
 
-                    if warehouse_item_id in processed_warehouse_item_ids:
+                    if is_serialized:
+                        processed_key = ("SERIALIZED", warehouse_item_id)
+                    elif equipment_row.get("vehicle_equipment_link_id"):
+                        processed_key = (
+                            "DIRECT_CONSUMABLE",
+                            int(equipment_row["vehicle_equipment_link_id"])
+                        )
+                    else:
+                        processed_key = (
+                            "REQUEST_CONSUMABLE",
+                            int(equipment_row["source_request_equipment_id"])
+                        )
+
+                    if processed_key in processed_keys:
                         continue
 
-                    processed_warehouse_item_ids.add(warehouse_item_id)
+                    processed_keys.add(processed_key)
 
                     old_warehouse_status = equipment_row.get("warehouse_status")
                     old_condition_status = equipment_row.get("condition_status") or "NEW"
@@ -2540,6 +2595,10 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                             f" ({equipment_row.get('identifier_type')}: "
                             f"{equipment_row.get('identifier_value')})"
                         )
+                    elif equipment_row.get("serial_number"):
+                        item_title += f" (S/N: {equipment_row.get('serial_number')})"
+
+                    quantity = int(equipment_row.get("quantity") or 1)
 
                     # Если оборудование было привязано напрямую к авто — закрываем активную связь.
                     if equipment_row.get("vehicle_equipment_link_id"):
@@ -2559,20 +2618,133 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                             )
                         )
 
-                    # Серийное устройство возвращаем на склад и помечаем как БУ.
-                    cursor.execute(
-                        """
-                        UPDATE warehouse_items
-                        SET status = 'IN_STOCK',
-                            condition_status = 'USED',
-                            assigned_to_user_id = NULL,
-                            assigned_at = NULL,
-                            assigned_by = NULL,
-                            updated_at = NOW()
-                        WHERE id = %s
-                        """,
-                        (warehouse_item_id,)
-                    )
+                    if is_serialized:
+                        # Серийное устройство возвращаем на склад и помечаем как БУ.
+                        cursor.execute(
+                            """
+                            UPDATE warehouse_items
+                            SET status = 'IN_STOCK',
+                                condition_status = 'USED',
+                                assigned_to_user_id = NULL,
+                                assigned_at = NULL,
+                                assigned_by = NULL,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (warehouse_item_id,)
+                        )
+
+                        movement_warehouse_item_id = warehouse_item_id
+                        movement_action = "REMOVAL_COMPLETED_MARKED_USED"
+                        movement_old_status = old_warehouse_status
+                        movement_new_status = "IN_STOCK"
+                        movement_old_value = old_condition_status
+                        movement_new_value = "USED"
+                        movement_reason = (
+                            f"Оборудование снято с авто при завершении заявки на снятие. "
+                        )
+
+                        removed_equipment_count += 1
+
+                    elif is_returnable_consumable:
+                        # Возвратный расходник, например RELAY.
+                        # Важно: НЕ меняем condition_status у исходной строки,
+                        # потому что там могут остаться новые реле.
+                        # Возвращаем снятое количество в отдельную БУ-пачку.
+                        cursor.execute(
+                            """
+                            SELECT id, quantity
+                            FROM warehouse_items
+                            WHERE category = %s
+                              AND name = %s
+                              AND manufacturer <=> %s
+                              AND model <=> %s
+                              AND city_id = %s
+                              AND is_serialized = 0
+                              AND status = 'IN_STOCK'
+                              AND condition_status = 'USED'
+                              AND assigned_to_user_id IS NULL
+                              AND is_deleted = 0
+                            LIMIT 1
+                            FOR UPDATE
+                            """,
+                            (
+                                equipment_row.get("category"),
+                                equipment_row.get("name"),
+                                equipment_row.get("manufacturer"),
+                                equipment_row.get("model"),
+                                equipment_row.get("city_id"),
+                            )
+                        )
+
+                        used_bucket = cursor.fetchone()
+
+                        if used_bucket:
+                            returned_bucket_id = used_bucket["id"]
+
+                            cursor.execute(
+                                """
+                                UPDATE warehouse_items
+                                SET quantity = quantity + %s,
+                                    updated_at = NOW()
+                                WHERE id = %s
+                                """,
+                                (
+                                    quantity,
+                                    returned_bucket_id,
+                                )
+                            )
+                        else:
+                            cursor.execute(
+                                """
+                                INSERT INTO warehouse_items (
+                                    category,
+                                    name,
+                                    manufacturer,
+                                    model,
+                                    identifier_type,
+                                    identifier_value,
+                                    serial_number,
+                                    is_serialized,
+                                    quantity,
+                                    city_id,
+                                    status,
+                                    condition_status,
+                                    note,
+                                    created_by,
+                                    updated_at
+                                )
+                                VALUES (%s, %s, %s, %s, 'NONE', NULL, NULL, 0, %s, %s, 'IN_STOCK', 'USED', %s, %s, NOW())
+                                """,
+                                (
+                                    equipment_row.get("category"),
+                                    equipment_row.get("name"),
+                                    equipment_row.get("manufacturer"),
+                                    equipment_row.get("model"),
+                                    quantity,
+                                    equipment_row.get("city_id"),
+                                    f"Автоматически возвращено как БУ после снятия. Источник: warehouse_item_id={warehouse_item_id}",
+                                    current_user["id"],
+                                )
+                            )
+
+                            returned_bucket_id = cursor.lastrowid
+
+                        movement_warehouse_item_id = returned_bucket_id
+                        movement_action = "RETURNABLE_CONSUMABLE_RETURNED_AFTER_REMOVAL"
+                        movement_old_status = old_warehouse_status
+                        movement_new_status = "IN_STOCK"
+                        movement_old_value = f"source_item_id={warehouse_item_id}, condition={old_condition_status}"
+                        movement_new_value = f"returned_quantity={quantity}, condition=USED"
+                        movement_reason = (
+                            f"Возвратный расходник снят с авто и возвращён на склад как БУ. "
+                        )
+
+                        returned_consumables_count += quantity
+                        removed_equipment_count += quantity
+
+                    else:
+                        continue
 
                     cursor.execute(
                         """
@@ -2596,20 +2768,20 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
-                            warehouse_item_id,
-                            "REMOVAL_COMPLETED_MARKED_USED",
+                            movement_warehouse_item_id,
+                            movement_action,
                             equipment_row.get("city_id"),
                             equipment_row.get("city_id"),
                             request_id,
                             equipment_row.get("removal_request_vehicle_id"),
                             equipment_row.get("vehicle_id"),
                             equipment_row.get("source_request_equipment_id"),
-                            equipment_row.get("quantity") or 1,
-                            old_warehouse_status,
-                            "IN_STOCK",
-                            old_condition_status,
-                            "USED",
-                            f"Завершена заявка на снятие.",
+                            quantity,
+                            movement_old_status,
+                            movement_new_status,
+                            movement_old_value,
+                            movement_new_value,
+                            movement_reason,
                             current_user["id"],
                         )
                     )
@@ -2629,14 +2801,17 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                             request_id,
                             current_user["id"],
                             "REMOVAL_EQUIPMENT_DETACHED",
-                            f"{item_title}, status={old_warehouse_status}, condition={old_condition_status}",
+                            f"{item_title}, quantity={quantity}, status={old_warehouse_status}, condition={old_condition_status}",
                             f"Снято с авто и возвращено на склад как БУ.",
                         )
                     )
 
-                    removed_equipment_count += 1
-
                 if removed_equipment_count > 0:
+                    result_text = f"Снято и помечено как БУ: {removed_equipment_count} ед."
+
+                    if returned_consumables_count > 0:
+                        result_text += f" В том числе возвратных расходников: {returned_consumables_count} шт."
+
                     cursor.execute(
                         """
                         INSERT INTO request_history (
@@ -2653,7 +2828,7 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                             current_user["id"],
                             "REMOVAL_COMPLETED_EQUIPMENT_RESULT",
                             None,
-                            f"Снято и помечено как БУ: {removed_equipment_count} ед.",
+                            result_text,
                         )
                     )
 
