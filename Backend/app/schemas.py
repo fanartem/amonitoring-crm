@@ -157,6 +157,7 @@ class WarehouseItemCreate(BaseModel):
 
     city_id: int
 
+    condition_status: str | None = None
     note: str | None = None
 
 class WarehouseItemUpdate(BaseModel):
@@ -175,6 +176,7 @@ class WarehouseItemUpdate(BaseModel):
     city_id: Optional[int] = None
 
     status: str | None = None
+    condition_status: str | None = None
     note: str | None = None
 
 class WarehouseItemTransfer(BaseModel):
@@ -211,6 +213,7 @@ class WarehouseManualAddToUser(BaseModel):
     city_id: int
     target_user_id: int
 
+    condition_status: str | None = None
     note: str | None = None
     reason: str | None = None
 

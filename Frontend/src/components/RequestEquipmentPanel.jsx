@@ -27,6 +27,40 @@ const STATUSES = {
 	WRITTEN_OFF: 'Списано',
 }
 
+const normalizeConditionStatus = value => {
+	const normalized = String(value || '')
+		.trim()
+		.toUpperCase()
+
+	if (
+		['USED', 'БУ', 'Б/У', 'B/U', '1', 'TRUE', 'YES', 'Y', 'ДА'].includes(
+			normalized,
+		)
+	) {
+		return 'USED'
+	}
+
+	return 'NEW'
+}
+
+const isUsedItem = item => {
+	return normalizeConditionStatus(item?.condition_status) === 'USED'
+}
+
+const getConditionText = item => {
+	return isUsedItem(item) ? 'БУ' : ''
+}
+
+const renderConditionBadge = item => {
+	if (!isUsedItem(item)) return null
+
+	return (
+		<span className='equipment-condition-badge equipment-condition-badge-used'>
+			БУ
+		</span>
+	)
+}
+
 const getTokenPayload = () => {
 	try {
 		const token = localStorage.getItem('access_token')
@@ -102,9 +136,11 @@ const getItemOptionTitle = item => {
 	const identifier = getItemIdentifier(item)
 	const availableQuantity = getAvailableQuantity(item)
 	const source = getSourceLabel(item)
+	const conditionText = getConditionText(item)
 
 	const parts = [
 		CATEGORIES[item.category] || item.category,
+		conditionText,
 		getItemTitle(item),
 		identifier,
 		!item.is_serialized ? `доступно: ${availableQuantity}` : null,
@@ -680,6 +716,12 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 									</option>
 								))}
 							</select>
+
+							{selectedItem && isUsedItem(selectedItem) && (
+								<span className='equipment-field-hint equipment-used-hint'>
+									Выбрано БУ-оборудование
+								</span>
+							)}
 						</label>
 
 						{canManageEquipment && (
@@ -777,8 +819,14 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 												<div key={item.link_id} className='equipment-item'>
 													<div className='equipment-item-main'>
 														<div className='equipment-item-title'>
-															{CATEGORIES[item.category] || item.category} ·{' '}
-															{getItemTitle(item)}
+															<div className='equipment-item-title-line'>
+																<span>
+																	{CATEGORIES[item.category] || item.category} ·{' '}
+																	{getItemTitle(item)}
+																</span>
+
+																{renderConditionBadge(item)}
+															</div>
 														</div>
 
 														<div className='equipment-item-meta'>

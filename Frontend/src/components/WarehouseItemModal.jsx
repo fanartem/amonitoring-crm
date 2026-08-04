@@ -26,6 +26,11 @@ const STATUSES = {
 	WRITTEN_OFF: 'Списано',
 }
 
+const CONDITION_STATUSES = {
+	NEW: 'Новое',
+	USED: 'БУ',
+}
+
 export default function WarehouseItemModal({
 	isOpen,
 	onClose,
@@ -48,6 +53,7 @@ export default function WarehouseItemModal({
 		city_id: '',
 		note: '',
 		status: 'IN_STOCK',
+		condition_status: 'NEW',
 	})
 
 	const [loading, setLoading] = useState(false)
@@ -83,6 +89,7 @@ export default function WarehouseItemModal({
 				city_id: editItem.city_id || '',
 				note: editItem.note || '',
 				status: editItem.status || 'IN_STOCK',
+				condition_status: editItem.condition_status || 'NEW',
 			})
 		} else {
 			setFormData({
@@ -98,6 +105,7 @@ export default function WarehouseItemModal({
 				city_id: cities[0]?.id || '',
 				note: '',
 				status: 'IN_STOCK',
+				condition_status: 'NEW',
 			})
 		}
 
@@ -182,6 +190,7 @@ export default function WarehouseItemModal({
 				...(!isEditMode || formData.is_serialized
 					? { city_id: Number(formData.city_id) }
 					: {}),
+				condition_status: formData.condition_status || 'NEW',
 				note: formData.note.trim() || null,
 				...(isEditMode && !isLinkedToRequest && { status: formData.status }),
 			}
@@ -341,6 +350,31 @@ export default function WarehouseItemModal({
 											между городами.
 										</span>
 									)}
+								</label>
+							</div>
+
+							<div className='warehouse-form-grid warehouse-inner-grid'>
+								<label className='warehouse-field'>
+									<span className='warehouse-label required'>Состояние</span>
+
+									<select
+										className='warehouse-input'
+										name='condition_status'
+										value={formData.condition_status}
+										onChange={handleChange}
+									>
+										{Object.entries(CONDITION_STATUSES).map(([key, label]) => (
+											<option key={key} value={key}>
+												{label}
+											</option>
+										))}
+									</select>
+
+									<span className='warehouse-field-hint'>
+										Выберите БУ, если оборудование уже было в эксплуатации. При
+										снятии оборудования через заявку состояние станет БУ
+										автоматически.
+									</span>
 								</label>
 							</div>
 

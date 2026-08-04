@@ -16,6 +16,36 @@ const CATEGORIES = {
 	OTHER: 'Другое',
 }
 
+const normalizeConditionStatus = value => {
+	const normalized = String(value || '')
+		.trim()
+		.toUpperCase()
+
+	if (
+		['USED', 'БУ', 'Б/У', 'B/U', '1', 'TRUE', 'YES', 'Y', 'ДА'].includes(
+			normalized,
+		)
+	) {
+		return 'USED'
+	}
+
+	return 'NEW'
+}
+
+const isUsedItem = item => {
+	return normalizeConditionStatus(item?.condition_status) === 'USED'
+}
+
+const renderConditionBadge = item => {
+	if (!isUsedItem(item)) return null
+
+	return (
+		<span className='warehouse-condition-badge warehouse-condition-badge-used'>
+			БУ
+		</span>
+	)
+}
+
 const isSerializedItem = item => {
 	return item?.is_serialized === true || Number(item?.is_serialized) === 1
 }
@@ -403,8 +433,9 @@ export default function AttachEquipmentToVehicleModal({
 
 								{selectedWarehouseItem ? (
 									<div className='attach-selected-card'>
-										<div className='attach-selected-title'>
-											{getItemTitle(selectedWarehouseItem)}
+										<div className='attach-selected-title warehouse-item-name-line'>
+											<span>{getItemTitle(selectedWarehouseItem)}</span>
+											{renderConditionBadge(selectedWarehouseItem)}
 										</div>
 
 										<div className='attach-selected-meta'>
@@ -464,8 +495,9 @@ export default function AttachEquipmentToVehicleModal({
 														className='attach-result-item'
 														onClick={() => handleSelectWarehouseItem(item)}
 													>
-														<div className='attach-result-title'>
-															{getItemTitle(item)}
+														<div className='attach-result-title warehouse-item-name-line'>
+															<span>{getItemTitle(item)}</span>
+															{renderConditionBadge(item)}
 														</div>
 
 														<div className='attach-result-meta'>

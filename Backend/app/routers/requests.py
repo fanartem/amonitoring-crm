@@ -1766,6 +1766,12 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                 if data.status not in ["NEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"]:
                     raise HTTPException(status_code=400, detail="Некорректный статус заявки")
 
+                if data.status == "COMPLETED":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Завершение заявки выполняется только через /requests/{id}/complete"
+                    )
+
                 if current_user["role"] not in [ADMIN, ROP]:
                     allowed = ALLOWED_TRANSITIONS.get(req["status"], [])
 
@@ -2331,7 +2337,7 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, status, assigned_to, is_deleted
+                SELECT id, work_type, status, assigned_to, is_deleted
                 FROM requests
                 WHERE id = %s
                 """,
@@ -2394,6 +2400,262 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                 """,
                 (request_id,)
             )
+
+            if req.get("work_type") == "REMOVAL":
+                # 1. Оборудование, привязанное напрямую к авто через vehicle_equipment.
+                cursor.execute(
+                    """
+                    SELECT
+                        ve.id AS vehicle_equipment_link_id,
+                        NULL AS source_request_equipment_id,
+                        NULL AS source_request_id,
+                        NULL AS source_request_vehicle_id,
+
+                        rv.id AS removal_request_vehicle_id,
+                        rv.vehicle_id,
+
+                        ve.warehouse_item_id,
+                        ve.quantity,
+
+                        wi.name,
+                        wi.model,
+                        wi.identifier_type,
+                        wi.identifier_value,
+                        wi.is_serialized,
+                        wi.status AS warehouse_status,
+                        wi.condition_status,
+                        wi.city_id,
+
+                        v.brand,
+                        v.model AS vehicle_model,
+                        v.plate_number,
+                        v.vin
+                    FROM request_vehicles rv
+                    INNER JOIN vehicle_equipment ve
+                        ON ve.vehicle_id = rv.vehicle_id
+                       AND ve.is_active = 1
+                    INNER JOIN warehouse_items wi
+                        ON wi.id = ve.warehouse_item_id
+                    LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+                    WHERE rv.request_id = %s
+                      AND wi.is_deleted = 0
+                      AND wi.is_serialized = 1
+                    FOR UPDATE
+                    """,
+                    (request_id,)
+                )
+
+                direct_removal_rows = cursor.fetchall()
+
+                # 2. Оборудование, которое было установлено через старую заявку установки.
+                # У request_equipment нет is_active, поэтому активность определяем по warehouse_items.status = INSTALLED.
+                cursor.execute(
+                    """
+                    SELECT
+                        NULL AS vehicle_equipment_link_id,
+                        re.id AS source_request_equipment_id,
+                        re.request_id AS source_request_id,
+                        re.request_vehicle_id AS source_request_vehicle_id,
+
+                        removal_rv.id AS removal_request_vehicle_id,
+                        removal_rv.vehicle_id,
+
+                        re.warehouse_item_id,
+                        re.quantity,
+
+                        wi.name,
+                        wi.model,
+                        wi.identifier_type,
+                        wi.identifier_value,
+                        wi.is_serialized,
+                        wi.status AS warehouse_status,
+                        wi.condition_status,
+                        wi.city_id,
+
+                        v.brand,
+                        v.model AS vehicle_model,
+                        v.plate_number,
+                        v.vin
+                    FROM request_vehicles removal_rv
+                    INNER JOIN request_vehicles source_rv
+                        ON source_rv.vehicle_id = removal_rv.vehicle_id
+                    INNER JOIN request_equipment re
+                        ON re.request_vehicle_id = source_rv.id
+                    INNER JOIN requests source_r
+                        ON source_r.id = re.request_id
+                       AND source_r.is_deleted = 0
+                    INNER JOIN warehouse_items wi
+                        ON wi.id = re.warehouse_item_id
+                    LEFT JOIN vehicles v ON removal_rv.vehicle_id = v.id
+                    WHERE removal_rv.request_id = %s
+                      AND re.request_id <> %s
+                      AND wi.is_deleted = 0
+                      AND wi.is_serialized = 1
+                      AND wi.status = 'INSTALLED'
+                    ORDER BY re.attached_at DESC, re.id DESC
+                    FOR UPDATE
+                    """,
+                    (
+                        request_id,
+                        request_id,
+                    )
+                )
+
+                request_source_removal_rows = cursor.fetchall()
+
+                removal_equipment_rows = (
+                    list(direct_removal_rows or [])
+                    + list(request_source_removal_rows or [])
+                )
+
+                processed_warehouse_item_ids = set()
+                removed_equipment_count = 0
+
+                for equipment_row in removal_equipment_rows:
+                    warehouse_item_id = int(equipment_row["warehouse_item_id"])
+
+                    if warehouse_item_id in processed_warehouse_item_ids:
+                        continue
+
+                    processed_warehouse_item_ids.add(warehouse_item_id)
+
+                    old_warehouse_status = equipment_row.get("warehouse_status")
+                    old_condition_status = equipment_row.get("condition_status") or "NEW"
+
+                    vehicle_title = f"{equipment_row.get('brand') or ''} {equipment_row.get('vehicle_model') or ''}".strip()
+
+                    if equipment_row.get("plate_number"):
+                        vehicle_title += f" ({equipment_row.get('plate_number')})"
+
+                    if equipment_row.get("vin"):
+                        vehicle_title += f" VIN: {equipment_row.get('vin')}"
+
+                    item_title = equipment_row.get("name") or "Оборудование"
+
+                    if equipment_row.get("model"):
+                        item_title += f" {equipment_row.get('model')}"
+
+                    if equipment_row.get("identifier_value"):
+                        item_title += (
+                            f" ({equipment_row.get('identifier_type')}: "
+                            f"{equipment_row.get('identifier_value')})"
+                        )
+
+                    # Если оборудование было привязано напрямую к авто — закрываем активную связь.
+                    if equipment_row.get("vehicle_equipment_link_id"):
+                        cursor.execute(
+                            """
+                            UPDATE vehicle_equipment
+                            SET is_active = 0,
+                                detached_by = %s,
+                                detached_at = NOW(),
+                                detach_reason = %s
+                            WHERE id = %s
+                            """,
+                            (
+                                current_user["id"],
+                                f"Снято при завершении заявки #{request_id}",
+                                equipment_row["vehicle_equipment_link_id"],
+                            )
+                        )
+
+                    # Серийное устройство возвращаем на склад и помечаем как БУ.
+                    cursor.execute(
+                        """
+                        UPDATE warehouse_items
+                        SET status = 'IN_STOCK',
+                            condition_status = 'USED',
+                            assigned_to_user_id = NULL,
+                            assigned_at = NULL,
+                            assigned_by = NULL,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (warehouse_item_id,)
+                    )
+
+                    cursor.execute(
+                        """
+                        INSERT INTO warehouse_item_movements (
+                            warehouse_item_id,
+                            action,
+                            from_city_id,
+                            to_city_id,
+                            request_id,
+                            request_vehicle_id,
+                            vehicle_id,
+                            request_equipment_id,
+                            quantity,
+                            old_status,
+                            new_status,
+                            old_value,
+                            new_value,
+                            reason,
+                            created_by
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            warehouse_item_id,
+                            "REMOVAL_COMPLETED_MARKED_USED",
+                            equipment_row.get("city_id"),
+                            equipment_row.get("city_id"),
+                            request_id,
+                            equipment_row.get("removal_request_vehicle_id"),
+                            equipment_row.get("vehicle_id"),
+                            equipment_row.get("source_request_equipment_id"),
+                            equipment_row.get("quantity") or 1,
+                            old_warehouse_status,
+                            "IN_STOCK",
+                            old_condition_status,
+                            "USED",
+                            f"Завершена заявка на снятие.",
+                            current_user["id"],
+                        )
+                    )
+
+                    cursor.execute(
+                        """
+                        INSERT INTO request_history (
+                            request_id,
+                            user_id,
+                            action,
+                            old_value,
+                            new_value
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            request_id,
+                            current_user["id"],
+                            "REMOVAL_EQUIPMENT_DETACHED",
+                            f"{item_title}, status={old_warehouse_status}, condition={old_condition_status}",
+                            f"Снято с авто и возвращено на склад как БУ.",
+                        )
+                    )
+
+                    removed_equipment_count += 1
+
+                if removed_equipment_count > 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO request_history (
+                            request_id,
+                            user_id,
+                            action,
+                            old_value,
+                            new_value
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            request_id,
+                            current_user["id"],
+                            "REMOVAL_COMPLETED_EQUIPMENT_RESULT",
+                            None,
+                            f"Снято и помечено как БУ: {removed_equipment_count} ед.",
+                        )
+                    )
 
             cursor.execute(
                 """

@@ -2438,6 +2438,33 @@
 	background: #e0e7ff;
 }
 
+.warehouse-item-name-line {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	flex-wrap: wrap;
+}
+
+.warehouse-condition-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: fit-content;
+	padding: 2px 8px;
+	border-radius: 999px;
+	font-size: 10px;
+	font-weight: 900;
+	line-height: 1.2;
+	letter-spacing: 0.03em;
+	white-space: nowrap;
+}
+
+.warehouse-condition-badge-used {
+	background: #fff3cd;
+	color: #8a5a00;
+	border: 1px solid #f3c96b;
+}
+
 @media (max-width: 800px) {
 	.attach-equipment-grid {
 		grid-template-columns: 1fr;

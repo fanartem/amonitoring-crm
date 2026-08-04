@@ -137,6 +137,8 @@ export default function RequestDetailModal({
 
 	const canManageEquipment = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
 
+	const isRemovalRequest = request?.work_type === 'REMOVAL'
+
 	const canDecideScheduleApproval = ['ADMIN'].includes(userRole)
 
 	const isScheduleApprovalPending =
@@ -192,10 +194,13 @@ export default function RequestDetailModal({
 	}, [])
 
 	useEffect(() => {
-		if (userRole === 'TECH_SUPPORT' && activeTab === 'equipment') {
+		if (
+			activeTab === 'equipment' &&
+			(userRole === 'TECH_SUPPORT' || isRemovalRequest)
+		) {
 			setActiveTab('info')
 		}
-	}, [userRole, activeTab])
+	}, [userRole, activeTab, isRemovalRequest])
 
 	const fetchRequestDetails = async () => {
 		setLoading(true)
@@ -263,16 +268,28 @@ export default function RequestDetailModal({
 
 	const handleStatusChange = async e => {
 		const newStatus = e.target.value
+
 		try {
-			const res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
-				method: 'PATCH',
-				headers: getJsonAuthHeaders(),
-				body: JSON.stringify({ status: newStatus }),
-			})
+			let res
+
+			if (newStatus === 'COMPLETED') {
+				res = await fetch(`${API_BASE_URL}/requests/${requestId}/complete`, {
+					method: 'PATCH',
+					headers: getJsonAuthHeaders(),
+				})
+			} else {
+				res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
+					method: 'PATCH',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({ status: newStatus }),
+				})
+			}
+
 			if (!res.ok) {
 				const data = await res.json().catch(() => null)
 				throw new Error(data?.detail || 'Не удалось обновить статус')
 			}
+
 			setRequest({ ...request, status: newStatus })
 			fetchRequestDetails()
 			onUpdated()
@@ -566,6 +583,47 @@ export default function RequestDetailModal({
 			return `Отвязано оборудование: ${eq}`
 		}
 
+				if (h.action === 'REMOVAL_EQUIPMENT_DETACHED') {
+					const oldValue = String(h.old_value || '').trim()
+					const newValue = String(h.new_value || '').trim()
+
+					let equipmentText = oldValue
+					let resultText = newValue
+
+					// old_value сейчас приходит примерно так:
+					// "Teltonika FMC920 (IMEI: 123...), status=INSTALLED, condition=NEW"
+					equipmentText = equipmentText
+						.replace(/,\s*status=[^,]+/i, '')
+						.replace(/,\s*condition=[^,]+/i, '')
+						.trim()
+
+					// new_value сейчас приходит примерно так:
+					// "Снято с авто и возвращено на склад как БУ. Авто: Toyota Camry VIN: ..."
+					if (resultText.startsWith('Снято с авто')) {
+						resultText = resultText.replace(
+							'Снято с авто и возвращено на склад как БУ.',
+							'возвращено на склад как БУ.',
+						)
+					}
+
+					if (equipmentText && resultText) {
+						return `Снято оборудование: ${equipmentText} — ${resultText}`
+					}
+
+					return 'Оборудование снято с авто и возвращено на склад как БУ'
+				}
+
+				if (h.action === 'REMOVAL_COMPLETED_EQUIPMENT_RESULT') {
+					return (
+						h.new_value ||
+						'Снятие завершено: оборудование возвращено на склад как БУ'
+					)
+				}
+
+				if (h.action === 'REMOVAL_COMPLETED_MARKED_USED') {
+					return h.new_value || 'Оборудование помечено как БУ после снятия'
+				}
+
 		if (h.action === 'CLIENT_CHANGED') return 'Изменен клиент заявки'
 		if (h.action === 'VEHICLE_CHANGED') return 'Изменен автомобиль заявки'
 		if (h.action === 'CITY_CHANGED') return `Город изменен: ${h.new_value}`
@@ -638,7 +696,7 @@ export default function RequestDetailModal({
 					>
 						История
 					</button>
-					{userRole !== 'TECH_SUPPORT' && (
+					{userRole !== 'TECH_SUPPORT' && !isRemovalRequest && (
 						<button
 							className={`custom-tab ${activeTab === 'equipment' ? 'active' : ''}`}
 							onClick={() => setActiveTab('equipment')}
@@ -1195,14 +1253,16 @@ export default function RequestDetailModal({
 									</div>
 								)}
 
-								{activeTab === 'equipment' && userRole !== 'TECH_SUPPORT' && (
-									<div className='tab-content'>
-										<RequestEquipmentPanel
-											requestId={requestId}
-											vehicles={request.vehicles || []}
-										/>
-									</div>
-								)}
+								{activeTab === 'equipment' &&
+									userRole !== 'TECH_SUPPORT' &&
+									!isRemovalRequest && (
+										<div className='tab-content'>
+											<RequestEquipmentPanel
+												requestId={requestId}
+												vehicles={request.vehicles || []}
+											/>
+										</div>
+									)}
 							</>
 						)
 					)}

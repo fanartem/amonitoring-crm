@@ -42,6 +42,11 @@ const STATUS_COLORS = {
 	WRITTEN_OFF: '#c62828',
 }
 
+const CONDITION_STATUSES = {
+	NEW: 'Новое',
+	USED: 'БУ',
+}
+
 const HISTORY_ACTIONS = {
 	CREATED: 'Добавлено на склад',
 	UPDATED: 'Изменено',
@@ -58,7 +63,9 @@ const HISTORY_ACTIONS = {
 	IMPORT_CONSUMABLE_TRANSFERRED_IN: 'Расходник перенесён в город через импорт',
 
 	ATTACHED_TO_REQUEST: 'Привязано к заявке',
+	INSTALLED_FROM_TECH: 'Установлено монтажником',
 	DETACHED_FROM_REQUEST: 'Отвязано от заявки',
+	REMOVAL_COMPLETED_MARKED_USED: 'Снято по заявке и помечено как БУ',
 
 	INSTALLED_TO_VEHICLE_DIRECT: 'Привязано к авто напрямую',
 	CONSUMABLE_USED_TO_VEHICLE_DIRECT: 'Расходник привязан к авто напрямую',
@@ -637,6 +644,49 @@ export default function Warehouse() {
 		return `${type}:${value}`
 	}
 
+	const normalizeConditionStatus = value => {
+		const normalized = String(value || '')
+			.trim()
+			.toUpperCase()
+
+		if (
+			['USED', 'БУ', 'Б/У', 'B/U', '1', 'TRUE', 'YES', 'Y', 'ДА'].includes(
+				normalized,
+			)
+		) {
+			return 'USED'
+		}
+
+		return 'NEW'
+	}
+
+	const getConditionLabel = value => {
+		const conditionStatus = normalizeConditionStatus(value)
+		return CONDITION_STATUSES[conditionStatus] || conditionStatus
+	}
+
+	const isUsedItem = item => {
+		return normalizeConditionStatus(item?.condition_status) === 'USED'
+	}
+
+	const renderConditionBadge = item => {
+		if (!isUsedItem(item)) return null
+
+		return (
+			<span className='warehouse-condition-badge warehouse-condition-badge-used'>
+				БУ
+			</span>
+		)
+	}
+
+	const getImportConditionText = row => {
+		const conditionStatus = normalizeConditionStatus(row?.condition_status)
+
+		if (conditionStatus !== 'USED') return ''
+
+		return ' · БУ'
+	}
+
 	const readFileAsText = file => {
 		return new Promise((resolve, reject) => {
 			const reader = new FileReader()
@@ -754,6 +804,17 @@ export default function Warehouse() {
 			])
 			const quantity = getCsvValue(row, ['quantity', 'количество', 'кол-во'])
 
+			const conditionStatus = normalizeConditionStatus(
+				getCsvValue(row, [
+					'condition_status',
+					'состояние',
+					'статус_бу',
+					'бу',
+					'б/у',
+					'used',
+				]),
+			)
+
 			const isSerialized =
 				String(isSerializedRaw || '')
 					.trim()
@@ -776,6 +837,7 @@ export default function Warehouse() {
 				serial_number: serialNumber,
 				is_serialized: isSerialized,
 				quantity: quantity || '1',
+				condition_status: conditionStatus,
 			}
 
 			if (!name.trim()) {
@@ -894,7 +956,16 @@ export default function Warehouse() {
 							.trim()
 							.toLowerCase()
 
-					return sameCategory && sameName && sameManufacturer && sameModel
+					const sameCondition =
+						normalizeConditionStatus(item.condition_status) === conditionStatus
+
+					return (
+						sameCategory &&
+						sameName &&
+						sameManufacturer &&
+						sameModel &&
+						sameCondition
+					)
 				})
 
 				if (!sourceItem) {
@@ -1380,7 +1451,10 @@ export default function Warehouse() {
 			>
 				<td style={{ padding: '12px 15px' }}>
 					<div className='cell-value'>
-						<strong>{item.name}</strong>
+						<div className='warehouse-item-name-line'>
+							<strong>{item.name}</strong>
+							{renderConditionBadge(item)}
+						</div>
 
 						{item.model && (
 							<div style={{ fontSize: '12px', color: '#888' }}>
@@ -2017,6 +2091,7 @@ export default function Warehouse() {
 													<div className='import-preview-row-subtitle'>
 														{row.identifier_type}: {row.identifier_value || '—'}
 														{row.model ? ` · ${row.model}` : ''}
+														{getImportConditionText(row)}
 														{' · '}в город {importPreview.toCityName}
 													</div>
 												</div>
@@ -2049,6 +2124,7 @@ export default function Warehouse() {
 													</div>
 													<div className='import-preview-row-reason neutral'>
 														{row.reason}
+														{getImportConditionText(row)}
 													</div>
 												</div>
 											))}
@@ -2084,6 +2160,7 @@ export default function Warehouse() {
 
 														<div className='import-preview-row-subtitle'>
 															{row.reason}
+															{getImportConditionText(row)}
 														</div>
 
 														<label className='import-preview-quantity-field'>

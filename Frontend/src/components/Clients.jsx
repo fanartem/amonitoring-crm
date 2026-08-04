@@ -1420,40 +1420,68 @@ export default function Clients() {
 
 						if (!Array.isArray(equipment) || equipment.length === 0) return
 
-						equipment.forEach((item) => {
-							if (!item.vehicle_id) return
+						equipment
+							.filter(item => {
+								if (!item.vehicle_id) return false
+								if (item.warehouse_item_is_deleted) return false
 
-							if (!equipmentByVehicle[item.vehicle_id]) {
-								equipmentByVehicle[item.vehicle_id] = []
-							}
+								// В карточке авто клиента показываем только реально установленное оборудование.
+								// Историческое оборудование из старых заявок после снятия не показываем.
+								return item.status === 'INSTALLED'
+							})
+							.forEach(item => {
+								if (!equipmentByVehicle[item.vehicle_id]) {
+									equipmentByVehicle[item.vehicle_id] = []
+								}
 
-							const alreadyExists = equipmentByVehicle[item.vehicle_id].some(
-								(existing) => existing.link_id === item.link_id,
-							)
+								const alreadyExists = equipmentByVehicle[item.vehicle_id].some(
+									existing => existing.link_id === item.link_id,
+								)
 
-							if (!alreadyExists) {
-								equipmentByVehicle[item.vehicle_id].push({
-									...item,
-									request_id: req.id,
-									source_type: 'REQUEST',
-									source_key: `REQUEST-${item.link_id}`,
-								})
-							}
-						})
+								if (!alreadyExists) {
+									equipmentByVehicle[item.vehicle_id].push({
+										...item,
+										request_id: req.id,
+										source_type: 'REQUEST',
+										source_key: `REQUEST-${item.link_id}`,
+									})
+								}
+							})
 					} catch (err) {
 						console.error(`Ошибка загрузки оборудования заявки ${req.id}:`, err)
 					}
 				}),
 			)
 
-			setVehicleEquipmentMap((prev) => {
+			setVehicleEquipmentMap(prev => {
 				const next = { ...prev }
 
+				const vehicleIdsFromRequests = new Set()
+
+				requestsList.forEach(req => {
+					;(req.vehicles || []).forEach(vehicle => {
+						if (vehicle.vehicle_id) {
+							vehicleIdsFromRequests.add(String(vehicle.vehicle_id))
+						}
+					})
+				})
+
+				// Сначала убираем старые REQUEST-бейджи по машинам из заявок клиента.
+				// Иначе снятое оборудование останется в state, даже если новый ответ его уже не вернул.
+				vehicleIdsFromRequests.forEach(vehicleId => {
+					const currentItems = next[vehicleId] || []
+
+					next[vehicleId] = currentItems.filter(
+						item => item.source_type === 'DIRECT',
+					)
+				})
+
+				// Потом добавляем только актуальное request-оборудование со статусом INSTALLED.
 				Object.entries(equipmentByVehicle).forEach(
 					([vehicleId, requestEquipment]) => {
 						const currentItems = next[vehicleId] || []
 						const directItems = currentItems.filter(
-							(item) => item.source_type === 'DIRECT',
+							item => item.source_type === 'DIRECT',
 						)
 
 						next[vehicleId] = [...directItems, ...requestEquipment]

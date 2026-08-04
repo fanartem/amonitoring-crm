@@ -83,6 +83,11 @@ ALLOWED_STATUSES = [
     "WRITTEN_OFF",
 ]
 
+ALLOWED_CONDITION_STATUSES = [
+    "NEW",
+    "USED",
+]
+
 def require_warehouse_full_read(current_user: dict):
     if current_user["role"] not in WAREHOUSE_FULL_READ_ROLES:
         raise HTTPException(
@@ -258,6 +263,8 @@ def validate_warehouse_item(data: dict):
     is_serialized = data.get("is_serialized", True)
     quantity = data.get("quantity", 1)
     city_id = data.get("city_id")
+    condition_status = normalize_condition_status(data.get("condition_status"))
+    data["condition_status"] = condition_status
 
     if category is not None and category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=400, detail="Некорректная категория оборудования")
@@ -307,6 +314,23 @@ def parse_bool(value):
         return False
 
     raise HTTPException(status_code=400, detail=f"Некорректное boolean значение: {value}")
+
+def normalize_condition_status(value):
+    if value is None:
+        return "NEW"
+
+    value = str(value).strip().upper()
+
+    if value in ["", "NEW", "НОВОЕ", "НОВЫЙ", "НОВАЯ", "0", "FALSE", "NO", "N", "НЕТ"]:
+        return "NEW"
+
+    if value in ["USED", "БУ", "Б/У", "B/U", "БЫВШЕЕ", "БЫВШИЙ", "1", "TRUE", "YES", "Y", "ДА"]:
+        return "USED"
+
+    raise HTTPException(
+        status_code=400,
+        detail="Некорректное состояние оборудования. Допустимо: пусто/NEW/Новое или USED/БУ"
+    )
 
 def parse_int(value, default=0):
     if value is None or str(value).strip() == "":
@@ -446,6 +470,7 @@ def find_consumable_in_city(cursor, item: dict, city_id: int):
           AND LOWER(TRIM(name)) = LOWER(TRIM(%s))
           AND COALESCE(LOWER(TRIM(manufacturer)), '') = COALESCE(LOWER(TRIM(%s)), '')
           AND COALESCE(LOWER(TRIM(model)), '') = COALESCE(LOWER(TRIM(%s)), '')
+          AND condition_status = %s
           AND city_id = %s
         LIMIT 1
         """,
@@ -454,6 +479,7 @@ def find_consumable_in_city(cursor, item: dict, city_id: int):
             item.get("name"),
             item.get("manufacturer"),
             item.get("model"),
+            normalize_condition_status(item.get("condition_status")),
             city_id,
         )
     )
@@ -525,6 +551,7 @@ def find_assigned_consumable_for_user(
           AND LOWER(TRIM(name)) = LOWER(TRIM(%s))
           AND COALESCE(LOWER(TRIM(manufacturer)), '') = COALESCE(LOWER(TRIM(%s)), '')
           AND COALESCE(LOWER(TRIM(model)), '') = COALESCE(LOWER(TRIM(%s)), '')
+          AND condition_status = %s
           AND city_id = %s
         LIMIT 1
         """,
@@ -534,6 +561,7 @@ def find_assigned_consumable_for_user(
             item.get("name"),
             item.get("manufacturer"),
             item.get("model"),
+            normalize_condition_status(item.get("condition_status")),
             city_id,
         )
     )
@@ -650,6 +678,7 @@ def fetch_inventory_rows(
             wi.assigned_at,
             assigned_by_user.name AS assigned_by_name,
             wi.status,
+            wi.condition_status,
             wi.note,
             wi.created_at,
             wi.updated_at,
@@ -992,10 +1021,11 @@ def assign_warehouse_item_to_user(
                         assigned_at,
                         assigned_by,
                         status,
+                        condition_status,
                         note,
                         created_by
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s)
                     """,
                     (
                         item["category"],
@@ -1011,6 +1041,7 @@ def assign_warehouse_item_to_user(
                         data.target_user_id,
                         current_user["id"],
                         "ASSIGNED_TO_TECH",
+                        normalize_condition_status(item.get("condition_status")),
                         item.get("note"),
                         current_user["id"],
                     )
@@ -1211,10 +1242,11 @@ def return_inventory_item_to_stock(
                         quantity,
                         city_id,
                         status,
+                        condition_status,
                         note,
                         created_by
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item["category"],
@@ -1228,6 +1260,7 @@ def return_inventory_item_to_stock(
                         data.quantity,
                         data.city_id,
                         "IN_STOCK",
+                        normalize_condition_status(item.get("condition_status")),
                         item.get("note"),
                         current_user["id"],
                     )
@@ -1320,6 +1353,8 @@ def manual_add_item_to_user_inventory(
 
     validate_warehouse_item(item_data)
 
+    condition_status = normalize_condition_status(item_data.get("condition_status"))
+
     connection = get_connection()
 
     try:
@@ -1360,10 +1395,11 @@ def manual_add_item_to_user_inventory(
                         assigned_at,
                         assigned_by,
                         status,
+                        condition_status,
                         note,
                         created_by
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s)
                     """,
                     (
                         data.category,
@@ -1379,6 +1415,7 @@ def manual_add_item_to_user_inventory(
                         data.target_user_id,
                         current_user["id"],
                         "ASSIGNED_TO_TECH",
+                        condition_status,
                         data.note,
                         current_user["id"],
                     )
@@ -1417,6 +1454,7 @@ def manual_add_item_to_user_inventory(
                 "name": data.name,
                 "manufacturer": data.manufacturer,
                 "model": data.model,
+                "condition_status": condition_status,
             }
 
             target_item = find_assigned_consumable_for_user(
@@ -1456,10 +1494,11 @@ def manual_add_item_to_user_inventory(
                         assigned_at,
                         assigned_by,
                         status,
+                        condition_status,
                         note,
                         created_by
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s)
                     """,
                     (
                         data.category,
@@ -1475,6 +1514,7 @@ def manual_add_item_to_user_inventory(
                         data.target_user_id,
                         current_user["id"],
                         "ASSIGNED_TO_TECH",
+                        condition_status,
                         data.note,
                         current_user["id"],
                     )
@@ -1679,10 +1719,11 @@ def transfer_inventory_item(
                             assigned_at,
                             assigned_by,
                             status,
+                            condition_status,
                             note,
                             created_by
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s)
                         """,
                         (
                             item["category"],
@@ -1698,6 +1739,7 @@ def transfer_inventory_item(
                             data.target_user_id,
                             current_user["id"],
                             "ASSIGNED_TO_TECH",
+                            normalize_condition_status(item.get("condition_status")),
                             item.get("note"),
                             current_user["id"],
                         )
@@ -1790,7 +1832,7 @@ def transfer_inventory_item(
                         assigned_to_user_id = NULL,
                         assigned_at = NULL,
                         assigned_by = NULL,
-                        updated_at = NOW()
+                        updated_at = NOW(),
                     WHERE id = %s
                     """,
                     (
@@ -1865,10 +1907,11 @@ def transfer_inventory_item(
                         quantity,
                         city_id,
                         status,
+                        condition_status,
                         note,
                         created_by
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item["category"],
@@ -1882,6 +1925,7 @@ def transfer_inventory_item(
                         data.quantity,
                         data.to_city_id,
                         "IN_STOCK",
+                        normalize_condition_status(item.get("condition_status")),
                         item.get("note"),
                         current_user["id"],
                     )
@@ -2056,6 +2100,7 @@ def download_warehouse_template(current_user: dict = Depends(get_current_user)):
         "serial_number",
         "is_serialized",
         "quantity",
+        "condition_status",
         "note"
     ])
 
@@ -2069,6 +2114,7 @@ def download_warehouse_template(current_user: dict = Depends(get_current_user)):
         "",
         "true",
         "1",
+        "",
         "Основной GPS-трекер"
     ])
 
@@ -2082,6 +2128,7 @@ def download_warehouse_template(current_user: dict = Depends(get_current_user)):
         "",
         "true",
         "1",
+        "БУ",
         "BLE-датчик"
     ])
 
@@ -2095,6 +2142,7 @@ def download_warehouse_template(current_user: dict = Depends(get_current_user)):
         "",
         "false",
         "50",
+        "",
         "Расходник"
     ])
 
@@ -2223,6 +2271,8 @@ async def import_warehouse_items(
 
                     note = (row.get("note") or "").strip() or None
 
+                    condition_status = normalize_condition_status(row.get("condition_status"))
+
                     if not name:
                         raise HTTPException(status_code=400, detail="name обязателен")
 
@@ -2235,6 +2285,7 @@ async def import_warehouse_items(
                         "identifier_value": identifier_value,
                         "serial_number": serial_number,
                         "is_serialized": is_serialized,
+                        "condition_status": condition_status,
                         "quantity": quantity,
                         "city_id": to_city_id,
                         "note": note,
@@ -2341,10 +2392,11 @@ async def import_warehouse_items(
                                 quantity,
                                 city_id,
                                 status,
+                                condition_status,
                                 note,
                                 created_by
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 category,
@@ -2358,6 +2410,7 @@ async def import_warehouse_items(
                                 1,
                                 to_city_id,
                                 "IN_STOCK",
+                                condition_status,
                                 note,
                                 current_user["id"],
                             )
@@ -2387,6 +2440,7 @@ async def import_warehouse_items(
                         "name": name,
                         "manufacturer": manufacturer,
                         "model": model,
+                        "condition_status": condition_status,
                     }
 
                     if from_city_id == to_city_id:
@@ -2423,10 +2477,11 @@ async def import_warehouse_items(
                                     quantity,
                                     city_id,
                                     status,
+                                    condition_status,
                                     note,
                                     created_by
                                 )
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """,
                                 (
                                     category,
@@ -2440,6 +2495,7 @@ async def import_warehouse_items(
                                     quantity,
                                     to_city_id,
                                     "IN_STOCK",
+                                    condition_status,
                                     note,
                                     current_user["id"],
                                 )
@@ -2524,10 +2580,11 @@ async def import_warehouse_items(
                                 quantity,
                                 city_id,
                                 status,
+                                condition_status,
                                 note,
                                 created_by
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 category,
@@ -2541,6 +2598,7 @@ async def import_warehouse_items(
                                 quantity,
                                 to_city_id,
                                 "IN_STOCK",
+                                condition_status,
                                 note,
                                 current_user["id"],
                             )
@@ -2655,6 +2713,7 @@ def get_warehouse_items_grouped(
                 wi.city_id,
                 city.name AS city_name,
                 wi.status,
+                wi.condition_status,
                 wi.note,
                 wi.created_at,
                 wi.updated_at,
@@ -2888,6 +2947,7 @@ def get_warehouse_items(
                 wi.city_id,
                 city.name AS city_name,
                 wi.status,
+                wi.condition_status,
                 wi.note,
                 wi.created_at,
                 wi.updated_at,
@@ -3065,6 +3125,7 @@ def create_warehouse_item(
 
     item_data = data.dict()
     validate_warehouse_item(item_data)
+    condition_status = normalize_condition_status(item_data.get("condition_status"))
 
     connection = get_connection()
     try:
@@ -3078,6 +3139,7 @@ def create_warehouse_item(
                     FROM warehouse_items
                     WHERE identifier_type = %s
                     AND identifier_value = %s
+                    AND is_deleted = 0
                     """,
                     (data.identifier_type, data.identifier_value)
                 )
@@ -3102,10 +3164,11 @@ def create_warehouse_item(
                 quantity,
                 city_id,
                 status,
+                condition_status,
                 note,
                 created_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
             cursor.execute(sql, (
@@ -3120,6 +3183,7 @@ def create_warehouse_item(
                 data.quantity,
                 data.city_id,
                 "IN_STOCK",
+                condition_status,
                 data.note,
                 current_user["id"],
             ))
@@ -3196,6 +3260,11 @@ def update_warehouse_item(
             if "status" in update_data and update_data["status"] not in ALLOWED_STATUSES:
                 raise HTTPException(status_code=400, detail="Некорректный статус оборудования")
 
+            if "condition_status" in update_data:
+                update_data["condition_status"] = normalize_condition_status(
+                    update_data.get("condition_status")
+                )
+            
             status_is_really_changed = (
                 "status" in update_data
                 and str(update_data["status"]) != str(item.get("status"))
@@ -3315,8 +3384,9 @@ def update_warehouse_item(
                         SELECT id
                         FROM warehouse_items
                         WHERE identifier_type = %s
-                        AND identifier_value = %s
-                        AND id != %s
+                            AND identifier_value = %s
+                            AND id != %s
+                            AND is_deleted = 0
                         """,
                         (identifier_type, identifier_value, item_id)
                     )
@@ -3340,6 +3410,7 @@ def update_warehouse_item(
                 "quantity",
                 "city_id",
                 "status",
+                "condition_status",
                 "note",
             ]
 
@@ -3612,10 +3683,11 @@ def transfer_warehouse_item(
                         quantity,
                         city_id,
                         status,
+                        condition_status,
                         note,
                         created_by
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item["category"],
@@ -3629,6 +3701,7 @@ def transfer_warehouse_item(
                         data.quantity,
                         data.to_city_id,
                         "IN_STOCK",
+                        normalize_condition_status(item.get("condition_status")),
                         item["note"],
                         current_user["id"],
                     )
@@ -3792,6 +3865,7 @@ def get_deleted_warehouse_items(current_user: dict = Depends(get_current_user)):
                 wi.city_id,
                 city.name AS city_name,
                 wi.status,
+                wi.condition_status,
                 wi.note,
                 wi.deleted_at,
                 wi.deleted_by,
@@ -3946,6 +4020,7 @@ def get_request_equipment(
                     wi.serial_number,
                     wi.is_serialized,
                     wi.status,
+                    wi.condition_status,
 
                     rv.vehicle_id,
                     v.brand,
@@ -4071,6 +4146,7 @@ def get_available_equipment_for_vehicle_attach(
                     wi.city_id,
                     city.name AS city_name,
                     wi.status,
+                    wi.condition_status,
                     wi.note,
 
                     CASE
@@ -4191,6 +4267,7 @@ def get_vehicle_equipment(
                     wi.serial_number,
                     wi.is_serialized,
                     wi.status,
+                    wi.condition_status,
                     wi.is_deleted AS warehouse_item_is_deleted,
 
                     v.brand,
@@ -4207,9 +4284,11 @@ def get_vehicle_equipment(
                 LEFT JOIN vehicles v ON ve.vehicle_id = v.id
                 LEFT JOIN users u ON ve.attached_by = u.id
                 LEFT JOIN cities city ON wi.city_id = city.id
-                WHERE ve.vehicle_id = %s
-                  AND ve.is_active = 1
-                ORDER BY ve.attached_at DESC
+                WHERE rv.vehicle_id = %s
+                    AND r.is_deleted = 0
+                    AND wi.is_deleted = 0
+                    AND wi.status = 'INSTALLED'
+                ORDER BY re.attached_at DESC
                 """,
                 (vehicle_id,)
             )
@@ -4239,6 +4318,7 @@ def get_vehicle_equipment(
                     wi.serial_number,
                     wi.is_serialized,
                     wi.status,
+                    wi.condition_status,
                     wi.is_deleted AS warehouse_item_is_deleted,
 
                     v.brand,
@@ -5187,6 +5267,7 @@ def get_available_inventory_for_request_vehicle(
                     wi.city_id,
                     city.name AS city_name,
                     wi.status,
+                    wi.condition_status,
                     wi.note,
 
                     wi.assigned_to_user_id,
@@ -5726,6 +5807,7 @@ def get_request_vehicle_equipment(
                     wi.serial_number,
                     wi.is_serialized,
                     wi.status,
+                    wi.condition_status,
 
                     u.name AS attached_by_name
                 FROM request_equipment re
