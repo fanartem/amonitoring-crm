@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders } from '../api'
 import '../styles/Requests.css'
 import '../styles/Reports.css'
@@ -63,7 +63,7 @@ const MONTH_NAMES = [
 	'дек',
 ]
 
-const pad2 = n => String(n).padStart(2, '0')
+const pad2 = (n) => String(n).padStart(2, '0')
 
 // created_at — единственная надёжная дата на заявке (бэкенд не хранит
 // completed_at/cancelled_at на самой строке), поэтому весь тайм-ряд строится
@@ -103,7 +103,75 @@ const formatPeriodLabel = (key, granularity) => {
 	return granularity === 'week' ? `с ${shortLabel}` : shortLabel
 }
 
-const getClientDisplayName = req => {
+// Диапазон "текущего" периода для сравнения с прошлым: если заданы явные
+// даты фильтра — берём их, иначе — текущая календарная неделя/месяц
+// (по сегодняшней дате).
+const getCurrentPeriodRange = (granularity, filters) => {
+	if (filters.date_from || filters.date_to) {
+		const from = filters.date_from ? new Date(filters.date_from) : null
+		if (from) from.setHours(0, 0, 0, 0)
+
+		const to = filters.date_to ? new Date(filters.date_to) : new Date()
+		to.setHours(23, 59, 59, 999)
+
+		return { from, to }
+	}
+
+	const now = new Date()
+
+	if (granularity === 'month') {
+		const from = new Date(now.getFullYear(), now.getMonth(), 1)
+		const to = new Date(
+			now.getFullYear(),
+			now.getMonth() + 1,
+			0,
+			23,
+			59,
+			59,
+			999,
+		)
+		return { from, to }
+	}
+
+	const day = now.getDay() || 7
+	const monday = new Date(now)
+	monday.setHours(0, 0, 0, 0)
+	monday.setDate(now.getDate() - day + 1)
+
+	const sunday = new Date(monday)
+	sunday.setDate(monday.getDate() + 6)
+	sunday.setHours(23, 59, 59, 999)
+
+	return { from: monday, to: sunday }
+}
+
+// Предыдущий период той же длины (для месяца — предыдущий календарный месяц,
+// чтобы не путаться с разным числом дней в месяцах).
+const getPreviousPeriodRange = ({ from, to }, granularity) => {
+	if (!from) return { from: null, to: null }
+
+	if (granularity === 'month') {
+		const prevFrom = new Date(from.getFullYear(), from.getMonth() - 1, 1)
+		const prevTo = new Date(
+			from.getFullYear(),
+			from.getMonth(),
+			0,
+			23,
+			59,
+			59,
+			999,
+		)
+		return { from: prevFrom, to: prevTo }
+	}
+
+	const durationMs = to.getTime() - from.getTime()
+	const prevTo = new Date(from.getTime() - 1)
+	const prevFrom = new Date(prevTo.getTime() - durationMs)
+
+	return { from: prevFrom, to: prevTo }
+}
+
+const getClientDisplayName = (req) => {
 	const clientType = req.client_type || req.type
 
 	if (clientType === 'TOO' || clientType === 'IP') {
@@ -113,9 +181,14 @@ const getClientDisplayName = req => {
 	return req.client_name || req.company_name || 'Без названия'
 }
 
-const getRequestExecutors = req => {
+// Единый "ключ" клиента для группировки/фильтра — не у всех старых заявок
+// есть client_id, поэтому подстраховываемся телефоном, а затем именем.
+const getClientKey = (req) =>
+	String(req.client_id ?? req.phone ?? getClientDisplayName(req))
+
+const getRequestExecutors = (req) => {
 	if (Array.isArray(req.executors) && req.executors.length > 0) {
-		return req.executors.map(executor => ({
+		return req.executors.map((executor) => ({
 			id: executor.user_id,
 			name: executor.user_name || `ID: ${executor.user_id}`,
 		}))
@@ -135,11 +208,11 @@ function BarList({ items, emptyLabel = 'Нет данных за период' }
 		return <div className='reports-empty'>{emptyLabel}</div>
 	}
 
-	const maxValue = Math.max(...items.map(item => item.count), 1)
+	const maxValue = Math.max(...items.map((item) => item.count), 1)
 
 	return (
 		<div className='reports-bar-list'>
-			{items.map(item => (
+			{items.map((item) => (
 				<div key={item.key} className='reports-bar-row'>
 					<div className='reports-bar-row-label' title={item.label}>
 						{item.label}
@@ -160,6 +233,94 @@ function BarList({ items, emptyLabel = 'Нет данных за период' }
 	)
 }
 
+// Раскрывающийся список: клик по монтажнику показывает, каким клиентам
+// и сколько раз он выполнял работы — не только общий счётчик.
+function TechnicianBreakdownList({
+	items,
+	emptyLabel = 'Нет данных за период',
+}) {
+	const [expandedKey, setExpandedKey] = useState(null)
+
+	if (items.length === 0) {
+		return <div className='reports-empty'>{emptyLabel}</div>
+	}
+
+	const maxValue = Math.max(...items.map((item) => item.count), 1)
+
+	return (
+		<div className='reports-bar-list'>
+			{items.map((item) => {
+				const isOpen = expandedKey === item.key
+				const maxClientValue = Math.max(
+					...item.clients.map((client) => client.count),
+					1,
+				)
+
+				return (
+					<div key={item.key} className='reports-tech-row'>
+						<button
+							type='button'
+							className={`reports-bar-row reports-tech-row-toggle ${
+								isOpen ? 'is-open' : ''
+							}`}
+							onClick={() => setExpandedKey(isOpen ? null : item.key)}
+							aria-expanded={isOpen}
+						>
+							<span className='reports-bar-row-label' title={item.label}>
+								<i className='fa-solid fa-chevron-right reports-tech-chevron'></i>
+								{item.label}
+							</span>
+
+							<span className='reports-bar-row-track'>
+								<span
+									className='reports-bar-row-fill'
+									style={{
+										width: `${Math.max((item.count / maxValue) * 100, 4)}%`,
+										background: item.color || '#2f6fed',
+									}}
+								/>
+							</span>
+
+							<span className='reports-bar-row-count'>{item.count}</span>
+						</button>
+
+						{isOpen && (
+							<div className='reports-tech-clients'>
+								{item.clients.map((client) => (
+									<div key={client.key} className='reports-tech-client-row'>
+										<span
+											className='reports-tech-client-label'
+											title={client.label}
+										>
+											{client.label}
+										</span>
+
+										<span className='reports-tech-client-track'>
+											<span
+												className='reports-tech-client-fill'
+												style={{
+													width: `${Math.max(
+														(client.count / maxClientValue) * 100,
+														4,
+													)}%`,
+												}}
+											/>
+										</span>
+
+										<span className='reports-tech-client-count'>
+											{client.count}
+										</span>
+									</div>
+								))}
+							</div>
+						)}
+					</div>
+				)
+			})}
+		</div>
+	)
+}
+
 // Столбчатый график заявок во времени — свой SVG, без внешних библиотек.
 function TimeSeriesChart({ data, color = '#5e9424' }) {
 	const [hoverIndex, setHoverIndex] = useState(null)
@@ -168,7 +329,7 @@ function TimeSeriesChart({ data, color = '#5e9424' }) {
 		return <div className='reports-empty'>Нет данных за выбранный период</div>
 	}
 
-	const maxCount = Math.max(...data.map(d => d.count), 1)
+	const maxCount = Math.max(...data.map((d) => d.count), 1)
 	const barWidth = 26
 	const gap = 12
 	const chartHeight = 170
@@ -182,7 +343,7 @@ function TimeSeriesChart({ data, color = '#5e9424' }) {
 				height={chartHeight + 36}
 				className='reports-chart-svg'
 			>
-				{[0, 0.25, 0.5, 0.75, 1].map(fraction => (
+				{[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
 					<line
 						key={fraction}
 						x1={0}
@@ -264,6 +425,100 @@ function TimeSeriesChart({ data, color = '#5e9424' }) {
 	)
 }
 
+// Поле поиска клиента с выпадающим списком совпадений — список клиентов
+// берём из уже загруженных заявок, отдельный запрос не нужен.
+function ClientAutocomplete({ clients, value, onChange }) {
+	const [query, setQuery] = useState('')
+	const [isOpen, setIsOpen] = useState(false)
+	const containerRef = useRef(null)
+
+	useEffect(() => {
+		if (!value) {
+			setQuery('')
+			return
+		}
+
+		const selected = clients.find((c) => c.key === value)
+		setQuery(selected ? selected.label : '')
+	}, [value, clients])
+
+	useEffect(() => {
+		const handleClickOutside = (e) => {
+			if (containerRef.current && !containerRef.current.contains(e.target)) {
+				setIsOpen(false)
+			}
+		}
+
+		document.addEventListener('click', handleClickOutside)
+		return () => document.removeEventListener('click', handleClickOutside)
+	}, [])
+
+	const filtered = clients
+		.filter((c) => {
+			const q = query.trim().toLowerCase()
+			if (!q) return true
+
+			return [c.label, c.phone]
+				.filter(Boolean)
+				.some((field) => String(field).toLowerCase().includes(q))
+		})
+		.slice(0, 50)
+
+	const handlePick = (client) => {
+		onChange(client.key)
+		setQuery(client.label)
+		setIsOpen(false)
+	}
+
+	const handleInputChange = (e) => {
+		const nextValue = e.target.value
+		setQuery(nextValue)
+		setIsOpen(true)
+
+		if (!nextValue.trim() && value) onChange('')
+	}
+
+	return (
+		<div className='reports-client-picker' ref={containerRef}>
+			<input
+				type='text'
+				className='reports-client-picker-input'
+				autoComplete='off'
+				placeholder='Все клиенты...'
+				value={query}
+				onFocus={() => setIsOpen(true)}
+				onChange={handleInputChange}
+			/>
+
+			{isOpen && (
+				<div className='reports-client-picker-dropdown'>
+					{filtered.length === 0 ? (
+						<div className='reports-client-picker-empty'>Ничего не найдено</div>
+					) : (
+						filtered.map((client) => (
+							<button
+								key={client.key}
+								type='button'
+								className='reports-client-picker-option'
+								onClick={() => handlePick(client)}
+							>
+								<span className='reports-client-picker-option-name'>
+									{client.label}
+								</span>
+								{client.phone && (
+									<span className='reports-client-picker-option-meta'>
+										{client.phone}
+									</span>
+								)}
+							</button>
+						))
+					)}
+				</div>
+			)}
+		</div>
+	)
+}
+
 export default function Reports() {
 	const userRole = getUserRole()
 
@@ -283,6 +538,7 @@ export default function Reports() {
 	const [granularity, setGranularity] = useState('day')
 
 	const [filters, setFilters] = useState({
+		client_key: '',
 		date_from: '',
 		date_to: '',
 		city: '',
@@ -329,11 +585,12 @@ export default function Reports() {
 		fetchCities()
 	}, [canViewReports])
 
-	const handleFilterChange = e =>
-		setFilters(prev => ({ ...prev, [e.target.name]: e.target.value }))
+	const handleFilterChange = (e) =>
+		setFilters((prev) => ({ ...prev, [e.target.name]: e.target.value }))
 
 	const resetFilters = () =>
 		setFilters({
+			client_key: '',
 			date_from: '',
 			date_to: '',
 			city: '',
@@ -341,40 +598,118 @@ export default function Reports() {
 			status: '',
 		})
 
-	const getFilterClassName = name =>
+	const getFilterClassName = (name) =>
 		filters[name] ? 'filter-input filter-active' : 'filter-input'
 
-	const getFilterSelectClassName = name =>
+	const getFilterSelectClassName = (name) =>
 		filters[name] ? 'filter-select filter-active' : 'filter-select'
 
 	const filteredRequests = useMemo(() => {
 		let result = requests
 
+		if (filters.client_key)
+			result = result.filter((r) => getClientKey(r) === filters.client_key)
+
 		if (filters.date_from) {
 			const from = new Date(filters.date_from)
 			from.setHours(0, 0, 0, 0)
-			result = result.filter(r => new Date(r.created_at) >= from)
+			result = result.filter((r) => new Date(r.created_at) >= from)
 		}
 
 		if (filters.date_to) {
 			const to = new Date(filters.date_to)
 			to.setHours(23, 59, 59, 999)
-			result = result.filter(r => new Date(r.created_at) <= to)
+			result = result.filter((r) => new Date(r.created_at) <= to)
 		}
 
-		if (filters.city) result = result.filter(r => r.city === filters.city)
+		if (filters.city) result = result.filter((r) => r.city === filters.city)
 		if (filters.work_type)
-			result = result.filter(r => r.work_type === filters.work_type)
+			result = result.filter((r) => r.work_type === filters.work_type)
 		if (filters.status)
-			result = result.filter(r => r.status === filters.status)
+			result = result.filter((r) => r.status === filters.status)
 
 		return result
 	}, [requests, filters])
 
+	// Список клиентов для автодополнения строим по полному набору заявок
+	// (не отфильтрованному) — иначе выбранный фильтр мог бы "спрятать" сам себя.
+	const clientOptions = useMemo(() => {
+		const map = new Map()
+
+		requests.forEach((r) => {
+			const key = getClientKey(r)
+
+			if (!map.has(key)) {
+				map.set(key, {
+					key,
+					label: getClientDisplayName(r),
+					phone: r.phone || '',
+				})
+			}
+		})
+
+		return [...map.values()].sort((a, b) =>
+			a.label.localeCompare(b.label, 'ru'),
+		)
+	}, [requests])
+
+	// Заявки с учётом всех фильтров, КРОМЕ дат — нужны отдельно, чтобы
+	// самим считать текущий/прошлый период для сравнения, а не то, что
+	// уже отфильтровано по датам в filteredRequests.
+	const requestsForComparison = useMemo(() => {
+		let result = requests
+
+		if (filters.client_key)
+			result = result.filter((r) => getClientKey(r) === filters.client_key)
+		if (filters.city) result = result.filter((r) => r.city === filters.city)
+		if (filters.work_type)
+			result = result.filter((r) => r.work_type === filters.work_type)
+		if (filters.status)
+			result = result.filter((r) => r.status === filters.status)
+
+		return result
+	}, [
+		requests,
+		filters.client_key,
+		filters.city,
+		filters.work_type,
+		filters.status,
+	])
+
+	// Сравнение с прошлым периодом — только для недельной/месячной группировки
+	// (для дней разница день-в-день слишком шумная на малых числах).
+	const periodComparison = useMemo(() => {
+		if (granularity === 'day') return null
+
+		const current = getCurrentPeriodRange(granularity, filters)
+		const previous = getPreviousPeriodRange(current, granularity)
+
+		const countInRange = (from, to) =>
+			requestsForComparison.filter((r) => {
+				const created = new Date(r.created_at)
+				if (Number.isNaN(created.getTime())) return false
+				if (from && created < from) return false
+				if (to && created > to) return false
+				return true
+			}).length
+
+		const currentCount = countInRange(current.from, current.to)
+		const previousCount = countInRange(previous.from, previous.to)
+
+		let deltaPercent = null
+		if (previousCount > 0) {
+			deltaPercent = Math.round(
+				((currentCount - previousCount) / previousCount) * 100,
+			)
+		}
+
+		return { currentCount, previousCount, deltaPercent }
+	}, [granularity, filters, requestsForComparison])
+
 	const summary = useMemo(() => {
 		const byStatus = { NEW: 0, IN_PROGRESS: 0, COMPLETED: 0, CANCELLED: 0 }
 
-		filteredRequests.forEach(r => {
+		filteredRequests.forEach((r) => {
 			if (byStatus[r.status] !== undefined) byStatus[r.status] += 1
 		})
 
@@ -396,13 +731,13 @@ export default function Reports() {
 	// это и есть фактически выполненные работы, а не все заявки подряд.
 	const workTypeBars = useMemo(() => {
 		const counts = {}
-		Object.keys(WORK_TYPE_META).forEach(key => {
+		Object.keys(WORK_TYPE_META).forEach((key) => {
 			counts[key] = 0
 		})
 
 		filteredRequests
-			.filter(r => r.status === 'COMPLETED')
-			.forEach(r => {
+			.filter((r) => r.status === 'COMPLETED')
+			.forEach((r) => {
 				if (counts[r.work_type] !== undefined) counts[r.work_type] += 1
 			})
 
@@ -422,7 +757,7 @@ export default function Reports() {
 	const timeSeries = useMemo(() => {
 		const buckets = {}
 
-		filteredRequests.forEach(r => {
+		filteredRequests.forEach((r) => {
 			const key = getPeriodKey(r.created_at, granularity)
 			if (!key) return
 			buckets[key] = (buckets[key] || 0) + 1
@@ -430,7 +765,7 @@ export default function Reports() {
 
 		return Object.keys(buckets)
 			.sort()
-			.map(key => ({
+			.map((key) => ({
 				key,
 				count: buckets[key],
 				label: formatPeriodLabel(key, granularity),
@@ -440,8 +775,8 @@ export default function Reports() {
 	const topClients = useMemo(() => {
 		const map = new Map()
 
-		filteredRequests.forEach(r => {
-			const key = r.client_id ?? r.phone ?? getClientDisplayName(r)
+		filteredRequests.forEach((r) => {
+			const key = getClientKey(r)
 
 			if (!map.has(key)) {
 				map.set(key, { key, label: getClientDisplayName(r), count: 0 })
@@ -453,16 +788,21 @@ export default function Reports() {
 		return [...map.values()]
 			.sort((a, b) => b.count - a.count)
 			.slice(0, 8)
-			.map(item => ({ ...item, color: '#5e9424' }))
+			.map((item) => ({ ...item, color: '#5e9424' }))
 	}, [filteredRequests])
 
+	// Для каждого монтажника — не только общий счётчик, но и разбивка:
+	// каким клиентам и сколько раз он выполнял работы (для раскрывающегося списка).
 	const topTechnicians = useMemo(() => {
 		const map = new Map()
 
 		filteredRequests
-			.filter(r => r.status === 'COMPLETED')
-			.forEach(r => {
-				getRequestExecutors(r).forEach(executor => {
+			.filter((r) => r.status === 'COMPLETED')
+			.forEach((r) => {
+				const clientKey = getClientKey(r)
+				const clientLabel = getClientDisplayName(r)
+
+				getRequestExecutors(r).forEach((executor) => {
 					if (executor.id == null) return
 
 					if (!map.has(executor.id)) {
@@ -470,17 +810,33 @@ export default function Reports() {
 							key: executor.id,
 							label: executor.name,
 							count: 0,
+							clients: new Map(),
 						})
 					}
 
-					map.get(executor.id).count += 1
+					const techEntry = map.get(executor.id)
+					techEntry.count += 1
+
+					if (!techEntry.clients.has(clientKey)) {
+						techEntry.clients.set(clientKey, {
+							key: clientKey,
+							label: clientLabel,
+							count: 0,
+						})
+					}
+
+					techEntry.clients.get(clientKey).count += 1
 				})
 			})
 
 		return [...map.values()]
 			.sort((a, b) => b.count - a.count)
 			.slice(0, 8)
-			.map(item => ({ ...item, color: '#2f6fed' }))
+			.map((item) => ({
+				...item,
+				color: '#2f6fed',
+				clients: [...item.clients.values()].sort((a, b) => b.count - a.count),
+			}))
 	}, [filteredRequests])
 
 	if (!canViewReports) {
@@ -507,12 +863,22 @@ export default function Reports() {
 			{userRole === 'MANAGER' && (
 				<div className='reports-scope-note'>
 					Отчёт построен по заявкам, доступным вашей роли: созданные вами и
-					заявки клиентов, где вы ответственный менеджер — не по всей
-					компании.
+					заявки клиентов, где вы ответственный менеджер — не по всей компании.
 				</div>
 			)}
 
 			<div className='filters-bar'>
+				<div className='filter-group filter-main'>
+					<label>Клиент</label>
+					<ClientAutocomplete
+						clients={clientOptions}
+						value={filters.client_key}
+						onChange={(value) =>
+							setFilters((prev) => ({ ...prev, client_key: value }))
+						}
+					/>
+				</div>
+
 				<div className='filter-group'>
 					<label>Дата создания от:</label>
 					<input
@@ -544,7 +910,7 @@ export default function Reports() {
 						onChange={handleFilterChange}
 					>
 						<option value=''>Все города</option>
-						{cities.map(city => (
+						{cities.map((city) => (
 							<option key={city.id} value={city.name}>
 								{city.name}
 							</option>
@@ -603,7 +969,7 @@ export default function Reports() {
 							<div className='reports-summary-label'>Всего заявок</div>
 						</div>
 
-						{statusBars.map(bar => (
+						{statusBars.map((bar) => (
 							<div key={bar.key} className='reports-summary-card'>
 								<div
 									className='reports-summary-value'
@@ -621,7 +987,7 @@ export default function Reports() {
 							<h3>Заявки во времени</h3>
 
 							<div className='reports-granularity-toggle'>
-								{GRANULARITY_OPTIONS.map(option => (
+								{GRANULARITY_OPTIONS.map((option) => (
 									<button
 										key={option.value}
 										type='button'
@@ -635,6 +1001,45 @@ export default function Reports() {
 								))}
 							</div>
 						</div>
+
+						{periodComparison && (
+							<div
+								className={`reports-period-delta ${
+									periodComparison.deltaPercent > 0
+										? 'is-up'
+										: periodComparison.deltaPercent < 0
+											? 'is-down'
+											: ''
+								}`}
+							>
+								<span className='reports-period-delta-count'>
+									{periodComparison.currentCount}{' '}
+									{granularity === 'month' ? 'в этом месяце' : 'на этой неделе'}
+								</span>
+
+								{periodComparison.deltaPercent === null ? (
+									<span className='reports-period-delta-note'>
+										нет данных за прошл
+										{granularity === 'month' ? 'ый месяц' : 'ую неделю'} для
+										сравнения
+									</span>
+								) : (
+									<span className='reports-period-delta-badge'>
+										<i
+											className={`fa-solid ${
+												periodComparison.deltaPercent >= 0
+													? 'fa-arrow-trend-up'
+													: 'fa-arrow-trend-down'
+											}`}
+										></i>
+										{periodComparison.deltaPercent > 0 ? '+' : ''}
+										{periodComparison.deltaPercent}% к прошл
+										{granularity === 'month' ? 'ому месяцу' : 'ой неделе'} (
+										{periodComparison.previousCount})
+									</span>
+								)}
+							</div>
+						)}
 
 						<TimeSeriesChart data={timeSeries} />
 					</div>
@@ -675,9 +1080,12 @@ export default function Reports() {
 						<div className='reports-card'>
 							<div className='reports-card-header'>
 								<h3>Монтажники и кол-во выполненных заявок</h3>
+								<span className='reports-card-header-note'>
+									клик — какому клиенту и сколько раз
+								</span>
 							</div>
 
-							<BarList
+							<TechnicianBreakdownList
 								items={topTechnicians}
 								emptyLabel='Нет завершённых заявок за период'
 							/>
