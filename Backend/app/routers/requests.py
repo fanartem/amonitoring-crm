@@ -72,6 +72,18 @@ def normalize_scheduled_at(value: datetime | None):
     return value.replace(tzinfo=None)
 
 
+def parse_calendar_date(value: str, field_name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Некорректная дата {field_name}. Используйте формат YYYY-MM-DD"
+        )
+
+    return parsed.replace(tzinfo=None)
+
+
 def is_working_schedule_time(value: datetime) -> bool:
     """
     Рабочее время: понедельник-пятница, 10:00–17:30 включительно.
@@ -2878,6 +2890,229 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
     finally:
         connection.close()
 
+@router.get("/calendar")
+def get_requests_calendar(
+    date_from: str = Query(...),
+    date_to: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Лёгкий endpoint для календаря заявок.
+
+    Важно:
+    - календарь показывает заявки всех менеджеров;
+    - открытие деталей контролируется can_open_details;
+    - подробный endpoint /requests/{id} всё равно защищён user_can_access_request.
+    """
+    range_from = parse_calendar_date(date_from, "date_from")
+    range_to = parse_calendar_date(date_to, "date_to")
+
+    if range_to <= range_from:
+        raise HTTPException(
+            status_code=400,
+            detail="date_to должен быть больше date_from"
+        )
+
+    if (range_to - range_from).days > 31:
+        raise HTTPException(
+            status_code=400,
+            detail="Календарь можно загружать максимум за 31 день"
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            user_city = None
+
+            if current_user["role"] == TECHNICIAN:
+                user_city = get_current_user_city(cursor, current_user)
+
+            cursor.execute(
+                """
+                SELECT
+                    r.id,
+                    r.client_id,
+                    r.work_type,
+                    r.visit_type,
+                    r.address,
+                    r.city,
+                    r.platform,
+                    r.scheduled_at,
+                    r.scheduled_duration_minutes,
+                    r.schedule_approval_status,
+                    r.status,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+
+                    c.name AS client_name,
+                    c.company_name,
+                    c.payment_type AS client_payment_type,
+                    c.responsible_manager_id,
+
+                    creator.name AS created_by_name,
+                    responsible.name AS responsible_manager_name,
+
+                    assigned_user.name AS assigned_to_name,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re_current
+                        WHERE re_current.request_id = r.id
+                          AND re_current.user_id = %s
+                    ) AS current_user_is_executor,
+
+                    GROUP_CONCAT(
+                        DISTINCT
+                        TRIM(
+                            CONCAT(
+                                COALESCE(v.brand, ''),
+                                ' ',
+                                COALESCE(v.model, ''),
+                                CASE
+                                    WHEN v.plate_number IS NOT NULL AND v.plate_number <> ''
+                                    THEN CONCAT(' (', v.plate_number, ')')
+                                    ELSE ''
+                                END
+                            )
+                        )
+                        ORDER BY rv.id ASC
+                        SEPARATOR ', '
+                    ) AS vehicles_summary,
+
+                    GROUP_CONCAT(
+                        DISTINCT executor_user.name
+                        ORDER BY executor_user.name ASC
+                        SEPARATOR ', '
+                    ) AS executors_summary
+
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                LEFT JOIN users creator ON r.created_by = creator.id
+                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+                LEFT JOIN users assigned_user ON r.assigned_to = assigned_user.id
+
+                LEFT JOIN request_vehicles rv ON rv.request_id = r.id
+                LEFT JOIN vehicles v ON rv.vehicle_id = v.id
+
+                LEFT JOIN request_executors re ON re.request_id = r.id
+                LEFT JOIN users executor_user ON re.user_id = executor_user.id
+
+                WHERE r.is_deleted = 0
+                  AND r.scheduled_at IS NOT NULL
+                  AND r.scheduled_at >= %s
+                  AND r.scheduled_at < %s
+
+                GROUP BY
+                    r.id,
+                    r.client_id,
+                    r.work_type,
+                    r.visit_type,
+                    r.address,
+                    r.city,
+                    r.platform,
+                    r.scheduled_at,
+                    r.scheduled_duration_minutes,
+                    r.schedule_approval_status,
+                    r.status,
+                    r.assigned_to,
+                    r.is_paid,
+                    r.created_by,
+                    c.name,
+                    c.company_name,
+                    c.payment_type,
+                    c.responsible_manager_id,
+                    creator.name,
+                    responsible.name,
+                    assigned_user.name
+
+                ORDER BY r.scheduled_at ASC, r.id ASC
+                """,
+                (
+                    current_user["id"],
+                    range_from,
+                    range_to,
+                )
+            )
+
+            rows = cursor.fetchall()
+
+            result = []
+
+            for row in rows:
+                can_open_details = user_can_access_request(
+                    row,
+                    current_user,
+                    user_city,
+                )
+
+                # Обычный монтажник в календаре видит только заявки,
+                # детали которых ему доступны.
+                # Старшие монтажники не попадают сюда, потому что роль другая:
+                # SENIOR_TECHNICIAN.
+                if current_user["role"] == TECHNICIAN and not can_open_details:
+                    continue
+
+                duration_minutes = int(row.get("scheduled_duration_minutes") or 60)
+                scheduled_at = row.get("scheduled_at")
+                scheduled_end_at = None
+
+                if scheduled_at:
+                    scheduled_end_at = scheduled_at + timedelta(
+                        minutes=duration_minutes
+                    )
+
+                client_title = (
+                    row.get("company_name")
+                    or row.get("client_name")
+                    or f"Клиент #{row.get('client_id')}"
+                )
+
+                result.append({
+                    "id": row["id"],
+                    "client_id": row["client_id"],
+
+                    "title": f"{client_title} · {row.get('vehicles_summary') or 'Авто не указано'}",
+
+                    "work_type": row["work_type"],
+                    "visit_type": row["visit_type"],
+                    "status": row["status"],
+                    "city": row["city"],
+                    "address": row["address"],
+                    "platform": row["platform"],
+
+                    "scheduled_at": row["scheduled_at"],
+                    "scheduled_end_at": scheduled_end_at,
+                    "scheduled_duration_minutes": duration_minutes,
+
+                    "schedule_approval_status": row.get("schedule_approval_status"),
+
+                    "client_name": row.get("client_name"),
+                    "company_name": row.get("company_name"),
+                    "vehicles_summary": row.get("vehicles_summary") or "",
+                    "assigned_to_name": row.get("assigned_to_name"),
+                    "executors_summary": (
+                        row.get("executors_summary")
+                        or row.get("assigned_to_name")
+                        or ""
+                    ),
+                    "responsible_manager_name": row.get("responsible_manager_name"),
+                    "created_by_name": row.get("created_by_name"),
+
+                    "can_open_details": bool(can_open_details),
+                })
+
+            return {
+                "date_from": range_from,
+                "date_to": range_to,
+                "items": result,
+                "total": len(result),
+            }
+
+    finally:
+        connection.close()
+
 @router.get("/{request_id}")
 def get_request_detail(request_id: int, current_user: dict = Depends(get_current_user)):
     connection = get_connection()
@@ -2950,7 +3185,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
             if not user_can_access_request(request_data, current_user, user_city):
                 raise HTTPException(
                     status_code=403,
-                    detail="Недостаточно прав для просмотра этой заявки"
+                    detail="Недостаточно прав для просмотра деталей этой заявки"
                 )
 
             request_data = attach_vehicles_to_requests(cursor, [request_data])[0]

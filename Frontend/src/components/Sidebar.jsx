@@ -83,6 +83,15 @@ export default function Sidebar() {
 
 			<div className='sidebar-top'>
 				<NavLink
+					to='/calendar'
+					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+					onClick={handleMenuClick}
+				>
+					<i className='fa-solid fa-calendar-days'></i>
+					<span className='link-text'>Календарь</span>
+				</NavLink>
+				
+				<NavLink
 					to='/requests'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
 					onClick={handleMenuClick}
