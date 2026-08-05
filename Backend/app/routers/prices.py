@@ -1018,23 +1018,31 @@ def calculate_request_price(
                                     vehicle_index=index,
                                 )
 
-                    # Блокировка
-                    if vehicle.has_blocking:
-                        blocking_item = get_effective_price(
+                    # Услуга установки GPS: с блокировкой или без блокировки.
+                    # Важно: GPS_NO_BLOCK добавляем только если выбран GPS-трекер.
+                    # Иначе заявка "только маяк" тоже получила бы цену установки GPS.
+                    if vehicle.gps_price_code:
+                        install_service_code = (
+                            "ENGINE_BLOCKING_INSTALL"
+                            if vehicle.has_blocking
+                            else "GPS_NO_BLOCK"
+                        )
+
+                        install_service_item = get_effective_price(
                             cursor,
-                            "ENGINE_BLOCKING_INSTALL",
+                            install_service_code,
                             data.client_id
                         )
 
-                        if blocking_item:
+                        if install_service_item:
                             add_price_line(
                                 lines,
-                                code=blocking_item["code"],
-                                label=f"Авто {index}: {blocking_item['name']}",
+                                code=install_service_item["code"],
+                                label=f"Авто {index}: {install_service_item['name']}",
                                 quantity=1,
-                                unit_price=blocking_item["unit_price"],
-                                unit=blocking_item["unit"],
-                                source=blocking_item["source"],
+                                unit_price=install_service_item["unit_price"],
+                                unit=install_service_item["unit"],
+                                source=install_service_item["source"],
                                 vehicle_index=index,
                             )
 
