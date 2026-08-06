@@ -393,6 +393,8 @@ class NotificationSettingUpdate(BaseModel):
 class NotificationSettingsBulkUpdate(BaseModel):
     settings: list[NotificationSettingUpdate]
 
+class NotificationIgnoredCitiesUpdate(BaseModel):
+    city_ids: list[int] = []
 
 class UserCityAccessOut(BaseModel):
     id: int

@@ -933,6 +933,59 @@
 	line-height: 1.2;
 }
 
+.crm-calendar-event.notification-highlight {
+  outline: 3px solid #f59e0b;
+  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.22), 0 8px 22px rgba(0, 0, 0, 0.16);
+  z-index: 90;
+  animation: calendarNotificationPulse 1.1s ease-in-out infinite;
+}
+
+.crm-calendar-event-group.notification-highlight {
+  outline: 3px solid #f59e0b;
+  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.22), 0 8px 22px rgba(0, 0, 0, 0.18);
+  z-index: 95;
+  animation: calendarNotificationPulse 1.1s ease-in-out infinite;
+}
+
+.crm-calendar-event-group.force-open {
+  z-index: 120;
+}
+
+.crm-calendar-event-group.force-open .crm-calendar-event-group-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition:
+    opacity .12s ease 0s,
+    visibility 0s linear 0s,
+    transform .12s ease 0s;
+}
+
+.crm-calendar-event-group-menu.notification-highlight-menu {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.2), 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+.notification-highlight-item {
+  background: #fff7ed !important;
+  border-color: #f59e0b !important;
+  box-shadow: inset 4px 0 0 #f59e0b;
+}
+
+@keyframes calendarNotificationPulse {
+  0% {
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12), 0 8px 22px rgba(0, 0, 0, 0.14);
+  }
+
+  50% {
+    box-shadow: 0 0 0 7px rgba(245, 158, 11, 0.28), 0 8px 22px rgba(0, 0, 0, 0.18);
+  }
+
+  100% {
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12), 0 8px 22px rgba(0, 0, 0, 0.14);
+  }
+}
+
 @media (max-width: 1100px) {
 	.crm-calendar-page {
 		height: auto;

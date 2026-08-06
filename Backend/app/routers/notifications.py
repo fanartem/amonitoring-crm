@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_connection
 from app.security import get_current_user
-from app.schemas import NotificationSettingsBulkUpdate
+from app.schemas import (
+    NotificationSettingsBulkUpdate,
+    NotificationIgnoredCitiesUpdate,
+)
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -330,6 +333,161 @@ def update_notification_settings(
             return {
                 "message": "Настройки уведомлений обновлены",
                 "updated_count": len(data.settings)
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+REQUEST_TIME_CONFLICT = "REQUEST_TIME_CONFLICT"
+
+
+def require_admin(current_user: dict):
+    if current_user.get("role") != "ADMIN":
+        raise HTTPException(
+            status_code=403,
+            detail="Настройка доступна только администраторам"
+        )
+
+
+@router.get("/settings/request-time-conflict/ignored-cities")
+def get_request_time_conflict_ignored_cities(
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Список городов для настройки:
+    какие города игнорировать для уведомлений о пересечении заявок.
+    """
+    require_admin(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    c.id AS city_id,
+                    c.name AS city_name,
+                    CASE
+                        WHEN unic.id IS NULL THEN 0
+                        ELSE 1
+                    END AS is_ignored
+                FROM cities c
+                LEFT JOIN user_notification_ignored_cities unic
+                    ON unic.city_id = c.id
+                    AND unic.user_id = %s
+                    AND unic.notification_type_code = %s
+                WHERE c.is_active = 1
+                ORDER BY c.name ASC
+                """,
+                (
+                    current_user["id"],
+                    REQUEST_TIME_CONFLICT,
+                )
+            )
+
+            rows = cursor.fetchall()
+
+            for row in rows:
+                row["is_ignored"] = bool(row["is_ignored"])
+
+            return rows
+
+    finally:
+        connection.close()
+
+
+@router.patch("/settings/request-time-conflict/ignored-cities")
+def update_request_time_conflict_ignored_cities(
+    data: NotificationIgnoredCitiesUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Сохраняет города, по которым админ не хочет получать
+    уведомления о пересечении заявок.
+    """
+    require_admin(current_user)
+
+    unique_city_ids = []
+
+    for city_id in data.city_ids:
+        city_id = int(city_id)
+
+        if city_id not in unique_city_ids:
+            unique_city_ids.append(city_id)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            if unique_city_ids:
+                placeholders = ", ".join(["%s"] * len(unique_city_ids))
+
+                cursor.execute(
+                    f"""
+                    SELECT id
+                    FROM cities
+                    WHERE id IN ({placeholders})
+                      AND is_active = 1
+                    """,
+                    tuple(unique_city_ids)
+                )
+
+                existing_rows = cursor.fetchall()
+                existing_city_ids = [int(row["id"]) for row in existing_rows]
+
+                missing_city_ids = [
+                    city_id
+                    for city_id in unique_city_ids
+                    if city_id not in existing_city_ids
+                ]
+
+                if missing_city_ids:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Города не найдены или неактивны: {missing_city_ids}"
+                    )
+
+            cursor.execute(
+                """
+                DELETE FROM user_notification_ignored_cities
+                WHERE user_id = %s
+                  AND notification_type_code = %s
+                """,
+                (
+                    current_user["id"],
+                    REQUEST_TIME_CONFLICT,
+                )
+            )
+
+            for city_id in unique_city_ids:
+                cursor.execute(
+                    """
+                    INSERT INTO user_notification_ignored_cities (
+                        user_id,
+                        notification_type_code,
+                        city_id
+                    )
+                    VALUES (%s, %s, %s)
+                    """,
+                    (
+                        current_user["id"],
+                        REQUEST_TIME_CONFLICT,
+                        city_id,
+                    )
+                )
+
+            connection.commit()
+
+            return {
+                "message": "Настройки городов обновлены",
+                "ignored_city_ids": unique_city_ids,
             }
 
     except HTTPException:

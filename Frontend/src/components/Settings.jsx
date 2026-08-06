@@ -32,6 +32,14 @@ export default function Settings() {
 	const [notificationSettings, setNotificationSettings] = useState([])
 	const [notificationLoading, setNotificationLoading] = useState(false)
 	const [notificationError, setNotificationError] = useState('')
+	
+	const [timeConflictCities, setTimeConflictCities] = useState([])
+	const [timeConflictCitiesLoading, setTimeConflictCitiesLoading] =
+		useState(false)
+	const [timeConflictCitiesError, setTimeConflictCitiesError] = useState('')
+	const [timeConflictCitiesSaving, setTimeConflictCitiesSaving] =
+		useState(false)
+	const [timeConflictCitiesSaved, setTimeConflictCitiesSaved] = useState('')
 
 	const userRole = getUserRole()
 	const isAdmin = userRole === 'ADMIN'
@@ -47,7 +55,11 @@ export default function Settings() {
 		if (canManageCities) {
 			fetchCities()
 		}
-	}, [canManageCities])
+
+		if (isAdmin) {
+			fetchTimeConflictIgnoredCities()
+		}
+	}, [canManageCities, isAdmin])
 
 	const fetchNotificationSettings = async () => {
 		setNotificationLoading(true)
@@ -113,6 +125,89 @@ export default function Settings() {
 		} catch (err) {
 			setNotificationError(err.message)
 			fetchNotificationSettings()
+		}
+	}
+
+	const fetchTimeConflictIgnoredCities = async () => {
+		setTimeConflictCitiesLoading(true)
+		setTimeConflictCitiesError('')
+		setTimeConflictCitiesSaved('')
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/notifications/settings/request-time-conflict/ignored-cities`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(
+					data?.detail ||
+						'Не удалось загрузить города для уведомлений о пересечениях',
+				)
+			}
+
+			const data = await res.json()
+			setTimeConflictCities(Array.isArray(data) ? data : [])
+		} catch (err) {
+			setTimeConflictCitiesError(err.message)
+		} finally {
+			setTimeConflictCitiesLoading(false)
+		}
+	}
+
+	const handleToggleTimeConflictCity = cityId => {
+		setTimeConflictCitiesSaved('')
+
+		setTimeConflictCities(prev =>
+			prev.map(city =>
+				city.city_id === cityId
+					? {
+							...city,
+							is_ignored: !city.is_ignored,
+						}
+					: city,
+			),
+		)
+	}
+
+	const handleSaveTimeConflictCities = async () => {
+		setTimeConflictCitiesSaving(true)
+		setTimeConflictCitiesError('')
+		setTimeConflictCitiesSaved('')
+
+		const ignoredCityIds = timeConflictCities
+			.filter(city => city.is_ignored)
+			.map(city => city.city_id)
+
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/notifications/settings/request-time-conflict/ignored-cities`,
+				{
+					method: 'PATCH',
+					headers: getJsonAuthHeaders(),
+					body: JSON.stringify({
+						city_ids: ignoredCityIds,
+					}),
+				},
+			)
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(
+					data?.detail ||
+						'Не удалось сохранить города для уведомлений о пересечениях',
+				)
+			}
+
+			setTimeConflictCitiesSaved('Настройки городов сохранены')
+			fetchTimeConflictIgnoredCities()
+		} catch (err) {
+			setTimeConflictCitiesError(err.message)
+		} finally {
+			setTimeConflictCitiesSaving(false)
 		}
 	}
 
@@ -322,6 +417,80 @@ export default function Settings() {
 									))}
 								</div>
 							),
+						)}
+					</div>
+				)}
+
+				{isAdmin && (
+					<div className='settings-conflict-cities'>
+						<div className='settings-conflict-cities-header'>
+							<div>
+								<h4>Города для уведомлений о пересечениях</h4>
+								<p>
+									Галочка означает, что уведомления по этому городу включены.
+									Уберите города, от которых не хотите получать уведомления при
+									пересечениях заявок.
+								</p>
+							</div>
+						</div>
+
+						{timeConflictCitiesError && (
+							<div className='settings-error'>{timeConflictCitiesError}</div>
+						)}
+
+						{timeConflictCitiesSaved && (
+							<div className='settings-success'>{timeConflictCitiesSaved}</div>
+						)}
+
+						{timeConflictCitiesLoading ? (
+							<div className='settings-empty'>Загрузка городов...</div>
+						) : timeConflictCities.length === 0 ? (
+							<div className='settings-empty'>Активные города не найдены</div>
+						) : (
+							<>
+								<div className='settings-city-checkbox-grid'>
+									{timeConflictCities.map(city => (
+										<label
+											key={city.city_id}
+											className={`settings-city-checkbox ${
+												city.is_ignored ? 'ignored' : 'enabled'
+											}`}
+										>
+											<input
+												type='checkbox'
+												checked={!Boolean(city.is_ignored)}
+												onChange={() =>
+													handleToggleTimeConflictCity(city.city_id)
+												}
+											/>
+
+											<span>
+												<span className='settings-city-checkbox-name'>
+													{city.city_name}
+												</span>
+												<span className='settings-city-checkbox-hint'>
+													{city.is_ignored
+														? 'Уведомления отключены'
+														: 'Уведомления включены'}
+												</span>
+											</span>
+										</label>
+									))}
+								</div>
+
+								<div className='settings-conflict-cities-footer'>
+									<button
+										type='button'
+										className='settings-primary-btn'
+										onClick={handleSaveTimeConflictCities}
+										disabled={timeConflictCitiesSaving}
+									>
+										{timeConflictCitiesSaving
+											? 'Сохранение...'
+											: 'Сохранить города'}
+									</button>
+								</div>
+							</>
 						)}
 					</div>
 				)}

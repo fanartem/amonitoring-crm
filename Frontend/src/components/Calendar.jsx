@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router'
 import { API_BASE_URL, getAuthHeaders } from '../api'
 import RequestDetailModal from './RequestDetailModal'
 import { getWorkTypeLabel } from '../utils/workTypes'
@@ -217,7 +218,7 @@ const buildCalendarEventGroups = dayItems => {
 
 		const shouldStartNewGroup =
 			!lastGroup ||
-			startMinutes - lastGroup.lastStartMinutes > GROUP_WINDOW_MINUTES ||
+			startMinutes >= lastGroup.endMinutes ||
 			startMinutes - lastGroup.startMinutes >= MAX_GROUP_WINDOW_MINUTES
 
 		if (shouldStartNewGroup) {
@@ -277,22 +278,34 @@ const getGroupTimeRange = group => {
 }
 
 export default function Calendar() {
+	const location = useLocation()
+
 	const [anchorDate, setAnchorDate] = useState(new Date())
 	const [items, setItems] = useState([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState('')
 	const [selectedRequestId, setSelectedRequestId] = useState(null)
 
-    const userData = useMemo(() => {
-			try {
-				return JSON.parse(localStorage.getItem('user_data') || '{}')
-			} catch {
-				return {}
-			}
-		}, [])
+	const [pendingHighlightRequestId, setPendingHighlightRequestId] =
+		useState(null)
+	const [highlightedRequestId, setHighlightedRequestId] = useState(null)
+	const [highlightedGroupId, setHighlightedGroupId] = useState(null)
+	const [forceOpenGroupId, setForceOpenGroupId] = useState(null)
 
-		const userRole = String(userData?.role || '').toUpperCase()
-		const isTechnician = userRole === 'TECHNICIAN'
+	const groupRefs = useRef({})
+	const singleEventRefs = useRef({})
+	const highlightTimerRef = useRef(null)
+
+	const userData = useMemo(() => {
+		try {
+			return JSON.parse(localStorage.getItem('user_data') || '{}')
+		} catch {
+			return {}
+		}
+	}, [])
+
+	const userRole = String(userData?.role || '').toUpperCase()
+	const isTechnician = userRole === 'TECHNICIAN'
 
 	const [workTypeFilter, setWorkTypeFilter] = useState('ALL')
 
@@ -463,6 +476,115 @@ export default function Calendar() {
 		return eventsByDay.map(dayItems => buildCalendarEventGroups(dayItems))
 	}, [eventsByDay])
 
+	useEffect(() => {
+		const highlightRequestId = location.state?.highlightRequestId
+		const highlightScheduledAt = location.state?.highlightScheduledAt
+
+		if (!highlightRequestId) return
+
+		const numericRequestId = Number(highlightRequestId)
+
+		setPendingHighlightRequestId(numericRequestId)
+		setHighlightedRequestId(numericRequestId)
+		setHighlightedGroupId(null)
+		setForceOpenGroupId(null)
+
+		setWorkTypeFilter('ALL')
+		setCitySearch('')
+		setSelectedCity('')
+		setClientSearch('')
+		setSelectedClientId('')
+		setIsCityPickerOpen(false)
+		setIsClientPickerOpen(false)
+
+		if (highlightScheduledAt) {
+			const targetDate = new Date(highlightScheduledAt)
+
+			if (!Number.isNaN(targetDate.getTime())) {
+				setAnchorDate(targetDate)
+			}
+		}
+	}, [location.state?.searchActionId])
+
+	useEffect(() => {
+		if (!pendingHighlightRequestId || loading) return
+
+		const targetRequestId = Number(pendingHighlightRequestId)
+
+		let targetGroup = null
+		let targetSingleItem = null
+
+		for (const dayGroups of eventGroupsByDay) {
+			const foundGroup = dayGroups.find(group =>
+				group.items.some(item => Number(item.id) === targetRequestId),
+			)
+
+			if (!foundGroup) continue
+
+			if (foundGroup.isGroup) {
+				targetGroup = foundGroup
+			} else {
+				targetSingleItem = foundGroup.items[0]
+			}
+
+			break
+		}
+
+		if (!targetGroup && !targetSingleItem) return
+
+		if (highlightTimerRef.current) {
+			clearTimeout(highlightTimerRef.current)
+		}
+
+		if (targetGroup) {
+			setHighlightedGroupId(targetGroup.id)
+			setForceOpenGroupId(targetGroup.id)
+			setHighlightedRequestId(targetRequestId)
+			setPendingHighlightRequestId(null)
+
+			requestAnimationFrame(() => {
+				groupRefs.current[targetGroup.id]?.scrollIntoView({
+					behavior: 'smooth',
+					block: 'center',
+					inline: 'center',
+				})
+			})
+
+			highlightTimerRef.current = setTimeout(() => {
+				setForceOpenGroupId(null)
+				setHighlightedGroupId(null)
+				setHighlightedRequestId(null)
+			}, 10000)
+
+			return
+		}
+
+		if (targetSingleItem) {
+			setHighlightedRequestId(targetRequestId)
+			setPendingHighlightRequestId(null)
+
+			requestAnimationFrame(() => {
+				singleEventRefs.current[targetRequestId]?.scrollIntoView({
+					behavior: 'smooth',
+					block: 'center',
+					inline: 'center',
+				})
+			})
+
+			highlightTimerRef.current = setTimeout(() => {
+				setHighlightedRequestId(null)
+			}, 10000)
+		}
+	}, [eventGroupsByDay, pendingHighlightRequestId, loading])
+
+	useEffect(() => {
+		return () => {
+			if (highlightTimerRef.current) {
+				clearTimeout(highlightTimerRef.current)
+			}
+		}
+	}, [])
+
 	const currentTime = getCurrentTimeStyle(weekStart)
 
 	const weekTitle = `${formatDayMonth(weekStart)} — ${formatDayMonth(
@@ -568,10 +690,19 @@ export default function Calendar() {
 			<button
 				key={`event-${item.id}`}
 				type='button'
+				ref={element => {
+					if (element) {
+						singleEventRefs.current[item.id] = element
+					}
+				}}
 				className={`crm-calendar-event ${String(
 					item.work_type || '',
 				).toLowerCase()} ${String(item.status || '').toLowerCase()} ${
 					item.can_open_details ? 'can-open' : 'locked'
+				} ${
+					Number(item.id) === Number(highlightedRequestId)
+						? 'notification-highlight'
+						: ''
 				}`}
 				style={getEventStyle(item)}
 				onClick={() => handleEventClick(item)}
@@ -625,9 +756,16 @@ export default function Calendar() {
 		return (
 			<div
 				key={`group-${group.id}`}
+				ref={element => {
+					if (element) {
+						groupRefs.current[group.id] = element
+					}
+				}}
 				className={`crm-calendar-event-group ${String(
 					firstItem?.work_type || '',
-				).toLowerCase()} ${openLeft ? 'open-left' : ''}`}
+				).toLowerCase()} ${openLeft ? 'open-left' : ''} ${
+					forceOpenGroupId === group.id ? 'force-open' : ''
+				} ${highlightedGroupId === group.id ? 'notification-highlight' : ''}`}
 				style={getGroupStyle(group)}
 				tabIndex={0}
 			>
@@ -646,7 +784,11 @@ export default function Calendar() {
 					Наведите для деталей
 				</div>
 
-				<div className='crm-calendar-event-group-menu'>
+				<div
+					className={`crm-calendar-event-group-menu ${
+						highlightedGroupId === group.id ? 'notification-highlight-menu' : ''
+					}`}
+				>
 					<div className='crm-calendar-event-group-menu-title'>
 						Заявки рядом по времени
 					</div>
@@ -655,10 +797,19 @@ export default function Calendar() {
 						<button
 							key={item.id}
 							type='button'
+							ref={element => {
+								if (element) {
+									singleEventRefs.current[item.id] = element
+								}
+							}}
 							className={`crm-calendar-group-menu-item ${String(
 								item.work_type || '',
 							).toLowerCase()} ${String(item.status || '').toLowerCase()} ${
 								item.can_open_details ? 'can-open' : 'locked'
+							} ${
+								Number(item.id) === Number(highlightedRequestId)
+									? 'notification-highlight-item'
+									: ''
 							}`}
 							onClick={() => handleEventClick(item)}
 						>

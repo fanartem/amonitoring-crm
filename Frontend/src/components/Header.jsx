@@ -111,6 +111,32 @@ export default function Header() {
 		}
 	}
 
+	const resolveNotificationRequest = async requestId => {
+		const localRequest = requests.find(
+			item => Number(item.id) === Number(requestId),
+		)
+
+		if (localRequest?.scheduled_at) {
+			return localRequest
+		}
+
+		try {
+			const res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
+				headers: getJsonAuthHeaders(),
+			})
+
+			if (!res.ok) {
+				return localRequest || null
+			}
+
+			const data = await res.json()
+			return data || localRequest || null
+		} catch (err) {
+			console.error('Ошибка загрузки заявки для уведомления:', err)
+			return localRequest || null
+		}
+	}
+
 	const handleNotificationClick = async notification => {
 		if (!notification.is_read) {
 			await markNotificationAsRead(notification.id)
@@ -119,6 +145,24 @@ export default function Header() {
 		setIsNotificationsOpen(false)
 
 		const actionId = `${Date.now()}-${Math.random()}`
+
+		if (
+			notification.type_code === 'REQUEST_TIME_CONFLICT' &&
+			notification.entity_type === 'request' &&
+			notification.entity_id
+		) {
+			const request = await resolveNotificationRequest(notification.entity_id)
+
+			navigate('/calendar', {
+				state: {
+					highlightRequestId: notification.entity_id,
+					highlightScheduledAt: request?.scheduled_at || null,
+					searchActionId: actionId,
+				},
+			})
+
+			return
+		}
 
 		if (notification.entity_type === 'request' && notification.entity_id) {
 			navigate('/requests', {

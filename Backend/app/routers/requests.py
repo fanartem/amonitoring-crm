@@ -43,6 +43,7 @@ from app.notification_service import (
     notify_request_self_accepted,
     notify_request_payment_changed,
     notify_request_executors_assigned,
+    notify_request_time_conflict,
 )
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
@@ -1002,6 +1003,16 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
             notify_new_request(
                 cursor=cursor,
                 request_id=request_id,
+                city=data.city,
+                client_name=client_for_notification.get("name"),
+                company_name=client_for_notification.get("company_name"),
+                actor_user_id=current_user["id"],
+            )
+
+            notify_request_time_conflict(
+                cursor=cursor,
+                request_id=request_id,
+                scheduled_at=scheduled_at,
                 city=data.city,
                 client_name=client_for_notification.get("name"),
                 company_name=client_for_notification.get("company_name"),

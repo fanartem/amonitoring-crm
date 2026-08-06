@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from app.database import get_connection
 
 
@@ -438,3 +439,193 @@ def notify_request_payment_changed(
         actor_user_id=actor_user_id,
         exclude_user_id=actor_user_id,
     )
+
+REQUEST_TIME_CONFLICT = "REQUEST_TIME_CONFLICT"
+
+
+def format_request_datetime(value: datetime | None) -> str:
+    if not value:
+        return "время не указано"
+
+    return value.strftime("%d.%m.%Y %H:%M")
+
+
+def get_request_time_conflicts(
+    cursor,
+    request_id: int,
+    scheduled_at: datetime | None,
+    city: str | None,
+) -> list[dict]:
+    """
+    Ищет заявки, которые пересекаются с новой заявкой.
+
+    Правило:
+    - каждая заявка занимает 1 час;
+    - конфликт есть, если интервалы пересекаются;
+    - город должен совпадать;
+    - удалённые и отменённые заявки не учитываем.
+    """
+    if not request_id or not scheduled_at or not city or not str(city).strip():
+        return []
+
+    request_start = scheduled_at
+    request_end = scheduled_at + timedelta(hours=1)
+
+    cursor.execute(
+        """
+        SELECT
+            r.id,
+            r.city,
+            r.scheduled_at,
+            r.work_type,
+            r.status,
+
+            c.name AS client_name,
+            c.company_name
+        FROM requests r
+        LEFT JOIN clients c ON r.client_id = c.id
+        WHERE r.id <> %s
+          AND r.is_deleted = 0
+          AND r.status <> 'CANCELLED'
+          AND r.scheduled_at IS NOT NULL
+          AND LOWER(TRIM(r.city)) = LOWER(TRIM(%s))
+          AND r.scheduled_at < %s
+          AND DATE_ADD(r.scheduled_at, INTERVAL 1 HOUR) > %s
+        ORDER BY r.scheduled_at ASC, r.id ASC
+        """,
+        (
+            request_id,
+            city,
+            request_end,
+            request_start,
+        ),
+    )
+
+    return cursor.fetchall()
+
+
+def get_admin_users_for_request_time_conflict(
+    cursor,
+    city: str | None,
+    exclude_user_id: int | None = None,
+) -> list[int]:
+    """
+    Возвращает ADMIN, которым можно отправить уведомление о пересечении.
+
+    Учитываем:
+    - пользователь активен и подтверждён;
+    - роль строго ADMIN;
+    - пользователь не является автором действия;
+    - пользователь не добавил этот город в игнор-лист для REQUEST_TIME_CONFLICT.
+    """
+    if not city or not str(city).strip():
+        return []
+
+    values = []
+
+    exclude_condition = ""
+
+    if exclude_user_id:
+        exclude_condition = "AND u.id <> %s"
+        values.append(exclude_user_id)
+
+    values.extend([REQUEST_TIME_CONFLICT, city])
+
+    cursor.execute(
+        f"""
+        SELECT DISTINCT u.id
+        FROM users u
+        WHERE u.role = 'ADMIN'
+          AND u.is_approved = 1
+          AND u.is_active = 1
+          AND u.deleted_at IS NULL
+          {exclude_condition}
+          AND NOT EXISTS (
+                SELECT 1
+                FROM user_notification_ignored_cities unic
+                INNER JOIN cities c ON c.id = unic.city_id
+                WHERE unic.user_id = u.id
+                  AND unic.notification_type_code = %s
+                  AND c.is_active = 1
+                  AND LOWER(TRIM(c.name)) = LOWER(TRIM(%s))
+          )
+        """,
+        tuple(values),
+    )
+
+    rows = cursor.fetchall()
+
+    return [row["id"] for row in rows]
+
+
+def notify_request_time_conflict(
+    cursor,
+    request_id: int,
+    scheduled_at: datetime | None,
+    city: str | None,
+    client_name: str | None = None,
+    company_name: str | None = None,
+    actor_user_id: int | None = None,
+):
+    """
+    Уведомление администраторам о пересечении заявок по времени.
+
+    Создаётся только если:
+    - новая заявка пересекается с другой активной заявкой;
+    - город совпадает;
+    - каждая заявка считается как интервал 1 час;
+    - конкретный ADMIN не отключил этот город в настройках.
+    """
+    conflicts = get_request_time_conflicts(
+        cursor=cursor,
+        request_id=request_id,
+        scheduled_at=scheduled_at,
+        city=city,
+    )
+
+    if not conflicts:
+        return []
+
+    admin_user_ids = get_admin_users_for_request_time_conflict(
+        cursor=cursor,
+        city=city,
+        exclude_user_id=actor_user_id,
+    )
+
+    if not admin_user_ids:
+        return []
+
+    conflict_ids = [int(row["id"]) for row in conflicts]
+    conflict_ids_text = ", ".join(f"№{item_id}" for item_id in conflict_ids)
+
+    display_city = city or "город не указан"
+    display_client = company_name or client_name or "клиент не указан"
+    display_time = format_request_datetime(scheduled_at)
+
+    title = "Пересечение заявок по времени"
+    message = (
+        f"Создана заявка №{request_id}. "
+        f"Клиент: {display_client}. "
+        f"Город: {display_city}. "
+        f"Время: {display_time}. "
+        f"Пересекается с заявками: {conflict_ids_text}."
+    )
+
+    created_ids = []
+
+    for admin_user_id in admin_user_ids:
+        notification_id = create_notification(
+            cursor=cursor,
+            user_id=admin_user_id,
+            type_code=REQUEST_TIME_CONFLICT,
+            title=title,
+            message=message,
+            entity_type="request",
+            entity_id=request_id,
+            actor_user_id=actor_user_id,
+        )
+
+        if notification_id:
+            created_ids.append(notification_id)
+
+    return created_ids
