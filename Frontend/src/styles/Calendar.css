@@ -1011,14 +1011,22 @@
 		grid-template-columns: 1fr;
 	}
 
+	.crm-calendar-week {
+		width: 100%;
+		overflow-x: auto;
+		overflow-y: visible;
+		-webkit-overflow-scrolling: touch;
+	}
+
 	.crm-calendar-header {
 		grid-template-columns: 48px repeat(7, minmax(110px, 1fr));
+		min-width: 818px;
 	}
 
 	.crm-calendar-body {
 		grid-template-columns: 48px minmax(0, 1fr);
-		overflow-x: auto;
-		overflow-y: visible;
+		min-width: 818px;
+		overflow: visible;
 	}
 
 	.crm-calendar-time-header {

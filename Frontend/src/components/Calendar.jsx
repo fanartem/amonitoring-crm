@@ -8,6 +8,7 @@ const START_HOUR = 6
 const END_HOUR = 22
 const SLOT_HEIGHT = 48
 const GROUP_WINDOW_MINUTES = 30
+const MAX_GROUP_WINDOW_MINUTES = 120
 const DAY_COUNT = 7
 
 const MS_IN_DAY = 24 * 60 * 60 * 1000
@@ -214,25 +215,32 @@ const buildCalendarEventGroups = dayItems => {
 
 		const lastGroup = groups[groups.length - 1]
 
-		if (
+		const shouldStartNewGroup =
 			!lastGroup ||
-			startMinutes - lastGroup.lastStartMinutes > GROUP_WINDOW_MINUTES
-		) {
+			startMinutes - lastGroup.lastStartMinutes > GROUP_WINDOW_MINUTES ||
+			startMinutes - lastGroup.startMinutes >= MAX_GROUP_WINDOW_MINUTES
+
+		if (shouldStartNewGroup) {
 			groups.push({
 				id: String(item.id),
 				items: [item],
 				startMinutes,
 				lastStartMinutes: startMinutes,
-				endMinutes,
+				endMinutes: Math.max(endMinutes, startMinutes + 30),
 			})
 
 			return
 		}
 
+		const maxGroupEndMinutes = lastGroup.startMinutes + MAX_GROUP_WINDOW_MINUTES
+
 		lastGroup.items.push(item)
 		lastGroup.id = `${lastGroup.id}-${item.id}`
 		lastGroup.lastStartMinutes = startMinutes
-		lastGroup.endMinutes = Math.max(lastGroup.endMinutes, endMinutes)
+		lastGroup.endMinutes = Math.min(
+			Math.max(lastGroup.endMinutes, endMinutes),
+			maxGroupEndMinutes,
+		)
 	})
 
 	return groups.map(group => ({
