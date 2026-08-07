@@ -5,8 +5,8 @@ import RequestDetailModal from './RequestDetailModal'
 import { getWorkTypeLabel } from '../utils/workTypes'
 import '../styles/Calendar.css'
 
-const START_HOUR = 6
-const END_HOUR = 22
+const START_HOUR = 8
+const END_HOUR = 23
 const SLOT_HEIGHT = 48
 const GROUP_WINDOW_MINUTES = 30
 const MAX_GROUP_WINDOW_MINUTES = 120
