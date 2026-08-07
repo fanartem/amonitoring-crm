@@ -53,6 +53,9 @@ REQUEST_DELETE_TIME_LIMIT_SECONDS = 120
 WORK_DAY_START = time(10, 0)
 WORK_DAY_END = time(17, 30)
 
+SCHEDULE_TIME_START = time(8, 0)
+SCHEDULE_TIME_END = time(20, 0)
+
 SCHEDULE_APPROVAL_NOT_REQUIRED = "NOT_REQUIRED"
 SCHEDULE_APPROVAL_PENDING = "PENDING"
 SCHEDULE_APPROVAL_APPROVED = "APPROVED"
@@ -63,6 +66,22 @@ CLIENT_PAYMENT_POSTPAYMENT = "POSTPAYMENT"
 
 ALMATY_TZ = timezone(timedelta(hours=5))
 
+VISIT_PRICE_CODE_CITY = "ON_SITE_CITY"
+VISIT_PRICE_CODE_OUTSIDE_CITY = "ON_SITE_OUTSIDE_CITY"
+VISIT_PRICE_CODE_BUSINESS_TRIP = "BUSINESS_TRIP_KM"
+
+ALLOWED_VISIT_PRICE_CODES = {
+    VISIT_PRICE_CODE_CITY,
+    VISIT_PRICE_CODE_OUTSIDE_CITY,
+    VISIT_PRICE_CODE_BUSINESS_TRIP,
+}
+
+VISIT_MINIMUM_LEAD_MINUTES = {
+    VISIT_PRICE_CODE_CITY: 25,
+    VISIT_PRICE_CODE_OUTSIDE_CITY: 120,
+    VISIT_PRICE_CODE_BUSINESS_TRIP: 300,
+}
+
 def almaty_now():
     return datetime.now(ALMATY_TZ).replace(tzinfo=None)
 
@@ -71,6 +90,168 @@ def normalize_scheduled_at(value: datetime | None):
         return None
 
     return value.replace(tzinfo=None)
+
+
+def normalize_visit_price_code(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = str(value).strip().upper()
+    return normalized or None
+
+
+def get_visit_price_codes_from_price_input(price) -> set[str]:
+    if not price or not price.lines:
+        return set()
+
+    return {
+        normalized
+        for line in price.lines
+        if (normalized := normalize_visit_price_code(line.code))
+        in ALLOWED_VISIT_PRICE_CODES
+    }
+
+
+def resolve_visit_price_code(
+    visit_type: str,
+    requested_code: str | None,
+    price=None,
+) -> str | None:
+    price_codes = get_visit_price_codes_from_price_input(price)
+
+    if len(price_codes) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="В расчёте указано несколько разных типов выезда",
+        )
+
+    if visit_type == "IN_OFFICE":
+        if price_codes:
+            raise HTTPException(
+                status_code=400,
+                detail="Для работы в офисе нельзя указывать транспортные расходы",
+            )
+        return None
+
+    normalized_code = normalize_visit_price_code(requested_code)
+
+    if normalized_code is not None:
+        if normalized_code not in ALLOWED_VISIT_PRICE_CODES:
+            raise HTTPException(status_code=400, detail="Некорректный тип выезда")
+
+        if price_codes and normalized_code not in price_codes:
+            raise HTTPException(
+                status_code=400,
+                detail="Тип выезда не совпадает с транспортной строкой расчёта",
+            )
+
+        return normalized_code
+
+    # Совместимость со старым frontend: до появления отдельного поля тип
+    # выезда сохранялся только в строках калькулятора.
+    if price_codes:
+        return next(iter(price_codes))
+
+    # Старый калькулятор использовал городской выезд по умолчанию.
+    return VISIT_PRICE_CODE_CITY
+
+
+def ceil_to_half_hour(value: datetime) -> datetime:
+    value = value.replace(second=0, microsecond=0)
+
+    if value.minute == 0 or value.minute == 30:
+        return value
+
+    minutes_to_add = 30 - (value.minute % 30)
+    return value + timedelta(minutes=minutes_to_add)
+
+
+def get_next_available_schedule_slot(value: datetime) -> datetime:
+    slot = ceil_to_half_hour(value)
+    slot_time = slot.time()
+
+    if slot_time < SCHEDULE_TIME_START:
+        return slot.replace(
+            hour=SCHEDULE_TIME_START.hour,
+            minute=SCHEDULE_TIME_START.minute,
+            second=0,
+            microsecond=0,
+        )
+
+    if slot_time > SCHEDULE_TIME_END:
+        next_day = slot + timedelta(days=1)
+        return next_day.replace(
+            hour=SCHEDULE_TIME_START.hour,
+            minute=SCHEDULE_TIME_START.minute,
+            second=0,
+            microsecond=0,
+        )
+
+    return slot
+
+
+def validate_request_schedule(
+    *,
+    scheduled_at: datetime,
+    visit_type: str,
+    visit_price_code: str | None,
+    current_user: dict,
+):
+    if scheduled_at.minute not in (0, 30) or scheduled_at.second != 0 or scheduled_at.microsecond != 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Время можно выбирать только с минутами 00 или 30",
+        )
+
+    scheduled_time = scheduled_at.time()
+
+    if scheduled_time < SCHEDULE_TIME_START or scheduled_time > SCHEDULE_TIME_END:
+        raise HTTPException(
+            status_code=400,
+            detail="Время начала работ должно быть в диапазоне с 08:00 до 20:00",
+        )
+
+    if visit_type not in ["IN_OFFICE", "ON_SITE"]:
+        raise HTTPException(status_code=400, detail="Некорректный формат работ")
+
+    normalized_code = resolve_visit_price_code(visit_type, visit_price_code)
+
+    # ADMIN может назначать заявки в прошлом и обходить минимальный запас.
+    # Получасовой шаг и диапазон 08:00–20:00 обязательны и для ADMIN.
+    if current_user.get("role") == ADMIN:
+        return
+
+    now = almaty_now().replace(second=0, microsecond=0)
+    minimum_scheduled_at = now
+
+    if visit_type == "ON_SITE":
+        minimum_scheduled_at = now + timedelta(
+            minutes=VISIT_MINIMUM_LEAD_MINUTES[normalized_code]
+        )
+
+    if scheduled_at < minimum_scheduled_at:
+        earliest_slot = get_next_available_schedule_slot(minimum_scheduled_at)
+
+        if visit_type == "IN_OFFICE":
+            detail = (
+                "Нельзя назначить заявку на прошедшие дату и время. "
+                f"Ближайшее доступное время: {earliest_slot.strftime('%d.%m.%Y %H:%M')}"
+            )
+        else:
+            lead_minutes = VISIT_MINIMUM_LEAD_MINUTES[normalized_code]
+            if lead_minutes == 25:
+                lead_text = "25 минут"
+            elif lead_minutes == 120:
+                lead_text = "2 часа"
+            else:
+                lead_text = "5 часов"
+
+            detail = (
+                f"Для выбранного типа выезда требуется запас не менее {lead_text}. "
+                f"Ближайшее доступное время: {earliest_slot.strftime('%d.%m.%Y %H:%M')}"
+            )
+
+        raise HTTPException(status_code=400, detail=detail)
 
 
 def parse_calendar_date(value: str, field_name: str) -> datetime:
@@ -632,6 +813,12 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
 
     if data.visit_type not in allowed_visit_types:
         raise HTTPException(status_code=400, detail="Некорректный формат работ")
+
+    visit_price_code = resolve_visit_price_code(
+        data.visit_type,
+        data.visit_price_code,
+        data.price,
+    )
     
     scheduled_at = normalize_scheduled_at(data.scheduled_at)
 
@@ -640,6 +827,13 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
             status_code=400,
             detail="Необходимо указать желаемую дату и время выполнения работ"
         )
+
+    validate_request_schedule(
+        scheduled_at=scheduled_at,
+        visit_type=data.visit_type,
+        visit_price_code=visit_price_code,
+        current_user=current_user,
+    )
 
     schedule_approval = build_schedule_approval_data(
         scheduled_at=scheduled_at,
@@ -763,6 +957,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     client_id,
                     work_type,
                     visit_type,
+                    visit_price_code,
                     address,
                     city,
                     platform,
@@ -779,12 +974,13 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     created_by,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     data.client_id,
                     data.work_type,
                     data.visit_type,
+                    visit_price_code,
                     data.address,
                     data.city,
                     platform,
@@ -1113,6 +1309,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     r.client_id,
                     r.work_type,
                     r.visit_type,
+                    r.visit_price_code,
                     r.address,
                     r.city,
                     r.platform,
@@ -1188,6 +1385,7 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                     r.client_id,
                     r.work_type,
                     r.visit_type,
+                    r.visit_price_code,
                     r.address,
                     r.city,
                     r.platform,
@@ -1548,6 +1746,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     r.client_id,
                     r.work_type,
                     r.visit_type,
+                    r.visit_price_code,
                     r.address,
                     r.city,
                     r.platform,
@@ -1615,6 +1814,24 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
             update_fields = []
             update_values = []
 
+            effective_visit_type = (
+                data.visit_type if data.visit_type is not None else req["visit_type"]
+            )
+
+            if effective_visit_type not in ["IN_OFFICE", "ON_SITE"]:
+                raise HTTPException(status_code=400, detail="Некорректный тип визита")
+
+            requested_visit_price_code = (
+                data.visit_price_code
+                if data.visit_price_code is not None
+                else req.get("visit_price_code")
+            )
+            effective_visit_price_code = resolve_visit_price_code(
+                effective_visit_type,
+                requested_visit_price_code,
+            )
+            schedule_rules_changed = False
+
             def add_history(action: str, old_value, new_value):
                 cursor.execute(
                     """
@@ -1670,10 +1887,26 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         detail="Недостаточно прав для редактирования этой заявки"
                     )
 
-                if data.visit_type not in ["IN_OFFICE", "ON_SITE"]:
-                    raise HTTPException(status_code=400, detail="Некорректный тип визита")
-
                 add_request_update("visit_type", data.visit_type, "VISIT_TYPE_CHANGED")
+                schedule_rules_changed = True
+
+            # visit_price_code / тип выезда
+            if (
+                data.visit_type is not None
+                or data.visit_price_code is not None
+            ) and effective_visit_price_code != req.get("visit_price_code"):
+                if not can_edit_this_request:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для редактирования этой заявки"
+                    )
+
+                add_request_update(
+                    "visit_price_code",
+                    effective_visit_price_code,
+                    "VISIT_PRICE_CODE_CHANGED",
+                )
+                schedule_rules_changed = True
 
             # address
             if data.address is not None and data.address != req["address"]:
@@ -1696,15 +1929,24 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                 add_request_update("city", data.city, "CITY_CHANGED")
 
             # scheduled_at / желаемая дата выполнения
+            scheduled_at_was_changed = False
             if data.scheduled_at is not None:
                 new_scheduled_at = normalize_scheduled_at(data.scheduled_at)
 
                 if req["scheduled_at"] != new_scheduled_at:
+                    scheduled_at_was_changed = True
                     if not can_edit_this_request:
                         raise HTTPException(
                             status_code=403,
                             detail="Недостаточно прав для редактирования этой заявки"
                         )
+
+                    validate_request_schedule(
+                        scheduled_at=new_scheduled_at,
+                        visit_type=effective_visit_type,
+                        visit_price_code=effective_visit_price_code,
+                        current_user=current_user,
+                    )
 
                     schedule_approval = build_schedule_approval_data(
                         scheduled_at=new_scheduled_at,
@@ -1748,6 +1990,18 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                             None,
                             schedule_approval["reason"]
                         )
+
+            if (
+                schedule_rules_changed
+                and not scheduled_at_was_changed
+                and req.get("scheduled_at") is not None
+            ):
+                validate_request_schedule(
+                    scheduled_at=normalize_scheduled_at(req["scheduled_at"]),
+                    visit_type=effective_visit_type,
+                    visit_price_code=effective_visit_price_code,
+                    current_user=current_user,
+                )
 
             # payment
             if data.is_paid is not None:
@@ -2946,6 +3200,7 @@ def get_requests_calendar(
                     r.client_id,
                     r.work_type,
                     r.visit_type,
+                    r.visit_price_code,
                     r.address,
                     r.city,
                     r.platform,
@@ -3020,6 +3275,7 @@ def get_requests_calendar(
                     r.client_id,
                     r.work_type,
                     r.visit_type,
+                    r.visit_price_code,
                     r.address,
                     r.city,
                     r.platform,
@@ -3088,6 +3344,7 @@ def get_requests_calendar(
 
                     "work_type": row["work_type"],
                     "visit_type": row["visit_type"],
+                    "visit_price_code": row.get("visit_price_code"),
                     "status": row["status"],
                     "city": row["city"],
                     "address": row["address"],
@@ -3137,6 +3394,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     r.client_id,
                     r.work_type,
                     r.visit_type,
+                    r.visit_price_code,
                     r.address,
                     r.city,
                     r.platform,

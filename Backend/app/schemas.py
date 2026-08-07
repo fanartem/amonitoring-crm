@@ -7,6 +7,7 @@ class RequestCreate(BaseModel):
     client_id: int
     work_type: str
     visit_type: str
+    visit_price_code: str | None = None
     city: str | None = None
     platform: str
     address: str | None = None
@@ -17,6 +18,7 @@ class RequestCreate(BaseModel):
 
 class RequestUpdate(BaseModel):
     visit_type: str | None = None
+    visit_price_code: str | None = None
     address: str | None = None
     city: str | None = None
     platform: str | None = None

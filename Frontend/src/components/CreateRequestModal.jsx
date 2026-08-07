@@ -251,6 +251,155 @@ const getUserRole = () => {
 	}
 }
 
+const VISIT_MINIMUM_LEAD_MINUTES = {
+	ON_SITE_CITY: 25,
+	ON_SITE_OUTSIDE_CITY: 120,
+	BUSINESS_TRIP_KM: 300,
+}
+
+const FIRST_AVAILABLE_TIME_MINUTES = 8 * 60
+const LAST_AVAILABLE_TIME_MINUTES = 20 * 60
+const MINUTE_OPTIONS = ['00', '30']
+
+const HALF_HOUR_OPTIONS = Array.from(
+	{
+		length:
+			(LAST_AVAILABLE_TIME_MINUTES - FIRST_AVAILABLE_TIME_MINUTES) / 30 + 1,
+	},
+	(_, index) => {
+		const totalMinutes = FIRST_AVAILABLE_TIME_MINUTES + index * 30
+		const hours = String(Math.floor(totalMinutes / 60)).padStart(2, '0')
+		const minutes = String(totalMinutes % 60).padStart(2, '0')
+
+		return `${hours}:${minutes}`
+	},
+)
+
+const HOUR_OPTIONS = Array.from(
+	{
+		length:
+			LAST_AVAILABLE_TIME_MINUTES / 60 -
+			FIRST_AVAILABLE_TIME_MINUTES / 60 +
+			1,
+	},
+	(_, index) =>
+		String(FIRST_AVAILABLE_TIME_MINUTES / 60 + index).padStart(2, '0'),
+)
+
+const getAlmatyNowParts = () => {
+	const formatter = new Intl.DateTimeFormat('en-CA', {
+		timeZone: 'Asia/Almaty',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		hourCycle: 'h23',
+	})
+
+	const parts = Object.fromEntries(
+		formatter
+			.formatToParts(new Date())
+			.filter(part => part.type !== 'literal')
+			.map(part => [part.type, part.value]),
+	)
+
+	return {
+		date: `${parts.year}-${parts.month}-${parts.day}`,
+		time: `${parts.hour}:${parts.minute}`,
+	}
+}
+
+const localDateTimeToComparable = value => {
+	if (!value) return null
+
+	const match = String(value).match(
+		/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/,
+	)
+
+	if (!match) return null
+
+	return Date.UTC(
+		Number(match[1]),
+		Number(match[2]) - 1,
+		Number(match[3]),
+		Number(match[4]),
+		Number(match[5]),
+	)
+}
+
+const comparableToLocalDateTime = value => {
+	const date = new Date(value)
+	const year = date.getUTCFullYear()
+	const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+	const day = String(date.getUTCDate()).padStart(2, '0')
+	const hours = String(date.getUTCHours()).padStart(2, '0')
+	const minutes = String(date.getUTCMinutes()).padStart(2, '0')
+
+	return {
+		date: `${year}-${month}-${day}`,
+		time: `${hours}:${minutes}`,
+	}
+}
+
+const getScheduledAtValue = formData => {
+	if (!formData.work_date || !formData.work_time) return ''
+	return `${formData.work_date}T${formData.work_time}`
+}
+
+const splitScheduledAtValue = value => {
+	if (!value) return { date: '', time: '' }
+
+	const normalized = String(value).trim().replace(' ', 'T')
+	const match = normalized.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/)
+
+	return match
+		? { date: match[1], time: match[2] }
+		: { date: '', time: '' }
+}
+
+const getMinimumScheduleComparable = (formData, userRole) => {
+	if (userRole === 'ADMIN') return null
+
+	const now = getAlmatyNowParts()
+	const nowComparable = localDateTimeToComparable(`${now.date}T${now.time}`)
+
+	if (formData.work_format !== 'Выезд к клиенту') {
+		return nowComparable
+	}
+
+	const leadMinutes =
+		VISIT_MINIMUM_LEAD_MINUTES[formData.visit_price_code] ?? 25
+
+	return nowComparable + leadMinutes * 60 * 1000
+}
+
+const ceilComparableToHalfHour = value => {
+	const date = new Date(value)
+	date.setUTCSeconds(0, 0)
+
+	const minutes = date.getUTCMinutes()
+	if (minutes !== 0 && minutes !== 30) {
+		date.setUTCMinutes(minutes + (30 - (minutes % 30)))
+	}
+
+	return date.getTime()
+}
+
+const getNextAvailableSlotComparable = value => {
+	const date = new Date(ceilComparableToHalfHour(value))
+	const totalMinutes = date.getUTCHours() * 60 + date.getUTCMinutes()
+
+	if (totalMinutes < FIRST_AVAILABLE_TIME_MINUTES) {
+		date.setUTCHours(FIRST_AVAILABLE_TIME_MINUTES / 60, 0, 0, 0)
+	} else if (totalMinutes > LAST_AVAILABLE_TIME_MINUTES) {
+		date.setUTCDate(date.getUTCDate() + 1)
+		date.setUTCHours(FIRST_AVAILABLE_TIME_MINUTES / 60, 0, 0, 0)
+	}
+
+	return date.getTime()
+}
+
 const getClientPaymentTypeLabel = paymentType => {
 	if (paymentType === 'POSTPAYMENT') return 'Постоплата'
 	return 'Предоплата'
@@ -310,6 +459,7 @@ export default function CreateRequestModal({
 		has_power_restore: false,
 		work_address: '',
 		work_date: '',
+		work_time: '',
 		schedule_approval_reason: '',
 
 		platform: '',
@@ -349,6 +499,7 @@ export default function CreateRequestModal({
 		has_power_restore: false,
 		work_address: '',
 		work_date: '',
+		work_time: '',
 		schedule_approval_reason: '',
 
 		platform: '',
@@ -366,6 +517,7 @@ export default function CreateRequestModal({
 
 		if (isEditMode && editRequestData) {
 			setClientKind('existing')
+			const scheduledAt = splitScheduledAtValue(editRequestData.scheduled_at)
 
 			setFormData({
 				client_id: editRequestData.client_id || '',
@@ -390,14 +542,15 @@ export default function CreateRequestModal({
 						: 'В офисе',
 
 				visit_price_code:
-					editRequestData.visit_type === 'ON_SITE' ? 'ON_SITE_CITY' : '',
+					editRequestData.visit_type === 'ON_SITE'
+						? editRequestData.visit_price_code || 'ON_SITE_CITY'
+						: '',
 				visit_km: '',
 				has_power_restore: false,
 
 				work_address: editRequestData.address || '',
-				work_date: editRequestData.scheduled_at
-					? new Date(editRequestData.scheduled_at).toISOString().slice(0, 16)
-					: '',
+				work_date: scheduledAt.date,
+				work_time: scheduledAt.time,
 				schedule_approval_reason:
 					editRequestData.schedule_approval_reason || '',
 
@@ -1107,10 +1260,13 @@ export default function CreateRequestModal({
 	const isWorkingScheduleTime = value => {
 		if (!value) return true
 
-		const date = new Date(value)
-		const day = date.getDay()
-		const hours = date.getHours()
-		const minutes = date.getMinutes()
+		const comparable = localDateTimeToComparable(value)
+		if (comparable === null) return false
+
+		const date = new Date(comparable)
+		const day = date.getUTCDay()
+		const hours = date.getUTCHours()
+		const minutes = date.getUTCMinutes()
 		const totalMinutes = hours * 60 + minutes
 
 		const start = 10 * 60
@@ -1123,6 +1279,16 @@ export default function CreateRequestModal({
 
 	const validateForm = () => {
 		const required = []
+		const scheduledAt = getScheduledAtValue(formData)
+		const originalScheduledAtParts = splitScheduledAtValue(
+			editRequestData?.scheduled_at,
+		)
+		const originalScheduledAt =
+			originalScheduledAtParts.date && originalScheduledAtParts.time
+				? `${originalScheduledAtParts.date}T${originalScheduledAtParts.time}`
+				: ''
+		const scheduleWasChanged =
+			!isEditMode || scheduledAt !== originalScheduledAt
 
 		if (!formData.client_name.trim()) required.push('client_name')
 		if (!formData.phone.trim()) required.push('phone')
@@ -1164,12 +1330,27 @@ export default function CreateRequestModal({
 			required.push('work_date')
 		}
 
+		if (!formData.work_time) {
+			required.push('work_time')
+		}
+
 		if (
-			formData.work_date &&
-			!isWorkingScheduleTime(formData.work_date) &&
+			scheduleWasChanged &&
+			scheduledAt &&
+			!isWorkingScheduleTime(scheduledAt) &&
+			userRole !== 'ADMIN' &&
 			!formData.schedule_approval_reason.trim()
 		) {
 			required.push('schedule_approval_reason')
+		}
+
+		if (
+			!isEditMode &&
+			formData.work_format === 'Выезд к клиенту' &&
+			formData.visit_price_code === 'BUSINESS_TRIP_KM' &&
+			(!formData.visit_km || Number(formData.visit_km) <= 0)
+		) {
+			required.push('visit_km')
 		}
 
 		if (!isEditMode) {
@@ -1212,6 +1393,37 @@ export default function CreateRequestModal({
 			setMissingFields(required)
 			setError('Пожалуйста, заполните все обязательные поля.')
 			return false
+		}
+
+		if (
+			scheduleWasChanged &&
+			!HALF_HOUR_OPTIONS.includes(formData.work_time)
+		) {
+			setMissingFields(['work_time'])
+			setError(
+				'Время начала работ должно быть в диапазоне с 08:00 до 20:00 с шагом 30 минут.',
+			)
+			return false
+		}
+
+		if (scheduleWasChanged && userRole !== 'ADMIN') {
+			const selectedComparable = localDateTimeToComparable(scheduledAt)
+			const minimumComparable = getMinimumScheduleComparable(formData, userRole)
+
+			if (
+				selectedComparable === null ||
+				selectedComparable < minimumComparable
+			) {
+				const earliest = comparableToLocalDateTime(
+					getNextAvailableSlotComparable(minimumComparable),
+				)
+
+				setMissingFields(['work_date', 'work_time'])
+				setError(
+					`Для выбранного формата ближайшее доступное время: ${earliest.date} ${earliest.time}.`,
+				)
+				return false
+			}
 		}
 
 		return true
@@ -1290,6 +1502,7 @@ export default function CreateRequestModal({
 
 		try {
 			const headers = getJsonAuthHeaders()
+			const scheduledAt = getScheduledAtValue(formData)
 
 			validateDuplicateVinsInForm()
 
@@ -1341,11 +1554,15 @@ export default function CreateRequestModal({
 				work_type: mapWorkTypeToAPI(formData.work_type),
 				visit_type:
 					formData.work_format === 'Выезд к клиенту' ? 'ON_SITE' : 'IN_OFFICE',
+				visit_price_code:
+					formData.work_format === 'Выезд к клиенту'
+						? formData.visit_price_code || 'ON_SITE_CITY'
+						: null,
 				platform: formData.platform.trim(),
-				scheduled_at: formData.work_date || null,
+				scheduled_at: scheduledAt || null,
 				schedule_approval_reason:
-					formData.work_date && !isWorkingScheduleTime(formData.work_date)
-						? formData.schedule_approval_reason.trim()
+					scheduledAt && !isWorkingScheduleTime(scheduledAt)
+						? formData.schedule_approval_reason.trim() || null
 						: null,
 			}
 
@@ -1511,11 +1728,6 @@ export default function CreateRequestModal({
 				body: JSON.stringify({
 					client_id: finalClientId,
 					...basePayload,
-					scheduled_at: formData.work_date || null,
-					schedule_approval_reason:
-						formData.work_date && !isWorkingScheduleTime(formData.work_date)
-							? formData.schedule_approval_reason.trim()
-							: null,
 					vehicles: finalVehicles,
 					price: requestPricePayload,
 				}),
@@ -1757,6 +1969,15 @@ export default function CreateRequestModal({
 	const calculatePrice = async () => {
 		if (isEditMode) return
 
+		if (
+			formData.work_format === 'Выезд к клиенту' &&
+			formData.visit_price_code === 'BUSINESS_TRIP_KM' &&
+			(!formData.visit_km || Number(formData.visit_km) <= 0)
+		) {
+			setPriceCalculation({ total_price: 0, lines: [], currency: 'KZT' })
+			return
+		}
+
 		try {
 			setPriceLoading(true)
 
@@ -1802,6 +2023,107 @@ export default function CreateRequestModal({
 	}
 
 	const displayedPriceCalculation = buildDisplayedPriceCalculation()
+	const minimumScheduleComparable = getMinimumScheduleComparable(
+		formData,
+		userRole,
+	)
+	const minimumWorkDate =
+		userRole === 'ADMIN' || minimumScheduleComparable === null
+			? undefined
+			: comparableToLocalDateTime(
+					getNextAvailableSlotComparable(minimumScheduleComparable),
+				).date
+
+	const isTimeOptionDisabledForDate = (date, time) => {
+		if (userRole === 'ADMIN' || !date) return false
+
+		const candidate = localDateTimeToComparable(`${date}T${time}`)
+
+		return candidate === null || candidate < minimumScheduleComparable
+	}
+
+	const isTimeOptionDisabled = time => {
+		return isTimeOptionDisabledForDate(formData.work_date, time)
+	}
+
+	const selectedTimeMatch = String(formData.work_time || '').match(
+		/^(\d{2}):(\d{2})$/,
+	)
+	const selectedWorkHour = selectedTimeMatch?.[1] || ''
+	const selectedWorkMinute = selectedTimeMatch?.[2] || ''
+
+	const getMinuteOptionsForHour = hour =>
+		hour === '20' ? ['00'] : MINUTE_OPTIONS
+
+	const isHourOptionDisabled = hour =>
+		getMinuteOptionsForHour(hour).every(minute =>
+			isTimeOptionDisabled(`${hour}:${minute}`),
+		)
+
+	const isMinuteOptionDisabled = minute => {
+		if (!selectedWorkHour || !HOUR_OPTIONS.includes(selectedWorkHour)) {
+			return true
+		}
+
+		return (
+			!getMinuteOptionsForHour(selectedWorkHour).includes(minute) ||
+			isTimeOptionDisabled(`${selectedWorkHour}:${minute}`)
+		)
+	}
+
+	const handleWorkHourChange = event => {
+		const hour = event.target.value
+
+		if (!hour) {
+			setFormData(prev => ({ ...prev, work_time: '' }))
+			clearMissingField('work_time')
+			return
+		}
+
+		const availableMinutes = getMinuteOptionsForHour(hour)
+		const nextMinute =
+			availableMinutes.includes(selectedWorkMinute) &&
+			!isTimeOptionDisabled(`${hour}:${selectedWorkMinute}`)
+				? selectedWorkMinute
+				: availableMinutes.find(
+						minute => !isTimeOptionDisabled(`${hour}:${minute}`),
+					) || availableMinutes[0]
+
+		setFormData(prev => ({
+			...prev,
+			work_time: `${hour}:${nextMinute}`,
+		}))
+		clearMissingField('work_time')
+	}
+
+	const handleWorkMinuteChange = event => {
+		const minute = event.target.value
+
+		if (!selectedWorkHour || !minute) return
+
+		setFormData(prev => ({
+			...prev,
+			work_time: `${selectedWorkHour}:${minute}`,
+		}))
+		clearMissingField('work_time')
+	}
+
+	const handleWorkDateChange = event => {
+		const date = event.target.value
+		const firstAvailableTime = date
+			? HALF_HOUR_OPTIONS.find(
+					time => !isTimeOptionDisabledForDate(date, time),
+				) || ''
+			: ''
+
+		setFormData(prev => ({
+			...prev,
+			work_date: date,
+			work_time: firstAvailableTime,
+		}))
+		clearMissingField('work_date')
+		clearMissingField('work_time')
+	}
 
 	return (
 		<div className='modal-overlay open'>
@@ -2203,24 +2525,86 @@ export default function CreateRequestModal({
 										/>
 									</label>
 
-									<label className='request-modal-field'>
+									<div className='request-modal-field request-datetime-field'>
 										<span className='request-modal-label required'>
-											Желаемая дата и время выполнения
+											Выберите дату и время
 										</span>
-										<input
-											className={fieldClass('work_date')}
-											type='datetime-local'
-											name='work_date'
-											min={`${new Date().toISOString().slice(0, 10)}T10:00`}
-											value={formData.work_date}
-											onChange={handleChange}
-										/>
-									</label>
 
-									{formData.work_date &&
-										!isWorkingScheduleTime(formData.work_date) && (
+										<div className='request-datetime-controls'>
+											<input
+												className={`${fieldClass('work_date')} request-date-input`}
+												type='date'
+												name='work_date'
+												aria-label='Дата выполнения работ'
+												min={minimumWorkDate}
+												value={formData.work_date}
+												onChange={handleWorkDateChange}
+											/>
+
+											<select
+												className={`${fieldClass('work_time')} request-time-part request-time-hour`}
+												aria-label='Часы выполнения работ'
+												value={selectedWorkHour}
+												onChange={handleWorkHourChange}
+											>
+												<option value=''>Час</option>
+												{isEditMode &&
+													selectedWorkHour &&
+													!HOUR_OPTIONS.includes(selectedWorkHour) && (
+														<option value={selectedWorkHour}>
+															{selectedWorkHour}
+														</option>
+													)}
+												{HOUR_OPTIONS.map(hour => (
+													<option
+														key={hour}
+														value={hour}
+														disabled={isHourOptionDisabled(hour)}
+													>
+														{hour}
+													</option>
+												))}
+											</select>
+
+											<span className='request-time-separator'>:</span>
+
+											<select
+												className={`${fieldClass('work_time')} request-time-part request-time-minute`}
+												aria-label='Минуты выполнения работ'
+												value={selectedWorkMinute}
+												onChange={handleWorkMinuteChange}
+												disabled={
+													!selectedWorkHour ||
+													!HOUR_OPTIONS.includes(selectedWorkHour)
+												}
+											>
+												<option value=''>Мин</option>
+												{isEditMode &&
+													selectedWorkMinute &&
+													!MINUTE_OPTIONS.includes(selectedWorkMinute) && (
+														<option value={selectedWorkMinute}>
+															{selectedWorkMinute}
+														</option>
+													)}
+												{MINUTE_OPTIONS.map(minute => (
+													<option
+														key={minute}
+														value={minute}
+														disabled={isMinuteOptionDisabled(minute)}
+													>
+														{minute}
+													</option>
+												))}
+											</select>
+										</div>
+									</div>
+
+									{getScheduledAtValue(formData) &&
+										!isWorkingScheduleTime(getScheduledAtValue(formData)) && (
 											<label className='request-modal-field request-modal-full'>
-												<span className='request-modal-label required'>
+												<span
+													className={`request-modal-label ${userRole === 'ADMIN' ? '' : 'required'}`}
+												>
 													Причина выбора нерабочего времени
 												</span>
 
@@ -2234,8 +2618,9 @@ export default function CreateRequestModal({
 												/>
 
 												<span className='request-modal-hint warning'>
-													Выбрано нерабочее время. Заявка будет отправлена на
-													согласование администрации.
+													{userRole === 'ADMIN'
+														? 'Выбрано нерабочее время. Администратор может назначить его без согласования.'
+														: 'Выбрано нерабочее время. Заявка будет отправлена на согласование администрации.'}
 												</span>
 											</label>
 										)}
@@ -2324,9 +2709,9 @@ export default function CreateRequestModal({
 											<label className='request-modal-field'>
 												<span className='request-modal-label'>Километраж</span>
 												<input
-													className='request-modal-input'
+													className={fieldClass('visit_km')}
 													type='number'
-													min='0'
+													min='1'
 													name='visit_km'
 													value={formData.visit_km}
 													onChange={handleChange}

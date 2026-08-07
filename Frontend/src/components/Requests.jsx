@@ -51,6 +51,12 @@ const getCurrentUserId = () => {
 	}
 }
 
+const getVisitPriceCodeLabel = code => {
+	if (code === 'ON_SITE_OUTSIDE_CITY') return 'За пределами города'
+	if (code === 'BUSINESS_TRIP_KM') return 'Командировка'
+	return 'В черте города'
+}
+
 export default function Requests() {
 	const [requests, setRequests] = useState([])
 	const [filteredRequests, setFilteredRequests] = useState([])
@@ -190,6 +196,7 @@ export default function Requests() {
 			status: req.status,
 			city: req.city,
 			visit_type: req.visit_type,
+			visit_price_code: req.visit_price_code,
 			address: req.address,
 			scheduled_at: req.scheduled_at,
 			schedule_approval_status: req.schedule_approval_status,
@@ -983,6 +990,9 @@ export default function Requests() {
 					'Формат',
 					req.visit_type === 'ON_SITE' ? 'Выезд к клиенту' : 'В офисе',
 				],
+				...(req.visit_type === 'ON_SITE'
+					? [['Тип выезда', getVisitPriceCodeLabel(req.visit_price_code)]]
+					: []),
 				['Клиент', getClientDisplayName(req)],
 				['Компания', req.company_name || '—'],
 				['Телефон', req.phone || '—'],
@@ -1427,6 +1437,16 @@ export default function Requests() {
 									{req.visit_type === 'ON_SITE' ? (
 										<>
 											Выезд к клиенту
+											<div
+												style={{
+													fontSize: '12px',
+													color: '#2563eb',
+													marginTop: '3px',
+													fontWeight: '700',
+												}}
+											>
+												{getVisitPriceCodeLabel(req.visit_price_code)}
+											</div>
 											{req.address && (
 												<div
 													style={{

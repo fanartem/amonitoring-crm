@@ -22,6 +22,12 @@ from app.permissions import (
 
 router = APIRouter(prefix="/prices", tags=["Prices"])
 
+ALLOWED_VISIT_PRICE_CODES = {
+    "ON_SITE_CITY",
+    "ON_SITE_OUTSIDE_CITY",
+    "BUSINESS_TRIP_KM",
+}
+
 def require_price_read(current_user: dict):
     if not can_view_prices(current_user):
         raise HTTPException(
@@ -876,15 +882,21 @@ def calculate_request_price(
 
             # Транспортные расходы
             if visit_type == "ON_SITE":
-                visit_code = data.visit_price_code or "ON_SITE_CITY"
+                visit_code = (data.visit_price_code or "ON_SITE_CITY").strip().upper()
+
+                if visit_code not in ALLOWED_VISIT_PRICE_CODES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Некорректный тип выезда",
+                    )
 
                 if visit_code == "BUSINESS_TRIP_KM":
                     km = float(data.visit_km or 0)
 
-                    if km < 0:
+                    if km <= 0:
                         raise HTTPException(
                             status_code=400,
-                            detail="Километраж не может быть отрицательным"
+                            detail="Для командировки укажите километраж больше 0"
                         )
 
                     item = get_effective_price(cursor, "BUSINESS_TRIP_KM", data.client_id)

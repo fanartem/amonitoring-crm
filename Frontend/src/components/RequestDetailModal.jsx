@@ -78,6 +78,12 @@ const getPriceSourceLabel = source => {
 	return ''
 }
 
+const getVisitPriceCodeLabel = code => {
+	if (code === 'ON_SITE_OUTSIDE_CITY') return 'За пределами города'
+	if (code === 'BUSINESS_TRIP_KM') return 'Командировка'
+	return 'В черте города'
+}
+
 const scheduleApprovalLabels = {
 	NOT_REQUIRED: 'Согласование не требуется',
 	PENDING: 'Ожидает согласования времени',
@@ -946,15 +952,23 @@ export default function RequestDetailModal({
 											</div>
 
 											{request.visit_type === 'ON_SITE' && (
-												<div className='info-row'>
-													<span className='info-key'>Адрес выезда</span>
-													<span
-														className='info-val'
-														style={{ color: '#c62828', fontWeight: 'bold' }}
-													>
-														{request.address || '—'}
-													</span>
-												</div>
+												<>
+													<div className='info-row'>
+														<span className='info-key'>Тип выезда</span>
+														<span className='info-val'>
+															{getVisitPriceCodeLabel(request.visit_price_code)}
+														</span>
+													</div>
+													<div className='info-row'>
+														<span className='info-key'>Адрес выезда</span>
+														<span
+															className='info-val'
+															style={{ color: '#c62828', fontWeight: 'bold' }}
+														>
+															{request.address || '—'}
+														</span>
+													</div>
+												</>
 											)}
 
 											<div className='info-row'>
