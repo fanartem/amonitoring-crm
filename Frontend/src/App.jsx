@@ -17,6 +17,7 @@ import Inventory from './components/Inventory'
 import Reports from './components/Reports'
 import NewRequestNotice from './components/notifications/NewRequestNotice'
 import Calendar from './components/Calendar'
+import SupportRequests from './components/SupportRequests'
 
 const isTokenExpired = token => {
 	try {
@@ -90,6 +91,7 @@ export default function App() {
 							<Route path='/approvals' element={<Approvals />} />
 							<Route path='/clients' element={<Clients />} />
 							<Route path='/requests' element={<Requests />} />
+							<Route path='/support-requests' element={<SupportRequests />} />
 							<Route path='/calendar' element={<Calendar />} />
 							<Route path='/employees' element={<Employees />} />
 							<Route path='/settings' element={<Settings />} />

@@ -51,6 +51,10 @@ export default function Sidebar() {
 		'ACCOUNTANT',
 	].includes(userRole)
 
+	const canViewSupportRequests = !['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(
+		userRole,
+	)
+
 	// Закрытие сайдбара при клике вне его (для мобилок)
 	useEffect(() => {
 		const handleOutsideClick = e => {
@@ -90,7 +94,7 @@ export default function Sidebar() {
 					<i className='fa-solid fa-calendar-days'></i>
 					<span className='link-text'>Календарь</span>
 				</NavLink>
-				
+
 				<NavLink
 					to='/requests'
 					className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -99,6 +103,17 @@ export default function Sidebar() {
 					<i className='fa-solid fa-clipboard-list'></i>
 					<span className='link-text'>Заявки</span>
 				</NavLink>
+
+				{canViewSupportRequests && (
+					<NavLink
+						to='/support-requests'
+						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+						onClick={handleMenuClick}
+					>
+						<i className='fa-solid fa-headset'></i>
+						<span className='link-text'>Тех. поддержка</span>
+					</NavLink>
+				)}
 
 				{canViewClients && (
 					<NavLink

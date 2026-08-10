@@ -17,6 +17,7 @@ from app.routers import (
     prices,
     notifications,
     attachments,
+    support_requests,
 )
 
 load_dotenv()
@@ -44,6 +45,7 @@ app.add_middleware(
 
 app.include_router(clients.router)
 app.include_router(requests.router)
+app.include_router(support_requests.router)
 app.include_router(vehicles.router)
 app.include_router(auth.router)
 app.include_router(admin.router)

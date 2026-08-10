@@ -1477,6 +1477,366 @@
 	font-weight: 700;
 }
 
+/* --- Support requests --- */
+
+.support-requests-page .request-card {
+	min-height: 150px;
+}
+
+.support-request-card {
+	padding-right: 160px;
+}
+
+.support-card-subtitle {
+	display: inline-block;
+	margin-top: 4px;
+	color: #6b7280;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.35;
+}
+
+.support-problem-column {
+	flex: 1.4;
+}
+
+.support-problem-preview {
+	display: -webkit-box;
+	-webkit-line-clamp: 4;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	white-space: pre-wrap;
+	line-height: 1.4;
+}
+
+.support-priority-badge {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	margin-top: 7px;
+	padding: 4px 10px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 800;
+	line-height: 1.1;
+	border: 1px solid transparent;
+}
+
+.support-priority-low {
+	background: #f3f4f6;
+	color: #4b5563;
+	border-color: #d1d5db;
+}
+
+.support-priority-normal {
+	background: #e8f5e9;
+	color: #2e7d32;
+	border-color: #c8e6c9;
+}
+
+.support-priority-high {
+	background: #fff8e1;
+	color: #9a5b00;
+	border-color: #ffe0a3;
+}
+
+.support-priority-urgent {
+	background: #ffebee;
+	color: #c62828;
+	border-color: #ffcdd2;
+}
+
+.support-modal-window {
+	width: 860px;
+	max-width: 96%;
+}
+
+.support-form {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow-y: auto;
+	background: #f7f7f7;
+}
+
+.support-form .info-card {
+	margin: 15px 20px 0;
+}
+
+.support-form-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px;
+}
+
+.support-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.support-field-full {
+	grid-column: 1 / -1;
+}
+
+.support-label {
+	color: #6b7280;
+	font-size: 12px;
+	font-weight: 800;
+	text-transform: uppercase;
+	letter-spacing: 0.4px;
+}
+
+.support-label.required::after {
+	content: ' *';
+	color: #c62828;
+}
+
+.support-input,
+.support-textarea {
+	width: 100%;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 10px 11px;
+	font-size: 14px;
+	font-family: inherit;
+	outline: none;
+	background: #fff;
+	color: #222;
+	box-sizing: border-box;
+}
+
+.support-input:focus,
+.support-textarea:focus {
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.support-textarea {
+	resize: vertical;
+	min-height: 120px;
+	line-height: 1.45;
+}
+
+.support-field-error {
+	border-color: #c62828 !important;
+	box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.1) !important;
+}
+
+.support-checkbox-row {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	gap: 8px;
+	margin-top: 14px;
+	padding: 8px 11px;
+	border-radius: 999px;
+	background: #f8fbf4;
+	border: 1px solid #d8e7c8;
+	color: #4f7d22;
+	font-size: 13px;
+	font-weight: 700;
+	cursor: pointer;
+	user-select: none;
+}
+
+.support-checkbox-row input {
+	margin: 0;
+	cursor: pointer;
+}
+
+.support-checkbox-row:has(input:disabled) {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.support-searchable-select {
+	position: relative;
+	width: 100%;
+}
+
+.support-searchable-control {
+	position: relative;
+	display: flex;
+	align-items: center;
+	width: 100%;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	background: #fff;
+	transition:
+		border-color 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.support-searchable-control:focus-within {
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.support-searchable-control.disabled {
+	background: #f5f5f5;
+	color: #999;
+}
+
+.support-searchable-control input {
+	width: 100%;
+	border: none;
+	outline: none;
+	background: transparent;
+	padding: 10px 34px 10px 11px;
+	font-size: 14px;
+	color: #222;
+	box-sizing: border-box;
+}
+
+.support-searchable-clear,
+.support-searchable-arrow {
+	position: absolute;
+	right: 9px;
+	top: 50%;
+	transform: translateY(-50%);
+	border: none;
+	background: transparent;
+	color: #777;
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.support-searchable-arrow {
+	pointer-events: none;
+	font-size: 13px;
+}
+
+.support-searchable-dropdown {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: calc(100% + 5px);
+	max-height: 260px;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
+	z-index: 300;
+	padding: 6px 0;
+}
+
+.support-searchable-option {
+	padding: 9px 12px;
+	font-size: 13px;
+	color: #1f2937;
+	cursor: pointer;
+	line-height: 1.35;
+}
+
+.support-searchable-option:hover {
+	background: #f8fbf4;
+}
+
+.support-searchable-option.selected {
+	background: #eef7e8;
+	color: #315f14;
+	font-weight: 800;
+}
+
+.support-searchable-empty,
+.support-searchable-more {
+	padding: 10px 12px;
+	color: #999;
+	font-size: 13px;
+}
+
+.support-description-box {
+	background: #fff;
+	border: 1px solid #eeeeee;
+	border-radius: 10px;
+	padding: 13px 14px;
+	color: #1f2937;
+	font-size: 14px;
+	line-height: 1.55;
+	white-space: pre-wrap;
+}
+
+.support-detail-actions {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 15px;
+}
+
+.support-danger-btn {
+	background: #ffebee;
+	color: #c62828;
+	border: 1px solid #ffcdd2;
+	padding: 7px 15px;
+	border-radius: 6px;
+	cursor: pointer;
+	font-weight: 700;
+	transition: 0.15s ease;
+}
+
+.support-danger-btn:hover {
+	background: #ffcdd2;
+}
+
+.support-edit-buttons {
+	grid-column: 1 / -1;
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+}
+
+.support-footer {
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+	.support-request-card {
+		padding-right: 20px;
+		padding-bottom: 95px;
+	}
+
+	.support-problem-column {
+		flex: 1;
+	}
+}
+
+@media (max-width: 640px) {
+	.support-form-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.support-form .info-card {
+		margin: 12px;
+	}
+
+	.support-modal-window {
+		max-width: 98%;
+	}
+
+	.support-footer {
+		align-items: stretch;
+	}
+
+	.support-footer .footer-group,
+	.support-footer .footer-select {
+		width: 100%;
+	}
+
+	.support-edit-buttons {
+		flex-direction: column;
+	}
+
+	.support-edit-buttons button {
+		width: 100%;
+	}
+}
+
 @media (max-width: 640px) {
 	.status-badge {
 		width: 115px;

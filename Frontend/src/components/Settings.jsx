@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/Settings.css'
 
+const ADMIN_ONLY_NOTIFICATION_TYPES = ['REQUEST_TIME_CONFLICT']
+
 const getUserRole = () => {
 	try {
 		const token = localStorage.getItem('access_token')
@@ -329,6 +331,10 @@ export default function Settings() {
 	}
 
 	const visibleNotificationSettings = notificationSettings.filter(item => {
+		if (ADMIN_ONLY_NOTIFICATION_TYPES.includes(item.type_code)) {
+			return isAdmin
+		}
+
 		if (item.category === 'WAREHOUSE') {
 			return canViewWarehouseNotifications
 		}

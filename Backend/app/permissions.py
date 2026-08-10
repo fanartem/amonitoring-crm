@@ -381,3 +381,92 @@ def can_manage_request_executors(user: dict) -> bool:
     - SENIOR_TECHNICIAN
     """
     return get_role(user) in [ADMIN, ROP, SENIOR_TECHNICIAN]
+
+SUPPORT_REQUEST_ROLES = [
+    ADMIN,
+    ROP,
+    MANAGER,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+    WAREHOUSE_MANAGER,
+]
+
+SUPPORT_REQUEST_ASSIGNEE_ROLES = [
+    ADMIN,
+    ROP,
+    MANAGER,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+    WAREHOUSE_MANAGER,
+]
+
+
+def can_view_support_requests(user: dict) -> bool:
+    """
+    Вкладку техподдержки видят все, кроме обычных и старших монтажников.
+    """
+    return get_role(user) in SUPPORT_REQUEST_ROLES
+
+
+def can_create_support_request(user: dict) -> bool:
+    """
+    Создавать заявки техподдержки могут все роли,
+    которым доступна вкладка техподдержки.
+    """
+    return get_role(user) in SUPPORT_REQUEST_ROLES
+
+
+def can_edit_support_request(user: dict) -> bool:
+    """
+    Редактировать содержание заявки техподдержки могут:
+    ADMIN, ROP, TECH_SUPPORT.
+    """
+    return get_role(user) in [ADMIN, ROP, TECH_SUPPORT]
+
+
+def can_assign_support_request(user: dict) -> bool:
+    """
+    Назначать исполнителя заявки техподдержки могут:
+    ADMIN, ROP, TECH_SUPPORT.
+    """
+    return get_role(user) in [ADMIN, ROP, TECH_SUPPORT]
+
+
+def can_change_support_request_status(user: dict, support_request: dict | None = None) -> bool:
+    """
+    Менять статус могут:
+    - ADMIN
+    - ROP
+    - TECH_SUPPORT
+    - назначенный исполнитель
+    """
+    role = get_role(user)
+
+    if role in [ADMIN, ROP, TECH_SUPPORT]:
+        return True
+
+    if not support_request:
+        return False
+
+    assigned_to = support_request.get("assigned_to")
+
+    return (
+        assigned_to is not None
+        and int(assigned_to) == int(user["id"])
+        and role in SUPPORT_REQUEST_ASSIGNEE_ROLES
+    )
+
+
+def can_delete_support_request(user: dict) -> bool:
+    """
+    Удалять заявки техподдержки могут ADMIN и ROP.
+    """
+    return get_role(user) in [ADMIN, ROP]
+
+
+def can_comment_support_request(user: dict) -> bool:
+    """
+    Комментировать заявки техподдержки могут все роли,
+    которым доступна вкладка техподдержки.
+    """
+    return get_role(user) in SUPPORT_REQUEST_ROLES

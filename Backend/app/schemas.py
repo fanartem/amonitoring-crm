@@ -45,6 +45,28 @@ class CommentCreate(BaseModel):
     request_id: int
     message: str
 
+class SupportRequestCreate(BaseModel):
+    client_id: int
+    vehicle_id: int | None = None
+    contact_phone: str
+    problem_description: str
+    priority: str = "NORMAL"
+    assigned_to: int | None = None
+
+
+class SupportRequestUpdate(BaseModel):
+    client_id: int | None = None
+    vehicle_id: int | None = None
+    contact_phone: str | None = None
+    problem_description: str | None = None
+    priority: str | None = None
+    status: str | None = None
+    assigned_to: int | None = None
+
+
+class SupportRequestCommentCreate(BaseModel):
+    message: str
+
 class AssignRequest(BaseModel):
     technician_id: int | None = None
 

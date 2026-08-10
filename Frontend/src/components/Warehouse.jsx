@@ -66,7 +66,8 @@ const HISTORY_ACTIONS = {
 	INSTALLED_FROM_TECH: 'Установлено монтажником',
 	DETACHED_FROM_REQUEST: 'Отвязано от заявки',
 	REMOVAL_COMPLETED_MARKED_USED: 'Снято по заявке и помечено как БУ',
-	RETURNABLE_CONSUMABLE_RETURNED_AFTER_REMOVAL: 'Возвратный расходник возвращён после снятия',
+	RETURNABLE_CONSUMABLE_RETURNED_AFTER_REMOVAL:
+		'Возвратный расходник возвращён после снятия',
 
 	INSTALLED_TO_VEHICLE_DIRECT: 'Привязано к авто напрямую',
 	CONSUMABLE_USED_TO_VEHICLE_DIRECT: 'Расходник привязан к авто напрямую',
@@ -2647,7 +2648,7 @@ export default function Warehouse() {
 
 														{row.target_user_name && (
 															<div>
-																<strong>Кому сотруднику:</strong>{' '}
+																<strong>Установил:</strong>{' '}
 																{row.target_user_name}
 															</div>
 														)}
