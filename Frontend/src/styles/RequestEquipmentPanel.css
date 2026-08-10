@@ -544,6 +544,120 @@
 	font-weight: 800;
 }
 
+.equipment-vehicle-search-select {
+	position: relative;
+	width: 100%;
+}
+
+.equipment-vehicle-search-control {
+	position: relative;
+	display: flex;
+	align-items: center;
+	width: 100%;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	background: #fff;
+	transition:
+		border-color 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.equipment-vehicle-search-control:focus-within {
+	border-color: #5e9424;
+	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.12);
+}
+
+.equipment-vehicle-search-control.disabled {
+	background: #f5f5f5;
+	color: #999;
+}
+
+.equipment-vehicle-search-control input {
+	width: 100%;
+	border: none;
+	outline: none;
+	background: transparent;
+	padding: 10px 34px 10px 11px;
+	font-size: 14px;
+	color: #222;
+	box-sizing: border-box;
+}
+
+.equipment-vehicle-search-clear,
+.equipment-vehicle-search-arrow {
+	position: absolute;
+	right: 9px;
+	top: 50%;
+	transform: translateY(-50%);
+	border: none;
+	background: transparent;
+	color: #777;
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.equipment-vehicle-search-arrow {
+	pointer-events: none;
+	font-size: 13px;
+}
+
+.equipment-vehicle-search-dropdown {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: calc(100% + 5px);
+	max-height: 280px;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
+	z-index: 300;
+	padding: 6px 0;
+}
+
+.equipment-vehicle-search-option {
+	width: 100%;
+	border: none;
+	background: transparent;
+	text-align: left;
+	padding: 9px 12px;
+	cursor: pointer;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.equipment-vehicle-search-option:hover {
+	background: #f8fbf4;
+}
+
+.equipment-vehicle-search-option.selected {
+	background: #eef7e8;
+}
+
+.equipment-vehicle-search-title {
+	color: #1f2937;
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1.35;
+}
+
+.equipment-vehicle-search-meta {
+	color: #6b7280;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.25;
+}
+
+.equipment-vehicle-search-empty,
+.equipment-vehicle-search-more {
+	padding: 10px 12px;
+	color: #999;
+	font-size: 13px;
+}
+
 @media (max-width: 768px) {
 	.equipment-detach-actions {
 		width: 100%;

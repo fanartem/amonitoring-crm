@@ -102,14 +102,54 @@ const getItemIdentifier = item => {
 	return null
 }
 
+const getVehicleVin = vehicle => {
+	return vehicle?.vin || vehicle?.vehicle_vin || ''
+}
+
+const getVehiclePlate = vehicle => {
+	return vehicle?.plate_number || vehicle?.vehicle_plate_number || ''
+}
+
 const getVehicleTitle = vehicle => {
 	if (!vehicle) return 'Автомобиль'
 
 	const title =
 		`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() || 'Автомобиль'
-	const plate = vehicle.plate_number ? ` · ${vehicle.plate_number}` : ''
 
-	return `${title}${plate}`
+	const plate = getVehiclePlate(vehicle) || 'без госномера'
+	const vin = getVehicleVin(vehicle)
+
+	return `${title} · ${plate}${vin ? ` · VIN: ${vin}` : ' · VIN не указан'}`
+}
+
+const getVehicleShortVin = vehicle => {
+	const vin = getVehicleVin(vehicle)
+
+	if (!vin) return ''
+
+	return vin.slice(-6)
+}
+
+const normalizeVehicleSearch = value => {
+	return String(value || '')
+		.toLowerCase()
+		.replace(/\s+/g, '')
+}
+
+const getVehicleSearchText = vehicle => {
+	const vin = getVehicleVin(vehicle)
+
+	return [
+		vehicle?.brand,
+		vehicle?.model,
+		getVehiclePlate(vehicle),
+		vin,
+		vin ? vin.slice(-8) : '',
+		vin ? vin.slice(-6) : '',
+		vin ? vin.slice(-4) : '',
+	]
+		.filter(Boolean)
+		.join(' ')
 }
 
 const getAvailableQuantity = item => {
@@ -148,6 +188,153 @@ const getItemOptionTitle = item => {
 	].filter(Boolean)
 
 	return parts.join(' — ')
+}
+
+function VehicleSearchSelect({ vehicles, value, onChange, disabled = false }) {
+	const [query, setQuery] = useState('')
+	const [isOpen, setIsOpen] = useState(false)
+	const wrapperRef = useRef(null)
+
+	useEffect(() => {
+		const handleClickOutside = event => {
+			if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+				setIsOpen(false)
+				setQuery('')
+			}
+		}
+
+		document.addEventListener('mousedown', handleClickOutside)
+
+		return () => {
+			document.removeEventListener('mousedown', handleClickOutside)
+		}
+	}, [])
+
+	const selectedVehicle = vehicles.find(
+		vehicle => String(vehicle.request_vehicle_id) === String(value),
+	)
+
+	const inputValue = isOpen
+		? query
+		: selectedVehicle
+			? getVehicleTitle(selectedVehicle)
+			: ''
+
+	const normalizedQuery = normalizeVehicleSearch(query)
+
+	const filteredVehicles = normalizedQuery
+		? vehicles.filter(vehicle =>
+				normalizeVehicleSearch(getVehicleSearchText(vehicle)).includes(
+					normalizedQuery,
+				),
+			)
+		: vehicles
+
+	const handleSelect = vehicle => {
+		onChange(String(vehicle.request_vehicle_id))
+		setQuery('')
+		setIsOpen(false)
+	}
+
+	const handleClear = e => {
+		e.stopPropagation()
+		onChange('')
+		setQuery('')
+		setIsOpen(false)
+	}
+
+	return (
+		<div className='equipment-vehicle-search-select' ref={wrapperRef}>
+			<div
+				className={`equipment-vehicle-search-control ${
+					disabled ? 'disabled' : ''
+				}`}
+				onClick={() => {
+					if (!disabled) setIsOpen(true)
+				}}
+			>
+				<input
+					type='text'
+					value={inputValue}
+					disabled={disabled}
+					placeholder='Введите модель, госномер или последние символы VIN'
+					onFocus={() => {
+						if (!disabled) {
+							setIsOpen(true)
+							setQuery('')
+						}
+					}}
+					onChange={e => {
+						setQuery(e.target.value)
+						setIsOpen(true)
+					}}
+					onKeyDown={e => {
+						if (e.key === 'Escape') {
+							setIsOpen(false)
+							setQuery('')
+						}
+
+						if (e.key === 'Enter') {
+							e.preventDefault()
+							e.stopPropagation()
+
+							if (isOpen && filteredVehicles.length > 0) {
+								handleSelect(filteredVehicles[0])
+							}
+						}
+					}}
+				/>
+
+				{value && !disabled ? (
+					<button
+						type='button'
+						className='equipment-vehicle-search-clear'
+						onClick={handleClear}
+					>
+						×
+					</button>
+				) : (
+					<span className='equipment-vehicle-search-arrow'>▾</span>
+				)}
+			</div>
+
+			{isOpen && !disabled && (
+				<div className='equipment-vehicle-search-dropdown'>
+					{filteredVehicles.length === 0 ? (
+						<div className='equipment-vehicle-search-empty'>
+							Авто не найдено. Можно искать по последним символам VIN.
+						</div>
+					) : (
+						filteredVehicles.slice(0, 80).map(vehicle => (
+							<button
+								key={vehicle.request_vehicle_id}
+								type='button'
+								className={`equipment-vehicle-search-option ${
+									String(vehicle.request_vehicle_id) === String(value)
+										? 'selected'
+										: ''
+								}`}
+								onMouseDown={e => {
+									e.preventDefault()
+									handleSelect(vehicle)
+								}}
+							>
+								<span className='equipment-vehicle-search-title'>
+									{getVehicleTitle(vehicle)}
+								</span>
+							</button>
+						))
+					)}
+
+					{filteredVehicles.length > 80 && (
+						<div className='equipment-vehicle-search-more'>
+							Показаны первые 80 совпадений. Уточните поиск.
+						</div>
+					)}
+				</div>
+			)}
+		</div>
+	)
 }
 
 export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
@@ -613,27 +800,16 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 					<div className='equipment-form-grid'>
 						<label className='equipment-field equipment-full'>
 							<span>Автомобиль в заявке</span>
-							<select
-								className='equipment-input'
+							<VehicleSearchSelect
+								vehicles={vehicles}
 								value={selectedRequestVehicleId}
-								onChange={e => {
-									setSelectedRequestVehicleId(e.target.value)
+								onChange={value => {
+									setSelectedRequestVehicleId(value)
 									setSelectedItemId('')
 									setQuantity(1)
 									setInstalledByUserId('')
 								}}
-							>
-								<option value=''>— выберите автомобиль —</option>
-
-								{vehicles.map(vehicle => (
-									<option
-										key={vehicle.request_vehicle_id}
-										value={vehicle.request_vehicle_id}
-									>
-										{getVehicleTitle(vehicle)}
-									</option>
-								))}
-							</select>
+							/>
 						</label>
 
 						{canManageEquipment && (
@@ -801,11 +977,16 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 								const title = vehicle
 									? getVehicleTitle(vehicle)
-									: `${fallbackVehicle.brand || ''} ${fallbackVehicle.vehicle_model || ''} ${
-											fallbackVehicle.plate_number
-												? `· ${fallbackVehicle.plate_number}`
-												: ''
-										}`.trim() || 'Автомобиль'
+									: [
+											`${fallbackVehicle.brand || ''} ${fallbackVehicle.vehicle_model || ''}`.trim() ||
+												'Автомобиль',
+											fallbackVehicle.plate_number || 'без госномера',
+											fallbackVehicle.vin
+												? `VIN: ${fallbackVehicle.vin}`
+												: 'VIN не указан',
+										]
+											.filter(Boolean)
+											.join(' · ')
 
 								return (
 									<div
