@@ -453,3 +453,460 @@
 		font-size: 12px;
 	}
 }
+
+/* === Кнопка "показать все" в шапке карточки === */
+
+.reports-card-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	border: 1px solid #d8e8c6;
+	background: #f4f8ef;
+	color: #4a7a1c;
+	padding: 5px 11px;
+	border-radius: 999px;
+	font-family: inherit;
+	font-size: 12.5px;
+	font-weight: 700;
+	cursor: pointer;
+	white-space: nowrap;
+	transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.reports-card-link:hover {
+	background: #e6f0da;
+	border-color: #b9d497;
+	color: #2e5902;
+}
+
+.reports-card-link i {
+	font-size: 10px;
+}
+
+/* Строка без вложенной разбивки — не кликается */
+
+.reports-tech-row-toggle:disabled {
+	cursor: default;
+	color: inherit;
+	opacity: 1;
+}
+
+.reports-tech-row-toggle:disabled:hover {
+	background: transparent;
+}
+
+.reports-tech-row-toggle:disabled .reports-tech-chevron {
+	visibility: hidden;
+}
+
+/* === Модальное окно с полным списком === */
+
+.reports-modal-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 1000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px 16px;
+	background: rgba(24, 32, 18, 0.45);
+	animation: reportsModalFade 0.15s ease;
+}
+
+.reports-modal {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: 620px;
+	max-height: 85vh;
+	background: #fff;
+	border-radius: 14px;
+	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+	overflow: hidden;
+	animation: reportsModalRise 0.18s ease;
+}
+
+.reports-modal-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 18px 20px 12px;
+	border-bottom: 1px solid #eef1ea;
+}
+
+.reports-modal-title {
+	margin: 0;
+	color: #2e5902;
+	font-size: 17px;
+}
+
+.reports-modal-note {
+	margin: 6px 0 0;
+	color: #6b7280;
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+
+.reports-modal-close {
+	flex-shrink: 0;
+	width: 30px;
+	height: 30px;
+	border: none;
+	border-radius: 8px;
+	background: #f4f8ef;
+	color: #5c6f4e;
+	font-size: 15px;
+	cursor: pointer;
+	transition: background 0.15s ease, color 0.15s ease;
+}
+
+.reports-modal-close:hover {
+	background: #e6f0da;
+	color: #2e5902;
+}
+
+.reports-modal-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	padding: 14px 20px 0;
+}
+
+.reports-modal-search {
+	flex: 1 1 200px;
+	min-width: 0;
+	box-sizing: border-box;
+	padding: 8px 12px;
+	border: 1px solid #ddd;
+	border-radius: 8px;
+	font-family: inherit;
+	font-size: 13px;
+	color: #333;
+	outline: none;
+	background: #fff;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.reports-modal-search::placeholder {
+	color: #aaa;
+}
+
+.reports-modal-search:focus {
+	border-color: #8dc63f;
+	box-shadow: 0 0 0 3px rgba(141, 198, 63, 0.12);
+}
+
+.reports-modal-meta {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	flex-wrap: wrap;
+	padding: 10px 20px 0;
+	color: #9ca3af;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.reports-modal-body {
+	flex: 1;
+	overflow-y: auto;
+	padding: 14px 20px 20px;
+}
+
+.reports-modal-body .reports-bar-row {
+	grid-template-columns: minmax(120px, 240px) 1fr minmax(42px, auto);
+}
+
+.reports-modal-body .reports-tech-client-row {
+	grid-template-columns: minmax(90px, 200px) 1fr minmax(30px, auto);
+}
+
+@keyframes reportsModalFade {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes reportsModalRise {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.reports-modal-backdrop,
+	.reports-modal {
+		animation: none !important;
+	}
+}
+
+@media (max-width: 768px) {
+	.reports-modal-backdrop {
+		padding: 0;
+	}
+
+	.reports-modal {
+		max-width: none;
+		max-height: 100vh;
+		height: 100vh;
+		border-radius: 0;
+	}
+
+	.reports-modal-body .reports-bar-row {
+		grid-template-columns: minmax(90px, 150px) 1fr 34px;
+	}
+}
+
+
+/* === Личная статистика менеджера === */
+
+.reports-personal {
+	border-color: #d4e6c3;
+	background: linear-gradient(180deg, #fbfdf8 0%, #fff 55%);
+}
+
+.reports-personal-cards {
+	margin: 4px 0 0;
+}
+
+.reports-summary-card-money {
+	background: #f2f9ee;
+	border-color: #d4e6c3;
+}
+
+.reports-summary-value-money {
+	font-size: 19px;
+	letter-spacing: -0.2px;
+	word-break: break-word;
+}
+
+.reports-personal-hint {
+	margin-top: 14px;
+	padding: 9px 12px;
+	border-radius: 8px;
+	background: #f8faf5;
+	color: #6b7280;
+	font-size: 12.5px;
+}
+
+.reports-personal-revenue {
+	margin-top: 18px;
+	padding-top: 16px;
+	border-top: 1px solid #eef1ea;
+}
+
+.reports-personal-revenue .reports-card-header h3 {
+	font-size: 14px;
+}
+
+.reports-personal-revenue .reports-bar-row {
+	grid-template-columns: minmax(90px, 170px) 1fr minmax(78px, auto);
+}
+
+.reports-personal-revenue .reports-tech-client-row {
+	grid-template-columns: minmax(80px, 140px) 1fr minmax(72px, auto);
+}
+
+.reports-personal-apply {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid #eef1ea;
+	color: #5c6f4e;
+	font-size: 12.5px;
+	font-weight: 600;
+	cursor: pointer;
+	user-select: none;
+}
+
+.reports-personal-apply input {
+	width: 15px;
+	height: 15px;
+	accent-color: #5e9424;
+	cursor: pointer;
+}
+
+/* Денежные значения в модальном окне шире обычных счётчиков */
+
+.reports-modal-body .reports-bar-row-count,
+.reports-personal-revenue .reports-bar-row-count {
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+	.reports-summary-value-money {
+		font-size: 16px;
+	}
+
+	.reports-personal-revenue .reports-bar-row {
+		grid-template-columns: minmax(70px, 110px) 1fr minmax(70px, auto);
+	}
+}
+
+
+/* === Переключатель режима отчёта (общий / по менеджерам) === */
+
+.reports-mode-switch {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.reports-mode-switch .filter-select {
+	min-width: 220px;
+}
+
+.reports-personal-hint-top {
+	margin-top: 0;
+	margin-bottom: 4px;
+}
+
+/* === Список менеджеров === */
+
+.reports-managers-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.reports-manager-row {
+	display: grid;
+	grid-template-columns: minmax(120px, 200px) 1fr auto auto 14px;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid #e2e8dc;
+	border-radius: 10px;
+	background: #fff;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: border-color 0.15s ease, background 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.reports-manager-row:hover {
+	border-color: #b9d497;
+	background: #f8faf5;
+	box-shadow: 0 2px 8px rgba(46, 89, 2, 0.06);
+}
+
+.reports-manager-name {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	font-size: 13.5px;
+	font-weight: 700;
+	color: #1f2937;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.reports-manager-role {
+	flex-shrink: 0;
+	padding: 1px 7px;
+	border-radius: 999px;
+	background: #eef1ea;
+	color: #6b7280;
+	font-size: 10.5px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.3px;
+}
+
+.reports-manager-bar {
+	height: 8px;
+	border-radius: 999px;
+	background: #f1f3f5;
+	overflow: hidden;
+}
+
+.reports-manager-bar-fill {
+	display: block;
+	height: 100%;
+	border-radius: 999px;
+	background: #5e9424;
+	transition: width 0.2s ease;
+}
+
+.reports-manager-metric {
+	white-space: nowrap;
+	font-size: 12.5px;
+	color: #6b7280;
+	font-variant-numeric: tabular-nums;
+}
+
+.reports-manager-metric b {
+	color: #333;
+	font-size: 14px;
+}
+
+.reports-manager-money {
+	min-width: 110px;
+	text-align: right;
+	font-weight: 700;
+	color: #2e7d32;
+}
+
+.reports-manager-chevron {
+	font-size: 11px;
+	color: #9ab873;
+}
+
+@media (max-width: 900px) {
+	.reports-manager-row {
+		grid-template-columns: 1fr auto;
+		grid-template-areas:
+			'name money'
+			'bar bar'
+			'count count';
+		gap: 8px;
+	}
+
+	.reports-manager-name {
+		grid-area: name;
+	}
+
+	.reports-manager-bar {
+		grid-area: bar;
+	}
+
+	.reports-manager-metric:not(.reports-manager-money) {
+		grid-area: count;
+	}
+
+	.reports-manager-money {
+		grid-area: money;
+		min-width: 0;
+	}
+
+	.reports-manager-chevron {
+		display: none;
+	}
+
+	.reports-mode-switch {
+		width: 100%;
+	}
+
+	.reports-mode-switch .filter-select {
+		flex: 1;
+		min-width: 0;
+	}
+}
