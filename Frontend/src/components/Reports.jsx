@@ -634,6 +634,750 @@ function ManagerLeaderboard({
 	)
 }
 
+// === Отчёт по складу ===
+// Массовой выгрузки движений в API нет — историю приходится собирать по
+// каждой позиции (/warehouse/items/{id}/history), поэтому агрегация здесь.
+
+// При перемещении расходников пишутся ДВЕ записи (списание из исходной
+// позиции и зачисление в целевую) с одинаковыми городами и количеством.
+// Считаем только одну из пары, иначе цифры удвоятся.
+const WAREHOUSE_DUPLICATE_ACTIONS = new Set([
+	'CONSUMABLE_TRANSFERRED_IN',
+	'IMPORT_CONSUMABLE_TRANSFERRED_IN',
+	'CONSUMABLE_INVENTORY_TRANSFERRED_IN',
+	'CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_IN',
+	'CONSUMABLE_ASSIGNED_TO_TECH',
+	'CONSUMABLE_RETURNED_TO_STOCK',
+])
+
+// Не меняют количество на складе
+const WAREHOUSE_IGNORED_ACTIONS = new Set(['UPDATED'])
+
+// Действие задаёт только причину. Направление (приход/расход) считается по
+// городам самой записи, поэтому новый тип действия не выпадет из отчёта.
+const WAREHOUSE_ACTION_REASONS = {
+	CREATED: 'NEW',
+	IMPORT_CREATED: 'NEW',
+	IMPORT_CONSUMABLE_ADDED: 'NEW',
+	MANUAL_ADDED_TO_TECH: 'NEW',
+	MANUAL_CONSUMABLE_ADDED_TO_TECH: 'NEW',
+	RESTORED: 'RESTORED',
+
+	CITY_TRANSFERRED: 'TRANSFER',
+	CITY_CHANGED: 'TRANSFER',
+	CONSUMABLE_TRANSFERRED_OUT: 'TRANSFER',
+	IMPORT_SERIALIZED_TRANSFERRED: 'TRANSFER',
+	IMPORT_CONSUMABLE_TRANSFERRED_OUT: 'TRANSFER',
+
+	ASSIGNED_TO_TECH: 'TO_TECH',
+	CONSUMABLE_ASSIGNED_OUT: 'TO_TECH',
+	INVENTORY_TRANSFERRED_TO_USER: 'TO_TECH',
+	CONSUMABLE_INVENTORY_TRANSFERRED_OUT: 'TO_TECH',
+
+	RETURNED_TO_STOCK: 'FROM_TECH',
+	CONSUMABLE_RETURNED_FROM_TECH_OUT: 'FROM_TECH',
+	INVENTORY_TRANSFERRED_TO_STOCK: 'FROM_TECH',
+	CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_OUT: 'FROM_TECH',
+	DETACHED_FROM_REQUEST: 'FROM_TECH',
+	DETACHED_FROM_VEHICLE_DIRECT: 'FROM_TECH',
+
+	INSTALLED_FROM_STOCK: 'INSTALLED',
+	INSTALLED_FROM_TECH: 'INSTALLED',
+	INSTALLED_TO_VEHICLE_DIRECT: 'INSTALLED',
+	CONSUMABLE_USED_FROM_STOCK: 'INSTALLED',
+	CONSUMABLE_USED_FROM_TECH: 'INSTALLED',
+	CONSUMABLE_USED_TO_VEHICLE_DIRECT: 'INSTALLED',
+
+	WRITTEN_OFF: 'WRITTEN_OFF',
+	DELETED: 'WRITTEN_OFF',
+}
+
+const WAREHOUSE_REASON_LABELS = {
+	NEW: 'Новое поступление',
+	RESTORED: 'Восстановлено из корзины',
+	TRANSFER: 'Перемещение между городами',
+	TO_TECH: 'Выдано монтажнику',
+	FROM_TECH: 'Возврат от монтажника',
+	INSTALLED: 'Установлено / израсходовано',
+	WRITTEN_OFF: 'Списание и удаление',
+	OTHER: 'Прочее',
+}
+
+const WAREHOUSE_CATEGORIES = {
+	GPS_TRACKER: 'Трекер',
+	BEACON: 'Маяк',
+	FUEL_SENSOR: 'ДУТ',
+	BLE_SENSOR: 'BLE-датчик',
+	WIRED_SENSOR: 'Пров. датчик',
+	RELAY: 'Реле',
+	CABLE: 'Кабель',
+	CONSUMABLE: 'Расходники',
+	TOOLS: 'Инструменты',
+	FIRST_AID: 'Аптечки',
+	OTHER: 'Другое',
+}
+
+const emptyBucket = () => ({ devices: 0, consumables: 0, total: 0 })
+
+const addToBucket = (bucket, kind, qty) => {
+	bucket[kind] += qty
+	bucket.total += qty
+}
+
+// Ограниченная параллельность: история тянется по одной позиции, без лимита
+// это сотни одновременных запросов к API.
+const runWithConcurrency = async (list, limit, worker, onProgress, isCancelled) => {
+	let index = 0
+	let done = 0
+
+	const runners = Array.from(
+		{ length: Math.min(limit, list.length) },
+		async () => {
+			while (index < list.length) {
+				if (isCancelled()) return
+
+				const current = list[index++]
+
+				try {
+					await worker(current)
+				} catch (err) {
+					// Одна позиция не должна ронять весь отчёт
+					console.error('Ошибка истории позиции:', err)
+				}
+
+				done += 1
+				onProgress(done, list.length)
+			}
+		},
+	)
+
+	await Promise.all(runners)
+}
+
+// Сборка приход/расход из плоского списка движений.
+const aggregateWarehouseMovements = (movements, { dateFrom, dateTo, cityId }) => {
+	const from = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null
+	const to = dateTo ? new Date(`${dateTo}T23:59:59`) : null
+	const cityFilter = cityId ? Number(cityId) : null
+
+	const cities = new Map()
+	const routes = new Map()
+	const items = new Map()
+	const unknownActions = new Set()
+
+	const totals = {
+		in: emptyBucket(),
+		out: emptyBucket(),
+		transfer: emptyBucket(),
+		internal: emptyBucket(),
+	}
+
+	const cityEntry = (id, name) => {
+		const key = id == null ? 'none' : String(id)
+
+		if (!cities.has(key)) {
+			cities.set(key, {
+				key,
+				city_id: id,
+				city_name: name || 'Город не указан',
+				in: emptyBucket(),
+				out: emptyBucket(),
+				internal: emptyBucket(),
+				in_reasons: new Map(),
+				out_reasons: new Map(),
+				internal_reasons: new Map(),
+			})
+		}
+
+		const entry = cities.get(key)
+		if (name && entry.city_name === 'Город не указан') entry.city_name = name
+
+		return entry
+	}
+
+	const add = (id, name, direction, reason, kind, qty) => {
+		const entry = cityEntry(id, name)
+		addToBucket(entry[direction], kind, qty)
+
+		const reasons = entry[`${direction}_reasons`]
+		if (!reasons.has(reason)) reasons.set(reason, emptyBucket())
+		addToBucket(reasons.get(reason), kind, qty)
+	}
+
+	movements.forEach((m) => {
+		if (WAREHOUSE_IGNORED_ACTIONS.has(m.action)) return
+		if (WAREHOUSE_DUPLICATE_ACTIONS.has(m.action)) return
+
+		if (from || to) {
+			const created = new Date(m.created_at)
+			if (from && created < from) return
+			if (to && created > to) return
+		}
+
+		const qty = Math.abs(Number(m.quantity)) || 1
+		const kind = m.is_serialized ? 'devices' : 'consumables'
+
+		if (!WAREHOUSE_ACTION_REASONS[m.action]) unknownActions.add(m.action)
+		const reason = WAREHOUSE_ACTION_REASONS[m.action] || 'OTHER'
+
+		let source = m.from_city_id != null ? Number(m.from_city_id) : null
+		let sourceName = m.from_city_name
+		const target = m.to_city_id != null ? Number(m.to_city_id) : null
+
+		// Списание городов не пишет — берём город самой позиции
+		if (source == null && target == null) {
+			source = m.item_city_id != null ? Number(m.item_city_id) : null
+			sourceName = m.item_city_name
+		}
+
+		const touchesCity =
+			cityFilter == null || source === cityFilter || target === cityFilter
+
+		if (!touchesCity) return
+
+		const itemKey = `${m.item_name}|${m.category}|${m.is_serialized}`
+
+		if (!items.has(itemKey)) {
+			items.set(itemKey, {
+				key: itemKey,
+				name: m.item_name,
+				category: m.category,
+				is_serialized: m.is_serialized,
+				qty_in: 0,
+				qty_out: 0,
+			})
+		}
+
+		const item = items.get(itemKey)
+
+		if (source != null && target != null && source !== target) {
+			add(source, sourceName, 'out', reason, kind, qty)
+			add(target, m.to_city_name, 'in', reason, kind, qty)
+
+			addToBucket(totals.out, kind, qty)
+			addToBucket(totals.in, kind, qty)
+			addToBucket(totals.transfer, kind, qty)
+
+			item.qty_in += qty
+			item.qty_out += qty
+
+			const routeKey = `${source}-${target}`
+
+			if (!routes.has(routeKey)) {
+				routes.set(routeKey, {
+					key: routeKey,
+					from_city_name: sourceName || `ID: ${source}`,
+					to_city_name: m.to_city_name || `ID: ${target}`,
+					...emptyBucket(),
+				})
+			}
+
+			addToBucket(routes.get(routeKey), kind, qty)
+		} else if (source != null && target != null) {
+			add(source, sourceName, 'internal', reason, kind, qty)
+			addToBucket(totals.internal, kind, qty)
+		} else if (target != null) {
+			add(target, m.to_city_name, 'in', reason, kind, qty)
+			addToBucket(totals.in, kind, qty)
+			item.qty_in += qty
+		} else if (source != null) {
+			add(source, sourceName, 'out', reason, kind, qty)
+			addToBucket(totals.out, kind, qty)
+			item.qty_out += qty
+		}
+	})
+
+	const reasonsToList = (map) =>
+		[...map.entries()]
+			.map(([reason, values]) => ({
+				reason,
+				label: WAREHOUSE_REASON_LABELS[reason] || reason,
+				...values,
+			}))
+			.filter((row) => row.total > 0)
+			.sort((a, b) => b.total - a.total)
+
+	const cityList = [...cities.values()]
+		.map((entry) => ({
+			...entry,
+			in_reasons: reasonsToList(entry.in_reasons),
+			out_reasons: reasonsToList(entry.out_reasons),
+			internal_reasons: reasonsToList(entry.internal_reasons),
+			net: {
+				devices: entry.in.devices - entry.out.devices,
+				consumables: entry.in.consumables - entry.out.consumables,
+				total: entry.in.total - entry.out.total,
+			},
+		}))
+		.filter(
+			(entry) => entry.in.total + entry.out.total + entry.internal.total > 0,
+		)
+		.sort((a, b) => b.in.total + b.out.total - (a.in.total + a.out.total))
+
+	const topItems = [...items.values()]
+		.map((item) => ({ ...item, total: item.qty_in + item.qty_out }))
+		.filter((item) => item.total > 0)
+		.sort((a, b) => b.total - a.total)
+		.slice(0, 12)
+
+	return {
+		totals,
+		cities: cityList,
+		routes: [...routes.values()].sort((a, b) => b.total - a.total),
+		topItems,
+		unknownActions: [...unknownActions],
+	}
+}
+
+// Остатки на складе по городам — из /warehouse/items, один запрос.
+const aggregateWarehouseStock = (items, cityId) => {
+	const cityFilter = cityId ? Number(cityId) : null
+	const cities = new Map()
+	const totals = emptyBucket()
+
+	items.forEach((item) => {
+		const id = item.city_id != null ? Number(item.city_id) : null
+		if (cityFilter != null && id !== cityFilter) return
+
+		const key = id == null ? 'none' : String(id)
+
+		if (!cities.has(key)) {
+			cities.set(key, {
+				key,
+				city_id: id,
+				city_name: item.city_name || 'Город не указан',
+				devices: 0,
+				consumables: 0,
+				total: 0,
+				categories: new Map(),
+			})
+		}
+
+		const entry = cities.get(key)
+		const kind = item.is_serialized ? 'devices' : 'consumables'
+		const qty = item.is_serialized ? 1 : Number(item.quantity) || 0
+
+		addToBucket(entry, kind, qty)
+		addToBucket(totals, kind, qty)
+
+		const category = item.category || 'OTHER'
+		if (!entry.categories.has(category)) entry.categories.set(category, 0)
+		entry.categories.set(category, entry.categories.get(category) + qty)
+	})
+
+	const cityList = [...cities.values()]
+		.map((entry) => ({
+			...entry,
+			categories: [...entry.categories.entries()]
+				.map(([category, count]) => ({
+					category,
+					label: WAREHOUSE_CATEGORIES[category] || category,
+					count,
+				}))
+				.sort((a, b) => b.count - a.count),
+		}))
+		.sort((a, b) => b.total - a.total)
+
+	return { totals, cities: cityList }
+}
+
+function WarehouseReportView({
+	stock,
+	movements,
+	itemsLoading,
+	itemsError,
+	movementsProgress,
+	movementsError,
+	movementsLoaded,
+	onLoadMovements,
+	onCancelMovements,
+	cities,
+	filters,
+	onFilterChange,
+	onReset,
+	expandedCity,
+	onToggleCity,
+}) {
+	const maxStock = Math.max(...stock.cities.map((c) => c.total), 1)
+	const cityRows = movements?.cities || []
+	const routes = movements?.routes || []
+	const topItems = movements?.topItems || []
+
+	const maxTurnover = Math.max(
+		...cityRows.map((row) => row.in.total + row.out.total),
+		1,
+	)
+
+	const maxRoute = Math.max(...routes.map((row) => row.total), 1)
+
+	return (
+		<>
+			<div className='filters-bar'>
+				<input
+					type='date'
+					className={
+						filters.date_from ? 'filter-input filter-active' : 'filter-input'
+					}
+					name='date_from'
+					value={filters.date_from}
+					onChange={onFilterChange}
+					title='Движения с'
+				/>
+
+				<input
+					type='date'
+					className={
+						filters.date_to ? 'filter-input filter-active' : 'filter-input'
+					}
+					name='date_to'
+					value={filters.date_to}
+					onChange={onFilterChange}
+					title='Движения по'
+				/>
+
+				<select
+					className={
+						filters.city_id ? 'filter-select filter-active' : 'filter-select'
+					}
+					name='city_id'
+					value={filters.city_id}
+					onChange={onFilterChange}
+				>
+					<option value=''>Все города</option>
+					{cities.map((city) => (
+						<option key={city.id} value={city.id}>
+							{city.name}
+						</option>
+					))}
+				</select>
+
+				<button className='btn-reset' onClick={onReset}>
+					Сбросить
+				</button>
+			</div>
+
+			{itemsError && <div className='error-message'>{itemsError}</div>}
+
+			{itemsLoading ? (
+				<div>Загрузка...</div>
+			) : (
+				<>
+					<div className='reports-summary-cards'>
+						<div className='reports-summary-card reports-summary-card-main'>
+							<div className='reports-summary-value'>{stock.totals.devices}</div>
+							<div className='reports-summary-label'>Устройств на складе</div>
+						</div>
+
+						<div className='reports-summary-card'>
+							<div className='reports-summary-value'>
+								{stock.totals.consumables}
+							</div>
+							<div className='reports-summary-label'>Расходников на складе</div>
+						</div>
+
+						<div className='reports-summary-card'>
+							<div className='reports-summary-value'>{stock.cities.length}</div>
+							<div className='reports-summary-label'>Городов с остатками</div>
+						</div>
+					</div>
+
+					<div className='reports-card'>
+						<div className='reports-card-header'>
+							<h3>Остатки по городам</h3>
+							<span className='reports-card-header-note'>на текущий момент</span>
+						</div>
+
+						{stock.cities.length === 0 ? (
+							<div className='reports-empty'>Позиций на складе нет</div>
+						) : (
+							<div className='reports-bar-list'>
+								{stock.cities.map((city) => (
+									<div key={city.key} className='reports-bar-row'>
+										<span className='reports-bar-row-label' title={city.city_name}>
+											{city.city_name}
+										</span>
+
+										<span className='reports-bar-row-track'>
+											<span
+												className='reports-bar-row-fill'
+												style={{
+													width: `${Math.max((city.total / maxStock) * 100, 4)}%`,
+													background: '#5e9424',
+												}}
+											/>
+										</span>
+
+										<span
+											className='reports-bar-row-count'
+											title={`${city.devices} устройств, ${city.consumables} расходников`}
+										>
+											{city.total}
+										</span>
+									</div>
+								))}
+							</div>
+						)}
+					</div>
+
+					<div className='reports-card'>
+						<div className='reports-card-header'>
+							<h3>Приход и расход по городам</h3>
+
+							{movementsLoaded && !movementsProgress && (
+								<button
+									type='button'
+									className='reports-card-link'
+									onClick={onLoadMovements}
+								>
+									<i className='fa-solid fa-rotate'></i>Пересчитать
+								</button>
+							)}
+						</div>
+
+						{movementsError && (
+							<div className='error-message'>{movementsError}</div>
+						)}
+
+						{movementsProgress ? (
+							<div className='reports-wh-progress'>
+								<div className='reports-wh-progress-track'>
+									<span
+										className='reports-wh-progress-fill'
+										style={{
+											width: `${
+												(movementsProgress.done / movementsProgress.total) * 100
+											}%`,
+										}}
+									/>
+								</div>
+
+								<div className='reports-wh-progress-meta'>
+									<span>
+										Обработано {movementsProgress.done} из{' '}
+										{movementsProgress.total} позиций
+									</span>
+
+									<button
+										type='button'
+										className='reports-card-link'
+										onClick={onCancelMovements}
+									>
+										Отменить
+									</button>
+								</div>
+							</div>
+						) : !movementsLoaded ? (
+							<div className='reports-wh-cta'>
+								<p>
+									API отдаёт историю движений только по одной позиции за раз,
+									поэтому приход и расход считаются обходом всех позиций склада —
+									это занимает время. Даты и город после расчёта меняются без
+									повторной загрузки.
+								</p>
+
+								<button
+									type='button'
+									className='reports-wh-cta-btn'
+									onClick={onLoadMovements}
+								>
+									Посчитать приход и расход
+								</button>
+							</div>
+						) : cityRows.length === 0 ? (
+							<div className='reports-empty'>Движений за период нет</div>
+						) : (
+							<div className='reports-bar-list'>
+								{cityRows.map((row) => {
+									const isOpen = expandedCity === row.key
+
+									return (
+										<div key={row.key} className='reports-tech-row'>
+											<button
+												type='button'
+												className={`reports-wh-city-row ${isOpen ? 'is-open' : ''}`}
+												onClick={() => onToggleCity(isOpen ? null : row.key)}
+												aria-expanded={isOpen}
+											>
+												<span className='reports-wh-city-name'>
+													<i className='fa-solid fa-chevron-right reports-tech-chevron'></i>
+													{row.city_name}
+												</span>
+
+												<span className='reports-wh-city-bar'>
+													<span
+														className='reports-wh-city-bar-in'
+														style={{
+															width: `${(row.in.total / maxTurnover) * 100}%`,
+														}}
+													/>
+													<span
+														className='reports-wh-city-bar-out'
+														style={{
+															width: `${(row.out.total / maxTurnover) * 100}%`,
+														}}
+													/>
+												</span>
+
+												<span className='reports-wh-city-metric is-in'>
+													+{row.in.total}
+												</span>
+
+												<span className='reports-wh-city-metric is-out'>
+													−{row.out.total}
+												</span>
+
+												<span
+													className={`reports-wh-city-net ${
+														row.net.total > 0
+															? 'is-up'
+															: row.net.total < 0
+																? 'is-down'
+																: ''
+													}`}
+												>
+													{row.net.total > 0 ? '+' : ''}
+													{row.net.total}
+												</span>
+											</button>
+
+											{isOpen && (
+												<div className='reports-tech-clients'>
+													<div className='reports-wh-detail-grid'>
+														<WarehouseReasonBlock
+															title='Приход'
+															rows={row.in_reasons}
+															tone='in'
+														/>
+														<WarehouseReasonBlock
+															title='Расход'
+															rows={row.out_reasons}
+															tone='out'
+														/>
+														<WarehouseReasonBlock
+															title='Внутри города'
+															rows={row.internal_reasons}
+															tone='neutral'
+														/>
+													</div>
+												</div>
+											)}
+										</div>
+									)
+								})}
+							</div>
+						)}
+					</div>
+
+					{movementsLoaded && !movementsProgress && (
+						<>
+							<div className='reports-grid-2'>
+								<div className='reports-card'>
+									<div className='reports-card-header'>
+										<h3>Перевозки между городами</h3>
+									</div>
+
+									{routes.length === 0 ? (
+										<div className='reports-empty'>Перевозок за период не было</div>
+									) : (
+										<div className='reports-bar-list'>
+											{routes.map((route) => (
+												<div key={route.key} className='reports-bar-row'>
+													<span className='reports-bar-row-label'>
+														{route.from_city_name} → {route.to_city_name}
+													</span>
+
+													<span className='reports-bar-row-track'>
+														<span
+															className='reports-bar-row-fill'
+															style={{
+																width: `${Math.max((route.total / maxRoute) * 100, 4)}%`,
+																background: '#2f6fed',
+															}}
+														/>
+													</span>
+
+													<span
+														className='reports-bar-row-count'
+														title={`${route.devices} устройств, ${route.consumables} расходников`}
+													>
+														{route.total}
+													</span>
+												</div>
+											))}
+										</div>
+									)}
+								</div>
+
+								<div className='reports-card'>
+									<div className='reports-card-header'>
+										<h3>Позиции с наибольшим оборотом</h3>
+									</div>
+
+									{topItems.length === 0 ? (
+										<div className='reports-empty'>Движений за период нет</div>
+									) : (
+										<div className='reports-wh-items'>
+											{topItems.map((item) => (
+												<div key={item.key} className='reports-wh-item'>
+													<span className='reports-wh-item-name' title={item.name}>
+														{item.name}
+														<span className='reports-wh-item-kind'>
+															{item.is_serialized ? 'устройство' : 'расходник'}
+														</span>
+													</span>
+
+													<span className='reports-wh-city-metric is-in'>
+														+{item.qty_in}
+													</span>
+
+													<span className='reports-wh-city-metric is-out'>
+														−{item.qty_out}
+													</span>
+												</div>
+											))}
+										</div>
+									)}
+								</div>
+							</div>
+
+							{movements?.unknownActions?.length > 0 && (
+								<div className='reports-scope-note'>
+									Встретились типы движений без описания — посчитаны как «Прочее»:{' '}
+									{movements.unknownActions.join(', ')}
+								</div>
+							)}
+						</>
+					)}
+				</>
+			)}
+		</>
+	)
+}
+
+function WarehouseReasonBlock({ title, rows, tone }) {
+	return (
+		<div className='reports-wh-detail'>
+			<div className={`reports-wh-detail-title is-${tone}`}>{title}</div>
+
+			{rows.length === 0 ? (
+				<div className='reports-wh-detail-empty'>—</div>
+			) : (
+				rows.map((row) => (
+					<div key={row.reason} className='reports-wh-detail-row'>
+						<span className='reports-wh-detail-label'>{row.label}</span>
+						<span className='reports-wh-detail-value'>
+							{row.total}
+							<span className='reports-wh-detail-split'>
+								{row.devices} / {row.consumables}
+							</span>
+						</span>
+					</div>
+				))
+			)}
+		</div>
+	)
+}
+
 // Столбчатый график заявок во времени — свой SVG, без внешних библиотек.
 function TimeSeriesChart({ data, color = '#5e9424' }) {
 	const [hoverIndex, setHoverIndex] = useState(null)
@@ -837,13 +1581,20 @@ export default function Reports() {
 	const userId = getUserId()
 
 	// Те же роли, что видят пункт "Отчёты" в сайдбаре.
-	const canViewReports = [
+	const canViewRequestReports = [
 		'ADMIN',
 		'ROP',
 		'MANAGER',
 		'TECH_SUPPORT',
 		'ACCOUNTANT',
 	].includes(userRole)
+
+	// Склад читают другие роли, поэтому право на вкладку отдельное.
+	const canViewWarehouseReports = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(
+		userRole,
+	)
+
+	const canViewReports = canViewRequestReports || canViewWarehouseReports
 
 	const [requests, setRequests] = useState([])
 	const [cities, setCities] = useState([])
@@ -860,9 +1611,29 @@ export default function Reports() {
 	const [personalScope, setPersonalScope] = useState('all_mine')
 	const [personalOnly, setPersonalOnly] = useState(false)
 
-	// Режим отчёта для админа: общий по компании или по конкретному менеджеру
-	const [reportMode, setReportMode] = useState('general')
+	// Режим отчёта: общий, по менеджерам или по складу
+	const [reportMode, setReportMode] = useState(
+		canViewRequestReports ? 'general' : 'warehouse',
+	)
 	const [selectedManagerId, setSelectedManagerId] = useState('')
+
+	// Вкладка склада: свои фильтры и своя загрузка (данные считает бэкенд)
+	const [warehouseFilters, setWarehouseFilters] = useState({
+		date_from: '',
+		date_to: '',
+		city_id: '',
+	})
+	const [warehouseItems, setWarehouseItems] = useState([])
+	const [warehouseLoading, setWarehouseLoading] = useState(false)
+	const [warehouseError, setWarehouseError] = useState('')
+	const [expandedWarehouseCity, setExpandedWarehouseCity] = useState(null)
+
+	// Сырые движения, собранные обходом истории. Держим плоским списком,
+	// чтобы смена дат и города пересчитывалась без повторной загрузки.
+	const [warehouseMovements, setWarehouseMovements] = useState(null)
+	const [movementsProgress, setMovementsProgress] = useState(null)
+	const [movementsError, setMovementsError] = useState('')
+	const movementsCancelRef = useRef(false)
 
 	const [filters, setFilters] = useState({
 		client_key: '',
@@ -908,9 +1679,119 @@ export default function Reports() {
 			}
 		}
 
-		fetchRequests()
+		if (canViewRequestReports) {
+			fetchRequests()
+		} else {
+			setLoading(false)
+		}
+
 		fetchCities()
-	}, [canViewReports])
+	}, [canViewReports, canViewRequestReports])
+
+	const isWarehouseMode = canViewWarehouseReports && reportMode === 'warehouse'
+
+	// Позиции склада — один запрос, из них строятся остатки и список
+	// идентификаторов для обхода истории.
+	useEffect(() => {
+		if (!isWarehouseMode || warehouseItems.length > 0) return
+
+		let cancelled = false
+
+		const fetchItems = async () => {
+			setWarehouseLoading(true)
+			setWarehouseError('')
+
+			try {
+				const res = await fetch(`${API_BASE_URL}/warehouse/items`, {
+					headers: getAuthHeaders(),
+				})
+
+				if (!res.ok) throw new Error('Не удалось загрузить позиции склада')
+
+				const data = await res.json()
+				if (!cancelled) setWarehouseItems(Array.isArray(data) ? data : [])
+			} catch (err) {
+				if (!cancelled) setWarehouseError(err.message)
+			} finally {
+				if (!cancelled) setWarehouseLoading(false)
+			}
+		}
+
+		fetchItems()
+
+		return () => {
+			cancelled = true
+		}
+	}, [isWarehouseMode, warehouseItems.length])
+
+	// Обход истории по каждой позиции. Тяжёлая операция, поэтому запускается
+	// только по кнопке и с ограничением параллельности.
+	const loadWarehouseMovements = async () => {
+		movementsCancelRef.current = false
+		setMovementsError('')
+		setMovementsProgress({ done: 0, total: warehouseItems.length })
+
+		const collected = []
+
+		await runWithConcurrency(
+			warehouseItems,
+			6,
+			async (item) => {
+				const res = await fetch(
+					`${API_BASE_URL}/warehouse/items/${item.id}/history`,
+					{ headers: getAuthHeaders() },
+				)
+
+				if (!res.ok) throw new Error(`История позиции ${item.id}`)
+
+				const history = await res.json()
+
+				;(Array.isArray(history) ? history : []).forEach((row) => {
+					collected.push({
+						action: row.action,
+						created_at: row.created_at,
+						quantity: row.quantity,
+						from_city_id: row.from_city_id,
+						from_city_name: row.from_city_name,
+						to_city_id: row.to_city_id,
+						to_city_name: row.to_city_name,
+						is_serialized: Boolean(item.is_serialized),
+						item_city_id: item.city_id,
+						item_city_name: item.city_name,
+						item_name: item.name,
+						category: item.category,
+					})
+				})
+			},
+			(done, total) => setMovementsProgress({ done, total }),
+			() => movementsCancelRef.current,
+		)
+
+		setMovementsProgress(null)
+
+		if (movementsCancelRef.current) {
+			setMovementsError('Расчёт отменён')
+			return
+		}
+
+		setWarehouseMovements(collected)
+	}
+
+	const warehouseStock = useMemo(
+		() => aggregateWarehouseStock(warehouseItems, warehouseFilters.city_id),
+		[warehouseItems, warehouseFilters.city_id],
+	)
+
+	const warehouseMovementsReport = useMemo(() => {
+		if (!warehouseMovements) return null
+
+		return aggregateWarehouseMovements(warehouseMovements, {
+			dateFrom: warehouseFilters.date_from,
+			dateTo: warehouseFilters.date_to,
+			cityId: warehouseFilters.city_id,
+		})
+	}, [warehouseMovements, warehouseFilters])
+
 
 	const handleFilterChange = (e) =>
 		setFilters((prev) => ({ ...prev, [e.target.name]: e.target.value }))
@@ -1385,35 +2266,53 @@ export default function Reports() {
 				<div>
 					<h2>Отчёты по заявкам</h2>
 					<p className='reports-subtitle'>
-						Сколько заявок было, какие работы выполнены и у каких клиентов.
+						{isWarehouseMode
+							? 'Сколько устройств и расходников пришло и ушло по городам.'
+							: 'Сколько заявок было, какие работы выполнены и у каких клиентов.'}
 					</p>
 				</div>
 
-				{canViewManagerReports && (
+				{(canViewManagerReports || canViewWarehouseReports) && (
 					<div className='reports-mode-switch'>
 						<div className='reports-granularity-toggle'>
-							<button
-								type='button'
-								className={`reports-granularity-btn ${
-									reportMode === 'general' ? 'active' : ''
-								}`}
-								onClick={() => {
-									setReportMode('general')
-									setSelectedManagerId('')
-								}}
-							>
-								Общий отчёт
-							</button>
+							{canViewRequestReports && (
+								<button
+									type='button'
+									className={`reports-granularity-btn ${
+										reportMode === 'general' ? 'active' : ''
+									}`}
+									onClick={() => {
+										setReportMode('general')
+										setSelectedManagerId('')
+									}}
+								>
+									Общий отчёт
+								</button>
+							)}
 
-							<button
-								type='button'
-								className={`reports-granularity-btn ${
-									reportMode === 'manager' ? 'active' : ''
-								}`}
-								onClick={() => setReportMode('manager')}
-							>
-								По менеджерам
-							</button>
+							{canViewManagerReports && (
+								<button
+									type='button'
+									className={`reports-granularity-btn ${
+										reportMode === 'manager' ? 'active' : ''
+									}`}
+									onClick={() => setReportMode('manager')}
+								>
+									По менеджерам
+								</button>
+							)}
+
+							{canViewWarehouseReports && (
+								<button
+									type='button'
+									className={`reports-granularity-btn ${
+										reportMode === 'warehouse' ? 'active' : ''
+									}`}
+									onClick={() => setReportMode('warehouse')}
+								>
+									Склад
+								</button>
+							)}
 						</div>
 
 						{isManagerReportMode && (
@@ -1448,6 +2347,36 @@ export default function Reports() {
 				</div>
 			)}
 
+			{isWarehouseMode && (
+				<WarehouseReportView
+					stock={warehouseStock}
+					movements={warehouseMovementsReport}
+					itemsLoading={warehouseLoading}
+					itemsError={warehouseError}
+					movementsProgress={movementsProgress}
+					movementsError={movementsError}
+					movementsLoaded={warehouseMovements !== null}
+					onLoadMovements={loadWarehouseMovements}
+					onCancelMovements={() => {
+						movementsCancelRef.current = true
+					}}
+					cities={cities}
+					filters={warehouseFilters}
+					onFilterChange={(e) =>
+						setWarehouseFilters((prev) => ({
+							...prev,
+							[e.target.name]: e.target.value,
+						}))
+					}
+					onReset={() =>
+						setWarehouseFilters({ date_from: '', date_to: '', city_id: '' })
+					}
+					expandedCity={expandedWarehouseCity}
+					onToggleCity={setExpandedWarehouseCity}
+				/>
+			)}
+
+			{!isWarehouseMode && (
 			<div className='filters-bar'>
 				<div className='filter-group filter-main'>
 					<label>Клиент</label>
@@ -1537,10 +2466,14 @@ export default function Reports() {
 					Сбросить
 				</button>
 			</div>
+			)}
 
-			{error && <div className='error-message'>{error}</div>}
+			{!isWarehouseMode && error && (
+				<div className='error-message'>{error}</div>
+			)}
 
-			{loading ? (
+			{!isWarehouseMode &&
+				(loading ? (
 				<div>Загрузка...</div>
 			) : (
 				<>
@@ -1886,7 +2819,7 @@ export default function Reports() {
 						</div>
 					</div>
 				</>
-			)}
+			))}
 
 			{openList === 'clients' && (
 				<ReportsListModal
