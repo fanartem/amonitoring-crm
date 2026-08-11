@@ -1832,7 +1832,7 @@ def transfer_inventory_item(
                         assigned_to_user_id = NULL,
                         assigned_at = NULL,
                         assigned_by = NULL,
-                        updated_at = NOW(),
+                        updated_at = NOW()
                     WHERE id = %s
                     """,
                     (
@@ -2719,6 +2719,13 @@ def get_warehouse_items_grouped(
                 wi.updated_at,
                 u.name AS created_by_name,
 
+                wi.assigned_to_user_id,
+                assigned_user.name AS assigned_to_user_name,
+                assigned_user.role AS assigned_to_user_role,
+                assigned_user.city AS assigned_to_user_city,
+                wi.assigned_at,
+                assigned_by_user.name AS assigned_by_name,
+
                 req_r.id AS installed_request_id,
                 req_r.city AS installed_city,
                 req_r.address AS installed_address,
@@ -2742,7 +2749,10 @@ def get_warehouse_items_grouped(
                 END AS installed_source_type
                 
             FROM warehouse_items wi
+
             LEFT JOIN users u ON wi.created_by = u.id
+            LEFT JOIN users assigned_user ON wi.assigned_to_user_id = assigned_user.id
+            LEFT JOIN users assigned_by_user ON wi.assigned_by = assigned_by_user.id
             LEFT JOIN cities city ON wi.city_id = city.id
 
             LEFT JOIN (
@@ -2773,9 +2783,13 @@ def get_warehouse_items_grouped(
             LEFT JOIN clients direct_c ON direct_v.client_id = direct_c.id AND direct_c.is_deleted = 0
 
             WHERE wi.is_deleted = 0
-                AND wi.assigned_to_user_id IS NULL
             """
             values = []
+
+            if status == "ASSIGNED_TO_TECH":
+                sql += " AND wi.assigned_to_user_id IS NOT NULL"
+            else:
+                sql += " AND wi.assigned_to_user_id IS NULL"
 
             if category:
                 sql += " AND wi.category = %s"
@@ -2953,6 +2967,13 @@ def get_warehouse_items(
                 wi.updated_at,
                 u.name AS created_by_name,
 
+                wi.assigned_to_user_id,
+                assigned_user.name AS assigned_to_user_name,
+                assigned_user.role AS assigned_to_user_role,
+                assigned_user.city AS assigned_to_user_city,
+                wi.assigned_at,
+                assigned_by_user.name AS assigned_by_name,
+
                 -- кому и куда установлено
                 r.id AS installed_request_id,
                 r.city AS installed_city,
@@ -2971,7 +2992,10 @@ def get_warehouse_items(
                 v.vin
                 
             FROM warehouse_items wi
+
             LEFT JOIN users u ON wi.created_by = u.id
+            LEFT JOIN users assigned_user ON wi.assigned_to_user_id = assigned_user.id
+            LEFT JOIN users assigned_by_user ON wi.assigned_by = assigned_by_user.id
             LEFT JOIN cities city ON wi.city_id = city.id
 
             LEFT JOIN (
@@ -2989,9 +3013,13 @@ def get_warehouse_items(
             LEFT JOIN vehicles v ON rv.vehicle_id = v.id
 
             WHERE wi.is_deleted = 0
-                AND wi.assigned_to_user_id IS NULL
             """
             values = []
+
+            if status == "ASSIGNED_TO_TECH":
+                sql += " AND wi.assigned_to_user_id IS NOT NULL"
+            else:
+                sql += " AND wi.assigned_to_user_id IS NULL"
 
             if category:
                 sql += " AND wi.category = %s"
