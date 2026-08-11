@@ -2786,11 +2786,6 @@ def get_warehouse_items_grouped(
             """
             values = []
 
-            if status == "ASSIGNED_TO_TECH":
-                sql += " AND wi.assigned_to_user_id IS NOT NULL"
-            else:
-                sql += " AND wi.assigned_to_user_id IS NULL"
-
             if category:
                 sql += " AND wi.category = %s"
                 values.append(category)
@@ -3015,11 +3010,6 @@ def get_warehouse_items(
             WHERE wi.is_deleted = 0
             """
             values = []
-
-            if status == "ASSIGNED_TO_TECH":
-                sql += " AND wi.assigned_to_user_id IS NOT NULL"
-            else:
-                sql += " AND wi.assigned_to_user_id IS NULL"
 
             if category:
                 sql += " AND wi.category = %s"
