@@ -57,6 +57,58 @@ const getVisitPriceCodeLabel = code => {
 	return 'В черте города'
 }
 
+const REQUEST_FILTERS_STORAGE_KEY = 'requests_filters_state'
+
+const DEFAULT_REQUEST_FILTERS = {
+	search: '',
+	created_by: '',
+	assigned_to: '',
+	status: '',
+	work_type: '',
+	payment: '',
+	city: '',
+	format: '',
+	date_from: '',
+	date_to: '',
+	sort_mode: 'STATUS_FLOW',
+}
+
+const REQUEST_FILTER_KEYS = Object.keys(DEFAULT_REQUEST_FILTERS)
+
+const getInitialRequestFilters = searchParams => {
+	const hasUrlFilters = REQUEST_FILTER_KEYS.some(key => searchParams.has(key))
+
+	if (hasUrlFilters) {
+		return {
+			...DEFAULT_REQUEST_FILTERS,
+			...REQUEST_FILTER_KEYS.reduce((acc, key) => {
+				const value = searchParams.get(key)
+
+				if (value !== null) {
+					acc[key] = value
+				}
+
+				return acc
+			}, {}),
+		}
+	}
+
+	try {
+		const saved = sessionStorage.getItem(REQUEST_FILTERS_STORAGE_KEY)
+
+		if (!saved) return DEFAULT_REQUEST_FILTERS
+
+		const parsed = JSON.parse(saved)
+
+		return {
+			...DEFAULT_REQUEST_FILTERS,
+			...parsed,
+		}
+	} catch {
+		return DEFAULT_REQUEST_FILTERS
+	}
+}
+
 export default function Requests() {
 	const [requests, setRequests] = useState([])
 	const [filteredRequests, setFilteredRequests] = useState([])
@@ -74,18 +126,9 @@ export default function Requests() {
 	// можно скинуть ссылкой, и он переживает обновление страницы/кнопку "назад".
 	const [searchParams, setSearchParams] = useSearchParams()
 
-	const [filters, setFilters] = useState(() => ({
-		search: searchParams.get('search') || '',
-		created_by: searchParams.get('created_by') || '',
-		assigned_to: searchParams.get('assigned_to') || '',
-		status: searchParams.get('status') || '',
-		payment: searchParams.get('payment') || '',
-		city: searchParams.get('city') || '',
-		format: searchParams.get('format') || '',
-		date_from: searchParams.get('date_from') || '',
-		date_to: searchParams.get('date_to') || '',
-		sort_mode: searchParams.get('sort_mode') || 'STATUS_FLOW',
-	}))
+	const [filters, setFilters] = useState(() =>
+		getInitialRequestFilters(searchParams),
+	)
 
 	const [highlightedRequests, setHighlightedRequests] = useState({})
 	const [pendingScrollRequestId, setPendingScrollRequestId] = useState(null)
@@ -105,6 +148,15 @@ export default function Requests() {
 	// Пустые/дефолтные значения в URL не попадают, чтобы адрес оставался чистым.
 	useEffect(() => {
 		const timeoutId = setTimeout(() => {
+			try {
+				sessionStorage.setItem(
+					REQUEST_FILTERS_STORAGE_KEY,
+					JSON.stringify(filters),
+				)
+			} catch {
+				// sessionStorage может быть недоступен в приватном режиме — просто игнорируем
+			}
+
 			const next = new URLSearchParams()
 
 			Object.entries(filters).forEach(([key, value]) => {
@@ -190,7 +242,7 @@ export default function Requests() {
 		return () => document.removeEventListener('click', handleClickOutside)
 	}, [])
 
-	const buildRequestSnapshot = (req) => {
+	const buildRequestSnapshot = req => {
 		return JSON.stringify({
 			id: req.id,
 			status: req.status,
@@ -213,19 +265,19 @@ export default function Requests() {
 		})
 	}
 
-	const markRequestsHighlighted = (changes) => {
+	const markRequestsHighlighted = changes => {
 		if (!changes || Object.keys(changes).length === 0) return
 
-		setHighlightedRequests((prev) => ({
+		setHighlightedRequests(prev => ({
 			...prev,
 			...changes,
 		}))
 
 		setTimeout(() => {
-			setHighlightedRequests((prev) => {
+			setHighlightedRequests(prev => {
 				const next = { ...prev }
 
-				Object.keys(changes).forEach((id) => {
+				Object.keys(changes).forEach(id => {
 					delete next[id]
 				})
 
@@ -238,7 +290,7 @@ export default function Requests() {
 		if (!pendingScrollRequestId) return
 
 		const requestExistsInFilteredList = filteredRequests.some(
-			(req) => Number(req.id) === Number(pendingScrollRequestId),
+			req => Number(req.id) === Number(pendingScrollRequestId),
 		)
 
 		if (!requestExistsInFilteredList) return
@@ -279,7 +331,7 @@ export default function Requests() {
 				const changes = {}
 				const createdRequests = []
 
-				data.forEach((req) => {
+				data.forEach(req => {
 					const requestId = String(req.id)
 					const snapshot = buildRequestSnapshot(req)
 
@@ -301,7 +353,7 @@ export default function Requests() {
 				if (scrollToCreatedRequest && createdRequests.length > 0) {
 					const ownCreatedRequests = currentUserId
 						? createdRequests.filter(
-								(req) => Number(req.created_by) === Number(currentUserId),
+								req => Number(req.created_by) === Number(currentUserId),
 							)
 						: []
 
@@ -325,7 +377,7 @@ export default function Requests() {
 					if (newestCreatedRequest?.id) {
 						setPendingScrollRequestId(Number(newestCreatedRequest.id))
 
-						setHighlightedRequests((prev) => ({
+						setHighlightedRequests(prev => ({
 							...prev,
 							[String(newestCreatedRequest.id)]: 'just-created',
 						}))
@@ -384,10 +436,10 @@ export default function Requests() {
 		}
 	}
 
-	const getTechName = (techId) => {
+	const getTechName = techId => {
 		if (!techId) return null
 
-		const tech = techniciansLookup.find((t) => Number(t.id) === Number(techId))
+		const tech = techniciansLookup.find(t => Number(t.id) === Number(techId))
 
 		if (!tech) return `ID: ${techId}`
 
@@ -398,9 +450,9 @@ export default function Requests() {
 		return tech.name
 	}
 
-	const getRequestExecutors = (req) => {
+	const getRequestExecutors = req => {
 		if (Array.isArray(req.executors) && req.executors.length > 0) {
-			return req.executors.map((executor) => ({
+			return req.executors.map(executor => ({
 				id: executor.user_id,
 				name: executor.user_name || getTechName(executor.user_id),
 			}))
@@ -418,7 +470,7 @@ export default function Requests() {
 		return []
 	}
 
-	const getExecutorsLabel = (req) => {
+	const getExecutorsLabel = req => {
 		const executors = getRequestExecutors(req)
 
 		if (executors.length === 0) return null
@@ -426,22 +478,22 @@ export default function Requests() {
 		return executors.length === 1 ? 'Исполнитель' : 'Исполнители'
 	}
 
-	const getExecutorsText = (req) => {
+	const getExecutorsText = req => {
 		const executors = getRequestExecutors(req)
 
 		if (executors.length === 0) return null
 
 		return executors
-			.map((executor) => executor.name || `ID: ${executor.id}`)
+			.map(executor => executor.name || `ID: ${executor.id}`)
 			.join(', ')
 	}
 
-	const getClientPaymentTypeLabel = (paymentType) => {
+	const getClientPaymentTypeLabel = paymentType => {
 		if (paymentType === 'POSTPAYMENT') return 'Постоплата'
 		return 'Предоплата'
 	}
 
-	const getRequestPaymentText = (req) => {
+	const getRequestPaymentText = req => {
 		const paymentType = req.client_payment_type || 'PREPAYMENT'
 		const isPaid = Boolean(req.is_paid)
 
@@ -452,7 +504,7 @@ export default function Requests() {
 		return isPaid ? 'Предоплата · оплачено' : 'Предоплата · не оплачено'
 	}
 
-	const getRequestPaymentClass = (req) => {
+	const getRequestPaymentClass = req => {
 		if (req.client_payment_type === 'POSTPAYMENT') {
 			return req.is_paid ? 'payment-postpaid-paid' : 'payment-postpaid-unpaid'
 		}
@@ -460,13 +512,13 @@ export default function Requests() {
 		return req.is_paid ? 'payment-paid' : 'payment-unpaid'
 	}
 
-	const isCurrentUserExecutor = (req) => {
+	const isCurrentUserExecutor = req => {
 		if (!currentUserId) return false
 
 		const executors = getRequestExecutors(req)
 
 		return executors.some(
-			(executor) => Number(executor.id) === Number(currentUserId),
+			executor => Number(executor.id) === Number(currentUserId),
 		)
 	}
 
@@ -476,7 +528,7 @@ export default function Requests() {
 		INDIVIDUAL: 'Физ. лицо',
 	}
 
-	const getClientDisplayName = (req) => {
+	const getClientDisplayName = req => {
 		const clientType = req.client_type || req.type
 
 		if (clientType === 'TOO' || clientType === 'IP') {
@@ -486,7 +538,7 @@ export default function Requests() {
 		return req.client_name || req.company_name || 'Не указано'
 	}
 
-	const getClientSubtitle = (req) => {
+	const getClientSubtitle = req => {
 		const clientType = req.client_type || req.type
 
 		if ((clientType === 'TOO' || clientType === 'IP') && req.client_name) {
@@ -510,17 +562,17 @@ export default function Requests() {
 		return `${title} (${plate})`
 	}
 
-	const getVehicleInstallText = (vehicle) => {
+	const getVehicleInstallText = vehicle => {
 		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${
 			vehicle.has_beacon ? 'Маяк' : 'Без маяка'
 		}`
 	}
 
-	const getCreatorName = (req) => {
+	const getCreatorName = req => {
 		return req.created_by_name || 'Создатель не указан'
 	}
 
-	const getCreatorRoleLabel = (req) => {
+	const getCreatorRoleLabel = req => {
 		if (!req.created_by_role) return null
 		return roleLabels[req.created_by_role] || req.created_by_role
 	}
@@ -530,7 +582,7 @@ export default function Requests() {
 		if (filters.search) {
 			const s = filters.search.toLowerCase()
 
-			result = result.filter((r) => {
+			result = result.filter(r => {
 				const clientMatch =
 					(r.client_name && r.client_name.toLowerCase().includes(s)) ||
 					(r.company_name && r.company_name.toLowerCase().includes(s)) ||
@@ -539,7 +591,7 @@ export default function Requests() {
 				const vehicleMatch =
 					Array.isArray(r.vehicles) &&
 					r.vehicles.some(
-						(v) =>
+						v =>
 							(v.plate_number && v.plate_number.toLowerCase().includes(s)) ||
 							(v.vin && v.vin.toLowerCase().includes(s)) ||
 							(v.brand && v.brand.toLowerCase().includes(s)) ||
@@ -553,7 +605,7 @@ export default function Requests() {
 		if (filters.created_by) {
 			const creatorFilter = filters.created_by.toLowerCase()
 			result = result.filter(
-				(r) =>
+				r =>
 					r.created_by_name &&
 					r.created_by_name.toLowerCase().includes(creatorFilter),
 			)
@@ -562,7 +614,7 @@ export default function Requests() {
 		if (filters.assigned_to) {
 			const assigneeFilter = filters.assigned_to.toLowerCase()
 
-			result = result.filter((r) => {
+			result = result.filter(r => {
 				const executorsText = getExecutorsText(r)
 
 				return (
@@ -574,33 +626,51 @@ export default function Requests() {
 		if (filters.date_from) {
 			const fromDate = new Date(filters.date_from)
 			fromDate.setHours(0, 0, 0, 0)
-			result = result.filter((r) => new Date(r.created_at) >= fromDate)
+
+			result = result.filter(r => {
+				if (!r.scheduled_at) return false
+
+				const scheduledDate = new Date(r.scheduled_at)
+
+				return scheduledDate >= fromDate
+			})
 		}
+
 		if (filters.date_to) {
 			const toDate = new Date(filters.date_to)
 			toDate.setHours(23, 59, 59, 999)
-			result = result.filter((r) => new Date(r.created_at) <= toDate)
+
+			result = result.filter(r => {
+				if (!r.scheduled_at) return false
+
+				const scheduledDate = new Date(r.scheduled_at)
+
+				return scheduledDate <= toDate
+			})
 		}
 
-		if (filters.status)
-			result = result.filter((r) => r.status === filters.status)
+		if (filters.status) result = result.filter(r => r.status === filters.status)
+
+		if (filters.work_type) {
+			result = result.filter(r => r.work_type === filters.work_type)
+		}
 
 		if (canUsePaymentFilter && filters.payment === 'PAID') {
-			result = result.filter((r) => Boolean(r.is_paid))
+			result = result.filter(r => Boolean(r.is_paid))
 		}
 
 		if (canUsePaymentFilter && filters.payment === 'UNPAID') {
-			result = result.filter((r) => !Boolean(r.is_paid))
+			result = result.filter(r => !Boolean(r.is_paid))
 		}
 
 		if (filters.format)
-			result = result.filter((r) => r.visit_type === filters.format)
+			result = result.filter(r => r.visit_type === filters.format)
 
 		if (canUseCityFilter && filters.city) {
-			result = result.filter((r) => r.city === filters.city)
+			result = result.filter(r => r.city === filters.city)
 		}
 
-		const getRequestSortGroup = (req) => {
+		const getRequestSortGroup = req => {
 			if (isMyActiveRequest(req)) return 0
 
 			if (req.status === 'NEW') return 1
@@ -611,7 +681,7 @@ export default function Requests() {
 			return 99
 		}
 
-		const getTime = (value) => {
+		const getTime = value => {
 			if (!value) return null
 
 			const time = new Date(value).getTime()
@@ -619,7 +689,7 @@ export default function Requests() {
 			return Number.isNaN(time) ? null : time
 		}
 
-		const getOldRequestTime = (req) => {
+		const getOldRequestTime = req => {
 			return (
 				getTime(req.scheduled_at) ||
 				getTime(req.created_at) ||
@@ -627,7 +697,7 @@ export default function Requests() {
 			)
 		}
 
-		const getFreshRequestTime = (req) => {
+		const getFreshRequestTime = req => {
 			return (
 				getTime(req.completed_at) ||
 				getTime(req.cancelled_at) ||
@@ -699,22 +769,18 @@ export default function Requests() {
 		canUsePaymentFilter,
 	])
 
-	const handleFilterChange = (e) =>
+	const handleFilterChange = e =>
 		setFilters({ ...filters, [e.target.name]: e.target.value })
 
-	const resetFilters = () =>
-		setFilters({
-			search: '',
-			created_by: '',
-			assigned_to: '',
-			status: '',
-			payment: '',
-			city: '',
-			format: '',
-			date_from: '',
-			date_to: '',
-			sort_mode: 'STATUS_FLOW',
-		})
+	const resetFilters = () => {
+		try {
+			sessionStorage.removeItem(REQUEST_FILTERS_STORAGE_KEY)
+		} catch {
+			// игнорируем
+		}
+
+		setFilters(DEFAULT_REQUEST_FILTERS)
+	}
 
 	const statusLabels = {
 		NEW: 'В ожидании',
@@ -766,7 +832,7 @@ export default function Requests() {
 		WAREHOUSE_MANAGER: 'role-warehouse',
 	}
 
-	const formatDate = (dateString) => {
+	const formatDate = dateString => {
 		if (!dateString) return '—'
 		const d = new Date(dateString)
 		return (
@@ -776,7 +842,7 @@ export default function Requests() {
 		)
 	}
 
-	const formatMoney = (value) => {
+	const formatMoney = value => {
 		const number = Number(value || 0)
 
 		if (Number.isNaN(number)) return `${value} тг`
@@ -784,7 +850,7 @@ export default function Requests() {
 		return `${number.toLocaleString('ru-RU')} тг`
 	}
 
-	const escapeCsvValue = (value) => {
+	const escapeCsvValue = value => {
 		if (value === null || value === undefined) return ''
 
 		const str = String(value)
@@ -798,7 +864,7 @@ export default function Requests() {
 
 	const downloadCsv = (rows, filename) => {
 		const csvContent = rows
-			.map((row) => row.map(escapeCsvValue).join(';'))
+			.map(row => row.map(escapeCsvValue).join(';'))
 			.join('\n')
 
 		const blob = new Blob(['\ufeff' + csvContent], {
@@ -818,7 +884,7 @@ export default function Requests() {
 
 	const toggleDropdown = (e, reqId) => {
 		e.stopPropagation()
-		setActiveDropdown((prev) => (prev === reqId ? null : reqId))
+		setActiveDropdown(prev => (prev === reqId ? null : reqId))
 	}
 
 	// --- ИСПРАВЛЕННЫЕ ФУНКЦИИ КНОПОК ---
@@ -865,7 +931,7 @@ export default function Requests() {
 		}
 	}
 
-	const canCompleteRequest = (req) => {
+	const canCompleteRequest = req => {
 		if (req.status !== 'IN_PROGRESS') return false
 
 		const executors = getRequestExecutors(req)
@@ -973,7 +1039,7 @@ export default function Requests() {
 			const rows = [
 				['Параметр', 'Значение'],
 				['Номер заявки', req.id],
-				['Дата создания', formatDate(req.created_at)],
+				['Дата создания заявки', formatDate(req.created_at)],
 				['Желаемая дата/время выполнения', formatDate(req.scheduled_at)],
 				[
 					'Согласование времени',
@@ -1046,19 +1112,19 @@ export default function Requests() {
 		setSelectedRequestId(reqId)
 	}
 
-	const handleOpenEditFromDetail = (reqData) => {
+	const handleOpenEditFromDetail = reqData => {
 		setSelectedRequestId(null)
 		setEditRequestData(reqData)
 		setCreateModalOpen(true)
 	}
 
-	const getFilterClassName = (filterName) => {
+	const getFilterClassName = filterName => {
 		const isActive = Boolean(filters[filterName])
 
 		return isActive ? 'filter-input filter-active' : 'filter-input'
 	}
 
-	const getFilterSelectClassName = (filterName) => {
+	const getFilterSelectClassName = filterName => {
 		const isActive = Boolean(filters[filterName])
 
 		return isActive ? 'filter-select filter-active' : 'filter-select'
@@ -1136,7 +1202,7 @@ export default function Requests() {
 				>
 					<div className='filters-bar'>
 						<div className='filter-group'>
-							<label>Дата создания от:</label>
+							<label>Запланировано от:</label>
 							<input
 								className={getFilterClassName('date_from')}
 								type='date'
@@ -1169,6 +1235,27 @@ export default function Requests() {
 								<option value='IN_PROGRESS'>Принято в работу</option>
 								<option value='COMPLETED'>Работы завершены</option>
 								<option value='CANCELLED'>Отмененные заявки</option>
+							</select>
+						</div>
+						<div className='filter-group'>
+							<label>Тип работ</label>
+							<select
+								className={getFilterSelectClassName('work_type')}
+								name='work_type'
+								value={filters.work_type}
+								onChange={handleFilterChange}
+							>
+								<option value=''>Все типы</option>
+								<option value='INSTALLATION'>
+									{getWorkTypeLabel('INSTALLATION')}
+								</option>
+								<option value='DIAGNOSTIC'>
+									{getWorkTypeLabel('DIAGNOSTIC')}
+								</option>
+								<option value='REMOVAL'>{getWorkTypeLabel('REMOVAL')}</option>
+								<option value='REFLASHING'>
+									{getWorkTypeLabel('REFLASHING')}
+								</option>
 							</select>
 						</div>
 						{canUsePaymentFilter && (
@@ -1470,7 +1557,7 @@ export default function Requests() {
 
 						<div className='card-column'>
 							<div className='card-item card-item-created-date'>
-								<span className='card-label'>Дата создания</span>
+								<span className='card-label'>Дата создания заявки</span>
 								<span className='card-value'>{formatDate(req.created_at)}</span>
 							</div>
 							<div className='card-item card-item-scheduled-date'>
