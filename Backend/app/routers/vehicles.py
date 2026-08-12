@@ -53,9 +53,12 @@ VEHICLE_IMPORT_HEADER_ALIASES = {
     "винкод": "vin",
 
     "госномер": "plate_number",
-    "госномер": "plate_number",
+    "госномеравто": "plate_number",
+    "госрегномер": "plate_number",
     "государственныйномер": "plate_number",
+    "регномер": "plate_number",
     "номер": "plate_number",
+    "номернойзнак": "plate_number",
 
     "годвыпуска": "year",
     "год": "year",
@@ -76,7 +79,23 @@ def clean_excel_cell(value) -> str:
 def normalize_excel_header(value) -> str:
     text = clean_excel_cell(value).lower().replace("ё", "е")
 
-    return re.sub(r"[^a-zа-я0-9]+", "", text)
+    normalized = re.sub(r"[^a-zа-я0-9]+", "", text)
+
+    # Чтобы заголовки из шаблона вроде:
+    # "Гос. Номер (необязательно)"
+    # "Год выпуска (необязательно)"
+    # нормально превращались в "госномер" и "годвыпуска"
+    optional_words = [
+        "необязательно",
+        "необязательное",
+        "необязательный",
+        "опционально",
+    ]
+
+    for word in optional_words:
+        normalized = normalized.replace(word, "")
+
+    return normalized
 
 
 def normalize_vin(value) -> str:
@@ -1142,6 +1161,9 @@ def import_vehicles_preview(
                 ):
                     existing_count += 1
 
+                    excel_plate_number = row.get("plate_number")
+                    excel_year = row.get("year")
+
                     items.append({
                         "row": row["row"],
                         "mode": "existing",
@@ -1151,8 +1173,25 @@ def import_vehicles_preview(
                         "brand": existing_vehicle["brand"],
                         "model": existing_vehicle["model"],
                         "vin": existing_vehicle["vin"],
-                        "plate_number": existing_vehicle["plate_number"],
-                        "year": existing_vehicle["year"],
+
+                        # В preview показываем значение из Excel, если оно заполнено.
+                        # Если в Excel пусто — оставляем значение из базы.
+                        "plate_number": excel_plate_number or existing_vehicle["plate_number"],
+                        "year": excel_year if excel_year is not None else existing_vehicle["year"],
+
+                        # Технические поля, чтобы frontend понимал:
+                        # Excel предлагает обновить данные существующей машины.
+                        "excel_plate_number": excel_plate_number,
+                        "db_plate_number": existing_vehicle["plate_number"],
+                        "excel_year": excel_year,
+                        "db_year": existing_vehicle["year"],
+                        "needs_vehicle_update": bool(
+                            excel_plate_number
+                            and excel_plate_number != existing_vehicle["plate_number"]
+                        ) or (
+                            excel_year is not None
+                            and excel_year != existing_vehicle["year"]
+                        ),
                     })
                     continue
 
