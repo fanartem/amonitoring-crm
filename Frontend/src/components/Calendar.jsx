@@ -11,6 +11,18 @@ const SLOT_HEIGHT = 48
 const GROUP_WINDOW_MINUTES = 30
 const MAX_GROUP_WINDOW_MINUTES = 120
 const DAY_COUNT = 7
+const HIGHLIGHT_DURATION_MS = 2500
+const HIGHLIGHT_FADE_DURATION_MS = 800
+
+const highlightTransitionStyle = {
+	transition: [
+		`background-color ${HIGHLIGHT_FADE_DURATION_MS}ms ease-out`,
+		`border-color ${HIGHLIGHT_FADE_DURATION_MS}ms ease-out`,
+		`box-shadow ${HIGHLIGHT_FADE_DURATION_MS}ms ease-out`,
+		`filter ${HIGHLIGHT_FADE_DURATION_MS}ms ease-out`,
+		`outline-color ${HIGHLIGHT_FADE_DURATION_MS}ms ease-out`,
+	].join(', '),
+}
 
 const MS_IN_DAY = 24 * 60 * 60 * 1000
 
@@ -290,11 +302,13 @@ export default function Calendar() {
 		useState(null)
 	const [highlightedRequestId, setHighlightedRequestId] = useState(null)
 	const [highlightedGroupId, setHighlightedGroupId] = useState(null)
+	const [isHighlightFading, setIsHighlightFading] = useState(false)
 	const [forceOpenGroupId, setForceOpenGroupId] = useState(null)
 
 	const groupRefs = useRef({})
 	const singleEventRefs = useRef({})
 	const highlightTimerRef = useRef(null)
+	const highlightFadeTimerRef = useRef(null)
 
 	const userData = useMemo(() => {
 		try {
@@ -487,6 +501,7 @@ export default function Calendar() {
 		setPendingHighlightRequestId(numericRequestId)
 		setHighlightedRequestId(numericRequestId)
 		setHighlightedGroupId(null)
+		setIsHighlightFading(false)
 		setForceOpenGroupId(null)
 
 		setWorkTypeFilter('ALL')
@@ -535,6 +550,11 @@ export default function Calendar() {
 		if (highlightTimerRef.current) {
 			clearTimeout(highlightTimerRef.current)
 		}
+		if (highlightFadeTimerRef.current) {
+			clearTimeout(highlightFadeTimerRef.current)
+		}
+
+		setIsHighlightFading(false)
 
 		if (targetGroup) {
 			setHighlightedGroupId(targetGroup.id)
@@ -548,13 +568,36 @@ export default function Calendar() {
 					block: 'center',
 					inline: 'center',
 				})
+
+				requestAnimationFrame(() => {
+					const targetItem = singleEventRefs.current[targetRequestId]
+					const groupMenu = targetItem?.closest(
+						'.crm-calendar-event-group-menu',
+					)
+
+					if (!targetItem || !groupMenu) return
+
+					const itemTop = targetItem.offsetTop
+					const centeredTop =
+						itemTop - groupMenu.clientHeight / 2 + targetItem.offsetHeight / 2
+
+					groupMenu.scrollTo({
+						top: Math.max(centeredTop, 0),
+						behavior: 'smooth',
+					})
+				})
 			})
 
 			highlightTimerRef.current = setTimeout(() => {
-				setForceOpenGroupId(null)
-				setHighlightedGroupId(null)
-				setHighlightedRequestId(null)
-			}, 10000)
+				setIsHighlightFading(true)
+
+				highlightFadeTimerRef.current = setTimeout(() => {
+					setForceOpenGroupId(null)
+					setHighlightedGroupId(null)
+					setHighlightedRequestId(null)
+					setIsHighlightFading(false)
+				}, HIGHLIGHT_FADE_DURATION_MS)
+			}, HIGHLIGHT_DURATION_MS)
 
 			return
 		}
@@ -572,8 +615,13 @@ export default function Calendar() {
 			})
 
 			highlightTimerRef.current = setTimeout(() => {
-				setHighlightedRequestId(null)
-			}, 10000)
+				setIsHighlightFading(true)
+
+				highlightFadeTimerRef.current = setTimeout(() => {
+					setHighlightedRequestId(null)
+					setIsHighlightFading(false)
+				}, HIGHLIGHT_FADE_DURATION_MS)
+			}, HIGHLIGHT_DURATION_MS)
 		}
 	}, [eventGroupsByDay, pendingHighlightRequestId, loading])
 
@@ -581,6 +629,9 @@ export default function Calendar() {
 		return () => {
 			if (highlightTimerRef.current) {
 				clearTimeout(highlightTimerRef.current)
+			}
+			if (highlightFadeTimerRef.current) {
+				clearTimeout(highlightFadeTimerRef.current)
 			}
 		}
 	}, [])
@@ -700,11 +751,11 @@ export default function Calendar() {
 				).toLowerCase()} ${String(item.status || '').toLowerCase()} ${
 					item.can_open_details ? 'can-open' : 'locked'
 				} ${
-					Number(item.id) === Number(highlightedRequestId)
+					Number(item.id) === Number(highlightedRequestId) && !isHighlightFading
 						? 'notification-highlight'
 						: ''
 				}`}
-				style={getEventStyle(item)}
+				style={{ ...getEventStyle(item), ...highlightTransitionStyle }}
 				onClick={() => handleEventClick(item)}
 				title={
 					item.can_open_details ? 'Открыть заявку' : 'Нет доступа к деталям'
@@ -765,8 +816,12 @@ export default function Calendar() {
 					firstItem?.work_type || '',
 				).toLowerCase()} ${openLeft ? 'open-left' : ''} ${
 					forceOpenGroupId === group.id ? 'force-open' : ''
-				} ${highlightedGroupId === group.id ? 'notification-highlight' : ''}`}
-				style={getGroupStyle(group)}
+				} ${
+					highlightedGroupId === group.id && !isHighlightFading
+						? 'notification-highlight'
+						: ''
+				}`}
+				style={{ ...getGroupStyle(group), ...highlightTransitionStyle }}
 				tabIndex={0}
 			>
 				<div className='crm-calendar-event-group-top'>
@@ -786,8 +841,11 @@ export default function Calendar() {
 
 				<div
 					className={`crm-calendar-event-group-menu ${
-						highlightedGroupId === group.id ? 'notification-highlight-menu' : ''
+						highlightedGroupId === group.id && !isHighlightFading
+							? 'notification-highlight-menu'
+							: ''
 					}`}
+					style={highlightTransitionStyle}
 				>
 					<div className='crm-calendar-event-group-menu-title'>
 						Заявки рядом по времени
@@ -807,10 +865,12 @@ export default function Calendar() {
 							).toLowerCase()} ${String(item.status || '').toLowerCase()} ${
 								item.can_open_details ? 'can-open' : 'locked'
 							} ${
-								Number(item.id) === Number(highlightedRequestId)
+								Number(item.id) === Number(highlightedRequestId) &&
+								!isHighlightFading
 									? 'notification-highlight-item'
 									: ''
 							}`}
+							style={highlightTransitionStyle}
 							onClick={() => handleEventClick(item)}
 						>
 							<div className='crm-calendar-group-menu-item-time'>
