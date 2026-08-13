@@ -1274,6 +1274,7 @@ export default function RequestDetailModal({
 											<RequestEquipmentPanel
 												requestId={requestId}
 												vehicles={request.vehicles || []}
+												requestCity={request.city || ''}
 											/>
 										</div>
 									)}

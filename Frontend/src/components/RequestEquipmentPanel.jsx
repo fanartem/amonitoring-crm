@@ -337,7 +337,142 @@ function VehicleSearchSelect({ vehicles, value, onChange, disabled = false }) {
 	)
 }
 
-export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
+function SearchableSelect({
+	options = [],
+	value,
+	onChange,
+	placeholder,
+	emptyText = 'Ничего не найдено',
+	disabled = false,
+}) {
+	const [query, setQuery] = useState('')
+	const [isOpen, setIsOpen] = useState(false)
+	const wrapperRef = useRef(null)
+
+	useEffect(() => {
+		const handleClickOutside = event => {
+			if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+				setIsOpen(false)
+				setQuery('')
+			}
+		}
+
+		document.addEventListener('mousedown', handleClickOutside)
+
+		return () => {
+			document.removeEventListener('mousedown', handleClickOutside)
+		}
+	}, [])
+
+	const selectedOption = options.find(
+		option => String(option.value) === String(value),
+	)
+
+	const normalizedQuery = query.trim().toLowerCase()
+
+	const filteredOptions = normalizedQuery
+		? options.filter(option =>
+				String(option.searchText || option.label || '')
+					.toLowerCase()
+					.includes(normalizedQuery),
+			)
+		: options
+
+	const inputValue = isOpen ? query : selectedOption?.label || ''
+
+	const selectOption = option => {
+		onChange(String(option.value))
+		setQuery('')
+		setIsOpen(false)
+	}
+
+	return (
+		<div className='searchable-select' ref={wrapperRef}>
+			<div
+				className={`searchable-select-control ${disabled ? 'disabled' : ''}`}
+				onClick={() => {
+					if (!disabled) setIsOpen(true)
+				}}
+			>
+				<input
+					type='text'
+					value={inputValue}
+					disabled={disabled}
+					placeholder={placeholder}
+					onFocus={() => {
+						if (!disabled) {
+							setQuery('')
+							setIsOpen(true)
+						}
+					}}
+					onChange={event => {
+						setQuery(event.target.value)
+						setIsOpen(true)
+					}}
+					onKeyDown={event => {
+						if (event.key === 'Escape') {
+							setQuery('')
+							setIsOpen(false)
+						}
+
+						if (event.key === 'Enter' && isOpen && filteredOptions.length > 0) {
+							event.preventDefault()
+							selectOption(filteredOptions[0])
+						}
+					}}
+				/>
+
+				{value && !disabled ? (
+					<button
+						type='button'
+						className='searchable-select-clear'
+						onClick={event => {
+							event.stopPropagation()
+							onChange('')
+							setQuery('')
+							setIsOpen(false)
+						}}
+						title='Очистить'
+					>
+						×
+					</button>
+				) : (
+					<span className='searchable-select-arrow'>▾</span>
+				)}
+			</div>
+
+			{isOpen && !disabled && (
+				<div className='searchable-select-dropdown'>
+					{filteredOptions.length === 0 ? (
+						<div className='searchable-select-empty'>{emptyText}</div>
+					) : (
+						filteredOptions.map(option => (
+							<button
+								key={option.value}
+								type='button'
+								className={`searchable-select-option ${
+									String(option.value) === String(value) ? 'selected' : ''
+								}`}
+								onMouseDown={event => {
+									event.preventDefault()
+									selectOption(option)
+								}}
+							>
+								{option.label}
+							</button>
+						))
+					)}
+				</div>
+			)}
+		</div>
+	)
+}
+
+export default function RequestEquipmentPanel({
+	requestId,
+	vehicles = [],
+	requestCity = '',
+}) {
 	const payload = getTokenPayload()
 	const userRole = String(payload.role || '').toUpperCase()
 
@@ -353,6 +488,9 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 	const [attachedItems, setAttachedItems] = useState([])
 	const [availableItems, setAvailableItems] = useState([])
 	const [technicians, setTechnicians] = useState([])
+
+	const [cities, setCities] = useState([])
+	const [selectedCity, setSelectedCity] = useState('')
 
 	const [selectedRequestVehicleId, setSelectedRequestVehicleId] = useState('')
 	const [selectedItemId, setSelectedItemId] = useState('')
@@ -382,6 +520,54 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 		return map
 	}, [vehicles])
+
+	const cityOptions = useMemo(() => {
+		const cityMap = new Map()
+
+		const initialCity = String(requestCity || '').trim()
+
+		if (initialCity) {
+			cityMap.set(initialCity.toLowerCase(), initialCity)
+		}
+
+		cities.forEach(city => {
+			const cityName = String(city.name || '').trim()
+
+			if (cityName) {
+				cityMap.set(cityName.toLowerCase(), cityName)
+			}
+		})
+
+		return Array.from(cityMap.values())
+			.sort((a, b) => a.localeCompare(b, 'ru'))
+			.map(city => ({
+				value: city,
+				label: city,
+				searchText: city,
+			}))
+	}, [cities, requestCity])
+
+	const filteredTechnicians = useMemo(() => {
+		const normalizedCity = selectedCity.trim().toLowerCase()
+
+		if (!normalizedCity) return technicians
+
+		return technicians.filter(user => {
+			return (
+				String(user.city || '')
+					.trim()
+					.toLowerCase() === normalizedCity
+			)
+		})
+	}, [technicians, selectedCity])
+
+	const technicianOptions = useMemo(() => {
+		return filteredTechnicians.map(user => ({
+			value: String(user.id),
+			label: user.city ? `${user.name} · ${user.city}` : user.name,
+			searchText: `${user.name || ''} ${user.city || ''}`,
+		}))
+	}, [filteredTechnicians])
 
 	const selectedItem = availableItems.find(
 		item => Number(item.id) === Number(selectedItemId),
@@ -458,8 +644,17 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 		if (canManageEquipment) {
 			fetchTechnicians()
+			fetchCities()
 		}
 	}, [requestId, canManageEquipment])
+
+	useEffect(() => {
+		setSelectedCity(String(requestCity || '').trim())
+		setSelectedTechnicianId('')
+		setInstalledByUserId('')
+		setSelectedItemId('')
+		setQuantity(1)
+	}, [requestId, requestCity])
 
 	useEffect(() => {
 		const hasActiveDetachTimer = attachedItems.some(item => {
@@ -509,6 +704,7 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 		canAttachEquipment,
 		selectedRequestVehicleId,
 		search,
+		selectedCity,
 		selectedTechnicianId,
 		includeStock,
 	])
@@ -565,6 +761,24 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 		}
 	}
 
+	const fetchCities = async () => {
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/warehouse/request-equipment-cities`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (res.ok) {
+				const data = await res.json()
+				setCities(Array.isArray(data) ? data : [])
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки городов:', err)
+		}
+	}
+
 	const fetchAvailableInventory = async () => {
 		if (!selectedRequestVehicleId) return
 
@@ -579,6 +793,10 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 			if (canManageEquipment) {
 				params.append('include_stock', includeStock ? 'true' : 'false')
+				
+				if (selectedCity.trim()) {
+					params.append('city', selectedCity.trim())
+				}
 
 				if (selectedTechnicianId) {
 					params.append('assigned_to_user_id', selectedTechnicianId)
@@ -814,29 +1032,46 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 
 						{canManageEquipment && (
 							<>
-								<label className='equipment-field'>
-									<span>Монтажник / инвентарь</span>
-									<select
-										className='equipment-input'
-										value={selectedTechnicianId}
-										onChange={e => {
-											setSelectedTechnicianId(e.target.value)
+								<div className='equipment-field'>
+									<span>Город</span>
+
+									<SearchableSelect
+										options={cityOptions}
+										value={selectedCity}
+										placeholder='Все города'
+										emptyText='Город не найден'
+										onChange={value => {
+											setSelectedCity(value)
+											setSelectedTechnicianId('')
+											setInstalledByUserId('')
 											setSelectedItemId('')
 											setQuantity(1)
-											setInstalledByUserId(e.target.value)
 										}}
-									>
-										<option value=''>Все монтажники</option>
+									/>
+								</div>
 
-										{technicians.map(user => (
-											<option key={user.id} value={user.id}>
-												{user.name} {user.city ? `· ${user.city}` : ''}
-											</option>
-										))}
-									</select>
-								</label>
+								<div className='equipment-field'>
+									<span>Монтажник / инвентарь</span>
 
-								<label className='equipment-field'>
+									<SearchableSelect
+										options={technicianOptions}
+										value={selectedTechnicianId}
+										placeholder='Все монтажники'
+										emptyText={
+											selectedCity
+												? 'В выбранном городе монтажники не найдены'
+												: 'Монтажники не найдены'
+										}
+										onChange={value => {
+											setSelectedTechnicianId(value)
+											setSelectedItemId('')
+											setQuantity(1)
+											setInstalledByUserId(value)
+										}}
+									/>
+								</div>
+
+								<label className='equipment-field equipment-full'>
 									<span>Источник</span>
 									<label className='equipment-checkbox-row'>
 										<input
@@ -848,7 +1083,7 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 												setQuantity(1)
 											}}
 										/>
-										<span>Показывать склад IN_STOCK</span>
+										<span>Показывать склад</span>
 									</label>
 								</label>
 							</>
@@ -909,10 +1144,10 @@ export default function RequestEquipmentPanel({ requestId, vehicles = [] }) {
 									onChange={e => setInstalledByUserId(e.target.value)}
 								>
 									<option value=''>
-										— не указывать, backend определит автоматически —
+										— Можно не указывать, определяется по инвентарю —
 									</option>
 
-									{technicians.map(user => (
+									{filteredTechnicians.map(user => (
 										<option key={user.id} value={user.id}>
 											{user.name} {user.city ? `· ${user.city}` : ''}
 										</option>

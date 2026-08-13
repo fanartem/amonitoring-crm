@@ -658,6 +658,69 @@
 	font-size: 13px;
 }
 
+.searchable-select {
+	position: relative;
+	width: 100%;
+}
+
+.searchable-select-clear {
+	flex: 0 0 auto;
+	border: none;
+	background: transparent;
+	padding: 4px 10px;
+	color: #777;
+	font-size: 18px;
+	cursor: pointer;
+}
+
+.searchable-select-arrow {
+	flex: 0 0 auto;
+	padding-right: 10px;
+	color: #777;
+	pointer-events: none;
+}
+
+.searchable-select-dropdown {
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	right: 0;
+	z-index: 150;
+	max-height: 240px;
+	overflow-y: auto;
+	padding: 4px;
+	border: 1px solid #d8d8d8;
+	border-radius: 6px;
+	background: #ffffff;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.searchable-select-option {
+	display: block;
+	width: 100%;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	padding: 8px 10px;
+	color: #222;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.searchable-select-option:hover,
+.searchable-select-option.selected {
+	background: #edf6e5;
+	color: #2e5902;
+}
+
+.searchable-select-empty {
+	padding: 10px;
+	color: #777;
+	font-size: 13px;
+	text-align: center;
+}
+
 @media (max-width: 768px) {
 	.equipment-detach-actions {
 		width: 100%;

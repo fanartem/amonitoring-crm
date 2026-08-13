@@ -5104,11 +5104,35 @@ def detach_equipment_from_request(
     finally:
         connection.close()
 
+@router.get("/request-equipment-cities")
+def get_request_equipment_cities(
+    current_user: dict = Depends(get_current_user),
+):
+    require_request_equipment_attach(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, name
+                FROM cities
+                WHERE is_active = 1
+                ORDER BY name ASC
+                """
+            )
+
+            return cursor.fetchall()
+    finally:
+        connection.close()
+
 @router.get("/request-vehicles/{request_vehicle_id}/available-inventory")
 def get_available_inventory_for_request_vehicle(
     request_vehicle_id: int,
     category: str | None = Query(None),
     search: str | None = Query(None),
+    city: str | None = Query(None),
     assigned_to_user_id: int | None = Query(None),
     include_stock: bool = Query(True),
     current_user: dict = Depends(get_current_user),
@@ -5237,6 +5261,12 @@ def get_available_inventory_for_request_vehicle(
                     """
                 )
                 values.append(current_user["id"])
+
+            if city and city.strip():
+                conditions.append(
+                    "LOWER(TRIM(city.name)) = LOWER(TRIM(%s))"
+                )
+                values.append(city.strip())
 
             if category:
                 conditions.append("wi.category = %s")
