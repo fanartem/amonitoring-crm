@@ -779,7 +779,7 @@ export default function Calendar() {
 
 					{item.status === 'COMPLETED' && (
 						<span className='crm-calendar-event-completed-badge'>
-							✓ Завершена
+							✓
 						</span>
 					)}
 				</div>
@@ -910,9 +910,27 @@ export default function Calendar() {
 								{item.executors_summary ? ` · ${item.executors_summary}` : ''}
 							</div>
 
+							{item.status === 'NEW' && (
+								<div className='crm-calendar-group-menu-new'>
+									В ожидании
+								</div>
+							)}
+
+							{item.status === 'IN_PROGRESS' && (
+								<div className='crm-calendar-group-menu-progress'>
+									Принято в работу
+								</div>
+							)}
+
 							{item.status === 'COMPLETED' && (
 								<div className='crm-calendar-group-menu-completed'>
-									✓ Завершена
+									✓ Работы завершены
+								</div>
+							)}
+
+							{item.status === 'CANCELLED' && (
+								<div className='crm-calendar-group-menu-сancelled'>
+									Отменено
 								</div>
 							)}
 
