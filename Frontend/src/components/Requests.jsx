@@ -1040,7 +1040,7 @@ export default function Requests() {
 				['Параметр', 'Значение'],
 				['Номер заявки', req.id],
 				['Дата создания заявки', formatDate(req.created_at)],
-				['Желаемая дата/время выполнения', formatDate(req.scheduled_at)],
+				['Дата и время выполнения', formatDate(req.scheduled_at)],
 				[
 					'Согласование времени',
 					req.schedule_approval_status
@@ -1562,7 +1562,7 @@ export default function Requests() {
 							</div>
 							<div className='card-item card-item-scheduled-date'>
 								<span className='card-label'>
-									Желаемая дата/время выполнения
+									Дата и время выполнения
 								</span>
 								<span className='card-value'>
 									{formatDate(req.scheduled_at)}
