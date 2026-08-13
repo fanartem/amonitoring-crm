@@ -617,6 +617,11 @@
 	text-overflow: ellipsis;
 }
 
+.crm-calendar-event-client {
+	font-weight: 700;
+	opacity: 0.82;
+}
+
 .crm-calendar-event-title {
 	font-size: 11px;
 	font-weight: 900;
@@ -758,6 +763,17 @@
 	text-overflow: ellipsis;
 }
 
+.crm-calendar-event-group-clients {
+	margin-top: 2px;
+	overflow: hidden;
+	color: #475569;
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 1.15;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .crm-calendar-event-group-hint {
 	margin-top: 2px;
 	font-size: 9px;
@@ -837,10 +853,12 @@
 		transform 0.12s ease;
 }
 
-.crm-calendar-group-menu-item:hover {
-	background: #fafafa;
-	border-color: #d1d5db;
+.crm-calendar-group-menu-item.completed:hover {
+	opacity: 1;
+	filter: saturate(0.9);
+	background: #ffffff;
 	transform: translateY(-1px);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .crm-calendar-group-menu-item.installation {
@@ -849,6 +867,18 @@
 
 .crm-calendar-group-menu-item.installation .crm-calendar-group-menu-item-title {
 	color: #2e5902;
+}
+
+.crm-calendar-group-menu-item.diagnostic .crm-calendar-group-menu-item-title {
+	color: #d88d0a;
+}
+
+.crm-calendar-group-menu-item.removal .crm-calendar-group-menu-item-title {
+	color: #cc0707;
+}
+
+.crm-calendar-group-menu-item.reflashing .crm-calendar-group-menu-item-title {
+	color: #4c1d95;
 }
 
 .crm-calendar-group-menu-item.diagnostic {
@@ -864,13 +894,14 @@
 }
 
 .crm-calendar-group-menu-item.completed {
-	background: #fbfdf8;
-	border-top-style: dashed;
-	border-right-style: dashed;
-	border-bottom-style: dashed;
+	opacity: 0.88;
+	filter: saturate(0.75);
+	background: #ffffff;
 	border-top-color: #c8e6c9;
 	border-right-color: #c8e6c9;
 	border-bottom-color: #c8e6c9;
+	border-style: dashed;
+	box-shadow: none;
 }
 
 .crm-calendar-group-menu-item.locked {
@@ -880,11 +911,48 @@
 	border-left-color: #9ca3af;
 }
 
+.crm-calendar-group-menu-item.completed.installation {
+	border-left-color: #5e9424;
+}
+
+.crm-calendar-group-menu-item.completed.diagnostic {
+	border-left-color: #f59e0b;
+}
+
+.crm-calendar-group-menu-item.completed.removal {
+	border-left-color: #ff0000;
+}
+
+.crm-calendar-group-menu-item.completed.reflashing {
+	border-left-color: #7c3aed;
+}
+
+.crm-calendar-group-menu-item-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	min-width: 0;
+}
+
+.crm-calendar-group-menu-item-top .crm-calendar-event-completed-badge {
+	flex: 0 0 auto;
+}
+
 .crm-calendar-group-menu-item-time {
+	min-width: 0;
+	overflow: hidden;
 	font-size: 11px;
 	font-weight: 900;
 	color: #111827;
 	line-height: 1.2;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.crm-calendar-group-menu-item-client {
+	color: #475569;
+	font-weight: 700;
 }
 
 .crm-calendar-group-menu-item-title {

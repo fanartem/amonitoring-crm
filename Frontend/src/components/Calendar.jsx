@@ -196,6 +196,12 @@ const buildClientLabel = item => {
 	)
 }
 
+const getGroupClientsLabel = items => {
+	return Array.from(
+		new Set((items || []).map(buildClientLabel).filter(Boolean)),
+	).join(', ')
+}
+
 const getRequestWord = count => {
 	const lastDigit = count % 10
 	const lastTwoDigits = count % 100
@@ -765,6 +771,10 @@ export default function Calendar() {
 					<span className='crm-calendar-event-time'>
 						{formatTime(item.scheduled_at)} —{' '}
 						{formatTime(item.scheduled_end_at)}
+						<span className='crm-calendar-event-client'>
+							{' · '}
+							{buildClientLabel(item)}
+						</span>
 					</span>
 
 					{item.status === 'COMPLETED' && (
@@ -803,6 +813,7 @@ export default function Calendar() {
 	const renderEventGroup = (group, dayIndex) => {
 		const firstItem = group.items[0]
 		const openLeft = dayIndex >= 5
+		const groupClientsLabel = getGroupClientsLabel(group.items)
 
 		return (
 			<div
@@ -833,6 +844,13 @@ export default function Calendar() {
 
 				<div className='crm-calendar-event-group-title'>
 					Заявки рядом по времени
+				</div>
+
+				<div
+					className='crm-calendar-event-group-clients'
+					title={groupClientsLabel}
+				>
+					{groupClientsLabel}
 				</div>
 
 				<div className='crm-calendar-event-group-hint'>
@@ -876,6 +894,10 @@ export default function Calendar() {
 							<div className='crm-calendar-group-menu-item-time'>
 								{formatTime(item.scheduled_at)} —{' '}
 								{formatTime(item.scheduled_end_at)}
+								<span className='crm-calendar-group-menu-item-client'>
+									{' · '}
+									{buildClientLabel(item)}
+								</span>
 							</div>
 
 							<div className='crm-calendar-group-menu-item-title'>
