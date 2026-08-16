@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router'
 import { API_BASE_URL, getAuthHeaders } from '../api'
 import '../styles/Requests.css'
 import '../styles/Reports.css'
@@ -108,6 +109,12 @@ const matchesPersonalScope = (req, scope, userId) => {
 // Те же 4 значения, что бэкенд проверяет в requests.py (allowed_work_types).
 // Цвета не завязаны на utils/workTypes.js (его не видели) — если он отличается
 // по формулировкам, эти лейблы легко поправить в одном месте.
+// Переход из отчёта на саму заявку. Страница заявок ловит id через
+// location.state — так же, как склад ловит highlightWarehouseItemId.
+// Если у вас на странице заявок ключ называется иначе — менять здесь.
+const REQUESTS_ROUTE = '/requests'
+const REQUEST_STATE_KEY = 'highlightRequestId'
+
 const WORK_TYPE_META = {
 	INSTALLATION: { label: 'Установка', color: '#5e9424' },
 	DIAGNOSTIC: { label: 'Диагностика', color: '#2f6fed' },
@@ -315,22 +322,27 @@ const buildTechnicianStats = (list) => {
 					key: executor.id,
 					label: executor.name,
 					count: 0,
+					requests: [],
 					children: new Map(),
 				})
 			}
 
 			const entry = map.get(executor.id)
 			entry.count += 1
+			entry.requests.push(r)
 
 			if (!entry.children.has(clientKey)) {
 				entry.children.set(clientKey, {
 					key: clientKey,
 					label: clientLabel,
 					count: 0,
+					requests: [],
 				})
 			}
 
-			entry.children.get(clientKey).count += 1
+			const child = entry.children.get(clientKey)
+			child.count += 1
+			child.requests.push(r)
 		})
 	})
 
@@ -369,6 +381,167 @@ function BarList({ items, emptyLabel = 'Нет данных за период' }
 	)
 }
 
+// Список конкретных заявок — чтобы видеть не только "монтажник сделал 12",
+// но и какие именно это были заявки.
+function RequestListModal({ title, note, requests, onOpenRequest, onClose }) {
+	const [query, setQuery] = useState('')
+
+	useEffect(() => {
+		const handleKeyDown = (e) => {
+			if (e.key === 'Escape') onClose()
+		}
+
+		const previousOverflow = document.body.style.overflow
+		document.body.style.overflow = 'hidden'
+		document.addEventListener('keydown', handleKeyDown)
+
+		return () => {
+			document.body.style.overflow = previousOverflow
+			document.removeEventListener('keydown', handleKeyDown)
+		}
+	}, [onClose])
+
+	const normalizedQuery = query.trim().toLowerCase()
+
+	const sorted = [...requests].sort(
+		(a, b) => new Date(b.created_at) - new Date(a.created_at),
+	)
+
+	const filtered = normalizedQuery
+		? sorted.filter((r) =>
+				[
+					String(r.id),
+					getClientDisplayName(r),
+					r.address,
+					r.city,
+					WORK_TYPE_META[r.work_type]?.label,
+					STATUS_META[r.status]?.label,
+				]
+					.filter(Boolean)
+					.some((field) => String(field).toLowerCase().includes(normalizedQuery)),
+			)
+		: sorted
+
+	return createPortal(
+		<div
+			className='reports-modal-backdrop'
+			onMouseDown={(e) => {
+				if (e.target === e.currentTarget) onClose()
+			}}
+		>
+			<div className='reports-modal' role='dialog' aria-modal='true'>
+				<div className='reports-modal-header'>
+					<div>
+						<h3 className='reports-modal-title'>{title}</h3>
+						{note && <p className='reports-modal-note'>{note}</p>}
+					</div>
+
+					<button
+						type='button'
+						className='reports-modal-close'
+						onClick={onClose}
+						aria-label='Закрыть'
+					>
+						<i className='fa-solid fa-xmark'></i>
+					</button>
+				</div>
+
+				<div className='reports-modal-toolbar'>
+					<input
+						type='text'
+						className='reports-modal-search'
+						autoComplete='off'
+						placeholder='Поиск по номеру, клиенту, адресу...'
+						value={query}
+						onChange={(e) => setQuery(e.target.value)}
+					/>
+				</div>
+
+				<div className='reports-modal-meta'>
+					<span>
+						Показано {filtered.length} из {requests.length}
+					</span>
+				</div>
+
+				<div className='reports-modal-body'>
+					{filtered.length === 0 ? (
+						<div className='reports-empty'>Ничего не найдено</div>
+					) : (
+						<div className='reports-request-list'>
+							{filtered.map((r) => {
+								const status = STATUS_META[r.status]
+								const work = WORK_TYPE_META[r.work_type]
+
+								return (
+									<div
+										key={r.id}
+										className={`reports-request-row ${
+											onOpenRequest ? 'is-clickable' : ''
+										}`}
+										role={onOpenRequest ? 'button' : undefined}
+										tabIndex={onOpenRequest ? 0 : undefined}
+										onClick={onOpenRequest ? () => onOpenRequest(r) : undefined}
+										onKeyDown={
+											onOpenRequest
+												? (e) => {
+														if (e.key === 'Enter' || e.key === ' ') {
+															e.preventDefault()
+															onOpenRequest(r)
+														}
+													}
+												: undefined
+										}
+										title={onOpenRequest ? 'Открыть заявку' : undefined}
+									>
+										<div className='reports-request-main'>
+											<span className='reports-request-id'>№{r.id}</span>
+
+											<span
+												className='reports-request-client'
+												title={getClientDisplayName(r)}
+											>
+												{getClientDisplayName(r)}
+											</span>
+
+											{status && (
+												<span
+													className='reports-request-status'
+													style={{
+														background: `${status.color}1a`,
+														color: status.color,
+													}}
+												>
+													{status.label}
+												</span>
+											)}
+
+											{onOpenRequest && (
+												<i className='fa-solid fa-arrow-right reports-request-go'></i>
+											)}
+										</div>
+
+										<div className='reports-request-meta'>
+											<span>{formatShortDate(r.created_at)}</span>
+											{work && <span>{work.label}</span>}
+											{r.city && <span>{r.city}</span>}
+											{r.address && (
+												<span className='reports-request-address' title={r.address}>
+													{r.address}
+												</span>
+											)}
+										</div>
+									</div>
+								)
+							})}
+						</div>
+					)}
+				</div>
+			</div>
+		</div>,
+		document.body,
+	)
+}
+
 // Универсальный раскрывающийся список: клик по строке показывает разбивку
 // (для монтажника — по каким клиентам работал, для клиента — какие монтажники
 // у него были). Используется и в карточке, и в модальном окне "показать все".
@@ -377,6 +550,7 @@ function BreakdownList({
 	emptyLabel = 'Нет данных за период',
 	childFillColor = '#b9cde6',
 	formatValue = (value) => value,
+	onShowRequests = null,
 }) {
 	const [expandedKey, setExpandedKey] = useState(null)
 
@@ -400,6 +574,7 @@ function BreakdownList({
 
 				return (
 					<div key={itemKey} className='reports-tech-row'>
+						<div className='reports-row-head'>
 						<button
 							type='button'
 							className={`reports-bar-row reports-tech-row-toggle ${
@@ -431,10 +606,49 @@ function BreakdownList({
 							</span>
 						</button>
 
+						{onShowRequests && item.requests?.length > 0 && (
+							<button
+								type='button'
+								className='reports-row-requests-btn'
+								onClick={() => onShowRequests(item, null)}
+								title='Показать список заявок'
+							>
+								<i className='fa-solid fa-list-ul'></i>
+								Заявки
+							</button>
+						)}
+						</div>
+
 						{isOpen && (
 							<div className='reports-tech-clients'>
-								{children.map((child) => (
-									<div key={child.key} className='reports-tech-client-row'>
+								{children.map((child) => {
+									const clickable = Boolean(
+										onShowRequests && child.requests?.length > 0,
+									)
+
+									return (
+									<div
+										key={child.key}
+										className={`reports-tech-client-row ${
+											clickable ? 'is-clickable' : ''
+										}`}
+										role={clickable ? 'button' : undefined}
+										tabIndex={clickable ? 0 : undefined}
+										onClick={
+											clickable ? () => onShowRequests(item, child) : undefined
+										}
+										onKeyDown={
+											clickable
+												? (e) => {
+														if (e.key === 'Enter' || e.key === ' ') {
+															e.preventDefault()
+															onShowRequests(item, child)
+														}
+													}
+												: undefined
+										}
+										title={clickable ? 'Показать заявки' : undefined}
+									>
 										<span
 											className='reports-tech-client-label'
 											title={child.label}
@@ -459,7 +673,8 @@ function BreakdownList({
 											{formatValue(child.count)}
 										</span>
 									</div>
-								))}
+									)
+								})}
 							</div>
 						)}
 					</div>
@@ -481,6 +696,7 @@ function ReportsListModal({
 	totalLabel = 'Всего заявок',
 	formatValue = (value) => value,
 	toolbarExtra = null,
+	onShowRequests = null,
 	onClose,
 }) {
 	const [query, setQuery] = useState('')
@@ -568,6 +784,7 @@ function ReportsListModal({
 						emptyLabel={normalizedQuery ? 'Ничего не найдено' : emptyLabel}
 						childFillColor={childFillColor}
 						formatValue={formatValue}
+						onShowRequests={onShowRequests}
 					/>
 				</div>
 			</div>
@@ -678,12 +895,18 @@ const WAREHOUSE_ACTION_REASONS = {
 	CONSUMABLE_RETURNED_FROM_TECH_OUT: 'FROM_TECH',
 	INVENTORY_TRANSFERRED_TO_STOCK: 'FROM_TECH',
 	CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_OUT: 'FROM_TECH',
-	DETACHED_FROM_REQUEST: 'FROM_TECH',
-	DETACHED_FROM_VEHICLE_DIRECT: 'FROM_TECH',
+	RETURNED_FROM_USER: 'FROM_TECH',
 
+	DETACHED_FROM_REQUEST: 'FROM_REQUEST',
+	DETACHED_FROM_VEHICLE_DIRECT: 'FROM_REQUEST',
+	REMOVAL_COMPLETED_MARKED_USED: 'FROM_REQUEST',
+	RETURNABLE_CONSUMABLE_RETURNED_AFTER_REMOVAL: 'FROM_REQUEST',
+
+	ATTACHED_TO_REQUEST: 'INSTALLED',
 	INSTALLED_FROM_STOCK: 'INSTALLED',
 	INSTALLED_FROM_TECH: 'INSTALLED',
 	INSTALLED_TO_VEHICLE_DIRECT: 'INSTALLED',
+	ISSUED_TO_USER: 'TO_TECH',
 	CONSUMABLE_USED_FROM_STOCK: 'INSTALLED',
 	CONSUMABLE_USED_FROM_TECH: 'INSTALLED',
 	CONSUMABLE_USED_TO_VEHICLE_DIRECT: 'INSTALLED',
@@ -692,12 +915,33 @@ const WAREHOUSE_ACTION_REASONS = {
 	DELETED: 'WRITTEN_OFF',
 }
 
+// Выдача на руки монтажнику: у этих движений заполнен target_user_id
+const WAREHOUSE_ISSUE_ACTIONS = new Set([
+	'ASSIGNED_TO_TECH',
+	'CONSUMABLE_ASSIGNED_OUT',
+	'INVENTORY_TRANSFERRED_TO_USER',
+	'CONSUMABLE_INVENTORY_TRANSFERRED_OUT',
+	'MANUAL_ADDED_TO_TECH',
+	'MANUAL_CONSUMABLE_ADDED_TO_TECH',
+	'ISSUED_TO_USER',
+])
+
+// Возврат от монтажника: заполнен from_user_id
+const WAREHOUSE_RETURN_ACTIONS = new Set([
+	'RETURNED_TO_STOCK',
+	'CONSUMABLE_RETURNED_FROM_TECH_OUT',
+	'INVENTORY_TRANSFERRED_TO_STOCK',
+	'CONSUMABLE_INVENTORY_TRANSFERRED_TO_STOCK_OUT',
+	'RETURNED_FROM_USER',
+])
+
 const WAREHOUSE_REASON_LABELS = {
 	NEW: 'Новое поступление',
 	RESTORED: 'Восстановлено из корзины',
 	TRANSFER: 'Перемещение между городами',
 	TO_TECH: 'Выдано монтажнику',
 	FROM_TECH: 'Возврат от монтажника',
+	FROM_REQUEST: 'Снято / отвязано от заявки',
 	INSTALLED: 'Установлено / израсходовано',
 	WRITTEN_OFF: 'Списание и удаление',
 	OTHER: 'Прочее',
@@ -715,6 +959,33 @@ const WAREHOUSE_CATEGORIES = {
 	TOOLS: 'Инструменты',
 	FIRST_AID: 'Аптечки',
 	OTHER: 'Другое',
+}
+
+// IMEI / MAC / серийник — то, по чему позицию узнают на складе
+const formatIdentifier = (row) => {
+	const value = row.identifier_value || row.serial_number
+
+	if (!value) return null
+
+	const type =
+		row.identifier_type && row.identifier_type !== 'NONE'
+			? row.identifier_type
+			: 'S/N'
+
+	return `${type} ${value}`
+}
+
+const formatShortDate = (value) => {
+	if (!value) return ''
+
+	const date = new Date(value)
+	if (Number.isNaN(date.getTime())) return ''
+
+	return date.toLocaleDateString('ru-RU', {
+		day: '2-digit',
+		month: '2-digit',
+		year: '2-digit',
+	})
 }
 
 const emptyBucket = () => ({ devices: 0, consumables: 0, total: 0 })
@@ -765,6 +1036,50 @@ const aggregateWarehouseMovements = (movements, { dateFrom, dateTo, cityId }) =>
 	const items = new Map()
 	const unknownActions = new Set()
 
+	// Детализация: что именно уехало в отправках и что выдано монтажникам
+	const transfers = new Map()
+	const technicians = new Map()
+
+	// Устройства перечисляем поштучно (важен IMEI и номер заявки), расходники —
+	// суммой по названию, иначе список превратится в километровую простыню.
+	const pushDetail = (deviceList, consumableMap, m, qty) => {
+		if (m.is_serialized) {
+			deviceList.push({
+				key: `${m.item_id}-${m.created_at}-${m.action}`,
+				item_id: m.item_id,
+				name: m.item_name,
+				identifier: formatIdentifier(m),
+				date: m.created_at,
+				request_id: m.request_id,
+			})
+
+			return
+		}
+
+		const key = `${m.item_name}|${m.category}`
+
+		if (!consumableMap.has(key)) {
+			consumableMap.set(key, {
+				key,
+				name: m.item_name,
+				category: m.category,
+				qty: 0,
+				request_ids: new Set(),
+			})
+		}
+
+		const row = consumableMap.get(key)
+		row.qty += qty
+		if (m.request_id) row.request_ids.add(m.request_id)
+	}
+
+	// Бакет причины: счётчики и детализация лежат под разными именами
+	const emptyReasonBucket = () => ({
+		...emptyBucket(),
+		deviceList: [],
+		consumableMap: new Map(),
+	})
+
 	const totals = {
 		in: emptyBucket(),
 		out: emptyBucket(),
@@ -795,13 +1110,16 @@ const aggregateWarehouseMovements = (movements, { dateFrom, dateTo, cityId }) =>
 		return entry
 	}
 
-	const add = (id, name, direction, reason, kind, qty) => {
+	const add = (id, name, direction, reason, kind, qty, movement) => {
 		const entry = cityEntry(id, name)
 		addToBucket(entry[direction], kind, qty)
 
 		const reasons = entry[`${direction}_reasons`]
-		if (!reasons.has(reason)) reasons.set(reason, emptyBucket())
-		addToBucket(reasons.get(reason), kind, qty)
+		if (!reasons.has(reason)) reasons.set(reason, emptyReasonBucket())
+
+		const bucket = reasons.get(reason)
+		addToBucket(bucket, kind, qty)
+		pushDetail(bucket.deviceList, bucket.consumableMap, movement, qty)
 	}
 
 	movements.forEach((m) => {
@@ -850,9 +1168,38 @@ const aggregateWarehouseMovements = (movements, { dateFrom, dateTo, cityId }) =>
 
 		const item = items.get(itemKey)
 
+		// Выдачи и возвраты по монтажникам — независимо от направления
+		const technicianName = WAREHOUSE_ISSUE_ACTIONS.has(m.action)
+			? m.target_user_name
+			: WAREHOUSE_RETURN_ACTIONS.has(m.action)
+				? m.from_user_name
+				: null
+
+		if (technicianName) {
+			if (!technicians.has(technicianName)) {
+				technicians.set(technicianName, {
+					key: technicianName,
+					name: technicianName,
+					issued: emptyBucket(),
+					returned: emptyBucket(),
+					devices: [],
+					consumables: new Map(),
+				})
+			}
+
+			const entry = technicians.get(technicianName)
+
+			if (WAREHOUSE_ISSUE_ACTIONS.has(m.action)) {
+				addToBucket(entry.issued, kind, qty)
+				pushDetail(entry.devices, entry.consumables, m, qty)
+			} else {
+				addToBucket(entry.returned, kind, qty)
+			}
+		}
+
 		if (source != null && target != null && source !== target) {
-			add(source, sourceName, 'out', reason, kind, qty)
-			add(target, m.to_city_name, 'in', reason, kind, qty)
+			add(source, sourceName, 'out', reason, kind, qty, m)
+			add(target, m.to_city_name, 'in', reason, kind, qty, m)
 
 			addToBucket(totals.out, kind, qty)
 			addToBucket(totals.in, kind, qty)
@@ -873,15 +1220,28 @@ const aggregateWarehouseMovements = (movements, { dateFrom, dateTo, cityId }) =>
 			}
 
 			addToBucket(routes.get(routeKey), kind, qty)
+
+			if (!transfers.has(routeKey)) {
+				transfers.set(routeKey, {
+					key: routeKey,
+					from_city_name: sourceName || `ID: ${source}`,
+					to_city_name: m.to_city_name || `ID: ${target}`,
+					devices: [],
+					consumables: new Map(),
+				})
+			}
+
+			const transfer = transfers.get(routeKey)
+			pushDetail(transfer.devices, transfer.consumables, m, qty)
 		} else if (source != null && target != null) {
-			add(source, sourceName, 'internal', reason, kind, qty)
+			add(source, sourceName, 'internal', reason, kind, qty, m)
 			addToBucket(totals.internal, kind, qty)
 		} else if (target != null) {
-			add(target, m.to_city_name, 'in', reason, kind, qty)
+			add(target, m.to_city_name, 'in', reason, kind, qty, m)
 			addToBucket(totals.in, kind, qty)
 			item.qty_in += qty
 		} else if (source != null) {
-			add(source, sourceName, 'out', reason, kind, qty)
+			add(source, sourceName, 'out', reason, kind, qty, m)
 			addToBucket(totals.out, kind, qty)
 			item.qty_out += qty
 		}
@@ -892,7 +1252,15 @@ const aggregateWarehouseMovements = (movements, { dateFrom, dateTo, cityId }) =>
 			.map(([reason, values]) => ({
 				reason,
 				label: WAREHOUSE_REASON_LABELS[reason] || reason,
-				...values,
+				devices: values.devices,
+				consumables: values.consumables,
+				total: values.total,
+				deviceList: values.deviceList.sort(
+					(a, b) => new Date(b.date) - new Date(a.date),
+				),
+				consumableList: [...values.consumableMap.values()].sort(
+					(a, b) => b.qty - a.qty,
+				),
 			}))
 			.filter((row) => row.total > 0)
 			.sort((a, b) => b.total - a.total)
@@ -920,10 +1288,48 @@ const aggregateWarehouseMovements = (movements, { dateFrom, dateTo, cityId }) =>
 		.sort((a, b) => b.total - a.total)
 		.slice(0, 12)
 
+	const routeList = [...routes.values()].sort((a, b) => b.total - a.total)
+
+	const transferList = routeList
+		.map((route) => {
+			const detail = transfers.get(route.key)
+
+			return {
+				key: route.key,
+				from_city_name: route.from_city_name,
+				to_city_name: route.to_city_name,
+
+				// Счётчики и детализация лежат под разными именами: раньше
+				// массивы затирали числа и в разметку попадал массив объектов.
+				devicesCount: route.devices,
+				consumablesCount: route.consumables,
+				total: route.total,
+
+				devices: (detail?.devices || []).sort(
+					(a, b) => new Date(b.date) - new Date(a.date),
+				),
+				consumables: [...(detail?.consumables?.values() || [])].sort(
+					(a, b) => b.qty - a.qty,
+				),
+			}
+		})
+		.filter((route) => route.devices.length > 0 || route.consumables.length > 0)
+
+	const technicianList = [...technicians.values()]
+		.map((entry) => ({
+			...entry,
+			devices: entry.devices.sort((a, b) => new Date(b.date) - new Date(a.date)),
+			consumables: [...entry.consumables.values()].sort((a, b) => b.qty - a.qty),
+		}))
+		.filter((entry) => entry.issued.total + entry.returned.total > 0)
+		.sort((a, b) => b.issued.total - a.issued.total)
+
 	return {
 		totals,
 		cities: cityList,
-		routes: [...routes.values()].sort((a, b) => b.total - a.total),
+		routes: routeList,
+		transfers: transferList,
+		technicians: technicianList,
 		topItems,
 		unknownActions: [...unknownActions],
 	}
@@ -981,9 +1387,180 @@ const aggregateWarehouseStock = (items, cityId) => {
 	return { totals, cities: cityList }
 }
 
+// Страховка: ошибка в одном блоке отчёта не должна ронять всю страницу
+// в белый экран. Сбрасывается сменой key при смене фильтров.
+class ReportsErrorBoundary extends React.Component {
+	constructor(props) {
+		super(props)
+		this.state = { error: null }
+	}
+
+	static getDerivedStateFromError(error) {
+		return { error }
+	}
+
+	componentDidCatch(error, info) {
+		console.error('Ошибка отчёта:', error, info)
+	}
+
+	render() {
+		if (this.state.error) {
+			return (
+				<div className='error-message'>
+					Не удалось построить этот блок отчёта: {this.state.error.message}.
+					Измените фильтры или обновите страницу.
+				</div>
+			)
+		}
+
+		return this.props.children
+	}
+}
+
+// Содержимое отправки или выдачи: устройства перечислены поштучно с
+// идентификатором, расходники — суммой по названию.
+function WarehouseContents({ devices, consumables, onOpenRequest }) {
+	if (devices.length === 0 && consumables.length === 0) {
+		return <div className='reports-wh-detail-empty'>Нет позиций</div>
+	}
+
+	return (
+		<div className='reports-wh-contents'>
+			{devices.length > 0 && (
+				<div className='reports-wh-contents-block'>
+					<div className='reports-wh-detail-title is-in'>
+						Устройства ({devices.length})
+					</div>
+
+					{devices.map((device) => (
+						<div key={device.key} className='reports-wh-device'>
+							<span className='reports-wh-device-name' title={device.name}>
+								{device.name}
+							</span>
+
+							<span className='reports-wh-device-id'>
+								{device.identifier || 'без идентификатора'}
+							</span>
+
+							<span className='reports-wh-device-meta'>
+								{device.request_id ? (
+									onOpenRequest ? (
+										<button
+											type='button'
+											className='reports-request-chip is-clickable'
+											onClick={() => onOpenRequest(device.request_id)}
+											title='Открыть заявку'
+										>
+											№{device.request_id}
+										</button>
+									) : (
+										<span className='reports-request-chip'>
+											№{device.request_id}
+										</span>
+									)
+								) : null}
+
+								<span className='reports-wh-device-date'>
+									{formatShortDate(device.date)}
+								</span>
+							</span>
+						</div>
+					))}
+				</div>
+			)}
+
+			{consumables.length > 0 && (
+				<div className='reports-wh-contents-block'>
+					<div className='reports-wh-detail-title is-neutral'>
+						Расходники ({consumables.length})
+					</div>
+
+					{consumables.map((row) => (
+						<div key={row.key} className='reports-wh-detail-row'>
+							<span className='reports-wh-detail-label' title={row.name}>
+								{row.name}
+								{row.request_ids?.size > 0 && (
+									<span className='reports-wh-detail-requests'>
+										{[...row.request_ids].slice(0, 6).map((id) =>
+											onOpenRequest ? (
+												<button
+													key={id}
+													type='button'
+													className='reports-request-chip is-clickable'
+													onClick={() => onOpenRequest(id)}
+													title='Открыть заявку'
+												>
+													№{id}
+												</button>
+											) : (
+												<span key={id} className='reports-request-chip'>
+													№{id}
+												</span>
+											),
+										)}
+										{row.request_ids.size > 6 && (
+											<span className='reports-wh-detail-more'>
+												+{row.request_ids.size - 6}
+											</span>
+										)}
+									</span>
+								)}
+							</span>
+							<span className='reports-wh-detail-value'>{row.qty}</span>
+						</div>
+					))}
+				</div>
+			)}
+		</div>
+	)
+}
+
+// Раскрывающийся список отправок и выдач: строка — маршрут или монтажник,
+// внутри — что именно уехало или было выдано.
+function WarehouseDetailList({ rows, emptyLabel, renderSummary, onOpenRequest }) {
+	const [expandedKey, setExpandedKey] = useState(null)
+
+	if (rows.length === 0) {
+		return <div className='reports-empty'>{emptyLabel}</div>
+	}
+
+	return (
+		<div className='reports-bar-list'>
+			{rows.map((row) => {
+				const isOpen = expandedKey === row.key
+
+				return (
+					<div key={row.key} className='reports-tech-row'>
+						<button
+							type='button'
+							className={`reports-wh-detail-toggle ${isOpen ? 'is-open' : ''}`}
+							onClick={() => setExpandedKey(isOpen ? null : row.key)}
+							aria-expanded={isOpen}
+						>
+							<i className='fa-solid fa-chevron-right reports-tech-chevron'></i>
+							{renderSummary(row)}
+						</button>
+
+						{isOpen && (
+							<div className='reports-tech-clients'>
+								<WarehouseContents
+									devices={row.devices}
+									consumables={row.consumables}
+									onOpenRequest={onOpenRequest}
+								/>
+							</div>
+						)}
+					</div>
+				)
+			})}
+		</div>
+	)
+}
+
 function WarehouseReportView({
 	stock,
 	movements,
+	onOpenRequest,
 	itemsLoading,
 	itemsError,
 	movementsProgress,
@@ -1247,16 +1824,19 @@ function WarehouseReportView({
 															title='Приход'
 															rows={row.in_reasons}
 															tone='in'
+															onOpenRequest={onOpenRequest}
 														/>
 														<WarehouseReasonBlock
 															title='Расход'
 															rows={row.out_reasons}
 															tone='out'
+															onOpenRequest={onOpenRequest}
 														/>
 														<WarehouseReasonBlock
 															title='Внутри города'
 															rows={row.internal_reasons}
 															tone='neutral'
+															onOpenRequest={onOpenRequest}
 														/>
 													</div>
 												</div>
@@ -1340,6 +1920,60 @@ function WarehouseReportView({
 								</div>
 							</div>
 
+							<div className='reports-card'>
+								<div className='reports-card-header'>
+									<h3>Что уехало в отправках</h3>
+									<span className='reports-card-header-note'>
+										клик — список IMEI и расходников
+									</span>
+								</div>
+
+								<WarehouseDetailList
+									rows={movements?.transfers || []}
+									emptyLabel='Отправок за период не было'
+									onOpenRequest={onOpenRequest}
+									renderSummary={(row) => (
+										<>
+											<span className='reports-wh-summary-title'>
+												{row.from_city_name} → {row.to_city_name}
+											</span>
+
+											<span className='reports-wh-summary-meta'>
+												{row.devicesCount} устр. / {row.consumablesCount} расх.
+											</span>
+										</>
+									)}
+								/>
+							</div>
+
+							<div className='reports-card'>
+								<div className='reports-card-header'>
+									<h3>Выдано монтажникам</h3>
+									<span className='reports-card-header-note'>
+										клик — что именно получил монтажник
+									</span>
+								</div>
+
+								<WarehouseDetailList
+									rows={movements?.technicians || []}
+									emptyLabel='Выдач за период не было'
+									onOpenRequest={onOpenRequest}
+									renderSummary={(row) => (
+										<>
+											<span className='reports-wh-summary-title'>{row.name}</span>
+
+											<span className='reports-wh-summary-meta'>
+												выдано {row.issued.devices} устр. /{' '}
+												{row.issued.consumables} расх.
+												{row.returned.total > 0
+													? ` · возврат ${row.returned.total}`
+													: ''}
+											</span>
+										</>
+									)}
+								/>
+							</div>
+
 							{movements?.unknownActions?.length > 0 && (
 								<div className='reports-scope-note'>
 									Встретились типы движений без описания — посчитаны как «Прочее»:{' '}
@@ -1354,7 +1988,9 @@ function WarehouseReportView({
 	)
 }
 
-function WarehouseReasonBlock({ title, rows, tone }) {
+function WarehouseReasonBlock({ title, rows, tone, onOpenRequest }) {
+	const [openReason, setOpenReason] = useState(null)
+
 	return (
 		<div className='reports-wh-detail'>
 			<div className={`reports-wh-detail-title is-${tone}`}>{title}</div>
@@ -1362,17 +1998,50 @@ function WarehouseReasonBlock({ title, rows, tone }) {
 			{rows.length === 0 ? (
 				<div className='reports-wh-detail-empty'>—</div>
 			) : (
-				rows.map((row) => (
-					<div key={row.reason} className='reports-wh-detail-row'>
-						<span className='reports-wh-detail-label'>{row.label}</span>
-						<span className='reports-wh-detail-value'>
-							{row.total}
-							<span className='reports-wh-detail-split'>
-								{row.devices} / {row.consumables}
-							</span>
-						</span>
-					</div>
-				))
+				rows.map((row) => {
+					const hasDetail =
+						row.deviceList?.length > 0 || row.consumableList?.length > 0
+					const isOpen = openReason === row.reason && hasDetail
+
+					return (
+						<div key={row.reason}>
+							<button
+								type='button'
+								className={`reports-wh-detail-row reports-wh-reason-btn ${
+									isOpen ? 'is-open' : ''
+								}`}
+								onClick={() =>
+									hasDetail && setOpenReason(isOpen ? null : row.reason)
+								}
+								disabled={!hasDetail}
+							>
+								<span className='reports-wh-detail-label'>
+									{hasDetail && (
+										<i className='fa-solid fa-chevron-right reports-tech-chevron'></i>
+									)}
+									{row.label}
+								</span>
+
+								<span className='reports-wh-detail-value'>
+									{row.total}
+									<span className='reports-wh-detail-split'>
+										{row.devices} / {row.consumables}
+									</span>
+								</span>
+							</button>
+
+							{isOpen && (
+								<div className='reports-wh-reason-detail'>
+									<WarehouseContents
+										devices={row.deviceList}
+										consumables={row.consumableList}
+										onOpenRequest={onOpenRequest}
+									/>
+								</div>
+							)}
+						</div>
+					)
+				})
 			)}
 		</div>
 	)
@@ -1577,6 +2246,7 @@ function ClientAutocomplete({ clients, value, onChange }) {
 }
 
 export default function Reports() {
+	const navigate = useNavigate()
 	const userRole = getUserRole()
 	const userId = getUserId()
 
@@ -1604,6 +2274,9 @@ export default function Reports() {
 
 	// Какое модальное окно открыто: 'clients' | 'technicians' | null
 	const [openList, setOpenList] = useState(null)
+
+	// Детализация до конкретных заявок: {title, note, requests}
+	const [requestDetails, setRequestDetails] = useState(null)
 	// Область для окна монтажников: только завершённые или все заявки
 	const [technicianScope, setTechnicianScope] = useState('completed')
 
@@ -1755,11 +2428,18 @@ export default function Reports() {
 						from_city_name: row.from_city_name,
 						to_city_id: row.to_city_id,
 						to_city_name: row.to_city_name,
+						target_user_name: row.target_user_name,
+						from_user_name: row.from_user_name,
+						request_id: row.request_id,
 						is_serialized: Boolean(item.is_serialized),
+						item_id: item.id,
 						item_city_id: item.city_id,
 						item_city_name: item.city_name,
 						item_name: item.name,
 						category: item.category,
+						identifier_type: item.identifier_type,
+						identifier_value: item.identifier_value,
+						serial_number: item.serial_number,
 					})
 				})
 			},
@@ -2024,12 +2704,14 @@ export default function Reports() {
 					key,
 					label: getClientDisplayName(r),
 					count: 0,
+					requests: [],
 					children: new Map(),
 				})
 			}
 
 			const entry = map.get(key)
 			entry.count += 1
+			entry.requests.push(r)
 
 			const executors = getRequestExecutors(r)
 			const rows =
@@ -2042,10 +2724,12 @@ export default function Reports() {
 
 			rows.forEach((row) => {
 				if (!entry.children.has(row.key)) {
-					entry.children.set(row.key, { ...row, count: 0 })
+					entry.children.set(row.key, { ...row, count: 0, requests: [] })
 				}
 
-				entry.children.get(row.key).count += 1
+				const child = entry.children.get(row.key)
+				child.count += 1
+				child.requests.push(r)
 			})
 		})
 
@@ -2247,6 +2931,49 @@ export default function Reports() {
 		return finalizeBreakdown(map, '#2e7d32')
 	}, [personalRequests])
 
+	const openRequestPage = (request) => {
+		navigate(REQUESTS_ROUTE, {
+			state: {
+				[REQUEST_STATE_KEY]: request.id,
+				// Меняющийся ключ, чтобы повторный переход на ту же заявку
+				// тоже сработал — иначе state не изменится и эффект не сработает
+				searchActionId: Date.now(),
+			},
+		})
+	}
+
+	// Провалиться в заявку из складского отчёта. Заявки грузятся отдельно,
+	// поэтому если её нет в загруженном наборе — честно об этом говорим.
+	const showRequestById = (requestId) => {
+		const found = requests.filter((r) => Number(r.id) === Number(requestId))
+
+		setRequestDetails({
+			title: `Заявка №${requestId}`,
+			note: found.length
+				? null
+				: 'Заявка не найдена среди загруженных — возможно, она вне области видимости вашей роли',
+			requests: found,
+		})
+	}
+
+	const showTechnicianRequests = (item, child) =>
+		setRequestDetails({
+			title: `Заявки: ${item.label}`,
+			note: child
+				? `Клиент: ${child.label}`
+				: 'Все заявки монтажника за выбранный период',
+			requests: child ? child.requests : item.requests,
+		})
+
+	const showClientRequests = (item, child) =>
+		setRequestDetails({
+			title: `Заявки: ${item.label}`,
+			note: child
+				? `Монтажник: ${child.label}`
+				: 'Все заявки клиента за выбранный период',
+			requests: child ? child.requests : item.requests,
+		})
+
 	const technicianModalItems =
 		technicianScope === 'all' ? technicianStatsAll : technicianStats
 
@@ -2348,8 +3075,16 @@ export default function Reports() {
 			)}
 
 			{isWarehouseMode && (
+				<ReportsErrorBoundary
+					key={`wh-${warehouseFilters.date_from}-${warehouseFilters.date_to}-${warehouseFilters.city_id}`}
+				>
 				<WarehouseReportView
 					stock={warehouseStock}
+					onOpenRequest={
+						canViewRequestReports && requests.length > 0
+							? showRequestById
+							: null
+					}
 					movements={warehouseMovementsReport}
 					itemsLoading={warehouseLoading}
 					itemsError={warehouseError}
@@ -2374,6 +3109,7 @@ export default function Reports() {
 					expandedCity={expandedWarehouseCity}
 					onToggleCity={setExpandedWarehouseCity}
 				/>
+				</ReportsErrorBoundary>
 			)}
 
 			{!isWarehouseMode && (
@@ -2514,22 +3250,24 @@ export default function Reports() {
 					{personaId != null && (
 						<div className='reports-card reports-personal'>
 							<div className='reports-card-header'>
-								<h3>
-									{isManagerView
-										? 'Моя статистика'
-										: `Отчёт менеджера: ${selectedManager?.name || ''}`}
-								</h3>
+								<div className='reports-card-title-group'>
+									{isManagerReportMode && (
+										<button
+											type='button'
+											className='reports-card-link'
+											onClick={() => setSelectedManagerId('')}
+										>
+											<i className='fa-solid fa-chevron-left'></i>К списку
+											менеджеров
+										</button>
+									)}
 
-								{isManagerReportMode && (
-									<button
-										type='button'
-										className='reports-card-link'
-										onClick={() => setSelectedManagerId('')}
-									>
-										<i className='fa-solid fa-chevron-left'></i>К списку
-										менеджеров
-									</button>
-								)}
+									<h3>
+										{isManagerView
+											? 'Моя статистика'
+											: `Отчёт менеджера: ${selectedManager?.name || ''}`}
+									</h3>
+								</div>
 
 								{canSplitPersonal || isManagerReportMode ? (
 									<div className='reports-granularity-toggle'>
@@ -2792,6 +3530,7 @@ export default function Reports() {
 								items={clientStats.slice(0, 8)}
 								emptyLabel='Нет заявок за период'
 								childFillColor='#b9cde6'
+								onShowRequests={showClientRequests}
 							/>
 						</div>
 
@@ -2815,11 +3554,22 @@ export default function Reports() {
 								items={technicianStats.slice(0, 8)}
 								emptyLabel='Нет завершённых заявок за период'
 								childFillColor='#b9cde6'
+								onShowRequests={showTechnicianRequests}
 							/>
 						</div>
 					</div>
 				</>
 			))}
+
+			{requestDetails && (
+				<RequestListModal
+					title={requestDetails.title}
+					note={requestDetails.note}
+					requests={requestDetails.requests}
+					onOpenRequest={openRequestPage}
+					onClose={() => setRequestDetails(null)}
+				/>
+			)}
 
 			{openList === 'clients' && (
 				<ReportsListModal
@@ -2830,6 +3580,7 @@ export default function Reports() {
 					emptyLabel='Нет заявок за период'
 					totalLabel='Всего заявок'
 					childFillColor='#b9cde6'
+					onShowRequests={showClientRequests}
 					onClose={() => setOpenList(null)}
 				/>
 			)}
@@ -2863,6 +3614,7 @@ export default function Reports() {
 						technicianScope === 'all' ? 'Всего назначений' : 'Всего выполнено'
 					}
 					childFillColor='#9ab873'
+					onShowRequests={showTechnicianRequests}
 					toolbarExtra={
 						<div className='reports-granularity-toggle'>
 							<button
