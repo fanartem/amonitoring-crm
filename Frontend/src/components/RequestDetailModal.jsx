@@ -1275,6 +1275,18 @@ export default function RequestDetailModal({
 												requestId={requestId}
 												vehicles={request.vehicles || []}
 												requestCity={request.city || ''}
+												initialTechnicianId={
+													request.executors?.length
+														? request.executors[0].user_id
+														: request.assigned_to || ''
+												}
+												initialTechnicianName={
+													request.executors?.length
+														? request.executors[0].user_name || ''
+														: request.assigned_to
+															? getTechName(request.assigned_to)
+															: ''
+												}
 											/>
 										</div>
 									)}

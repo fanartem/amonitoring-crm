@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { API_BASE_URL, getJsonAuthHeaders } from '../api'
-import { useNavigate } from 'react-router'
+import { NavLink, useNavigate } from 'react-router'
 import logoImg from '../assets/logo.png'
 import '../styles/Header.css'
 import { getWorkTypeLabel } from '../utils/workTypes'
@@ -636,9 +636,9 @@ export default function Header() {
 
 	return (
 		<header className='header'>
-			<div className='logo'>
+			<NavLink className='logo' to='/requests'>
 				<img src={logoImg} alt='Amonitoring' />
-			</div>
+			</NavLink>
 
 			{/* 2. ВСЕ ИНТЕРАКТИВНЫЕ ЭЛЕМЕНТЫ ТЕПЕРЬ ТУТ, СТИЛИЗОВАНЫ ЧЕРЕЗ КЛАССЫ */}
 			<div className='header-actions'>

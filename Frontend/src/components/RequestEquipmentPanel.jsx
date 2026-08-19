@@ -472,6 +472,8 @@ export default function RequestEquipmentPanel({
 	requestId,
 	vehicles = [],
 	requestCity = '',
+	initialTechnicianId = '',
+	initialTechnicianName = '',
 }) {
 	const payload = getTokenPayload()
 	const userRole = String(payload.role || '').toUpperCase()
@@ -549,25 +551,58 @@ export default function RequestEquipmentPanel({
 
 	const filteredTechnicians = useMemo(() => {
 		const normalizedCity = selectedCity.trim().toLowerCase()
+		const selectedId = String(selectedTechnicianId || '')
 
 		if (!normalizedCity) return technicians
 
 		return technicians.filter(user => {
-			return (
-				String(user.city || '')
-					.trim()
-					.toLowerCase() === normalizedCity
-			)
+			const userId = String(user.id)
+			const userCity = String(user.city || '')
+				.trim()
+				.toLowerCase()
+
+			// Уже выбранный исполнитель должен оставаться в списке,
+			// даже если его город записан иначе.
+			return userId === selectedId || userCity === normalizedCity
 		})
-	}, [technicians, selectedCity])
+	}, [technicians, selectedCity, selectedTechnicianId])
 
 	const technicianOptions = useMemo(() => {
-		return filteredTechnicians.map(user => ({
+		const options = filteredTechnicians.map(user => ({
 			value: String(user.id),
 			label: user.city ? `${user.name} · ${user.city}` : user.name,
 			searchText: `${user.name || ''} ${user.city || ''}`,
 		}))
-	}, [filteredTechnicians])
+
+		const selectedId = String(selectedTechnicianId || '')
+		const initialId = String(initialTechnicianId || '')
+
+		const selectedOptionExists = options.some(
+			option => String(option.value) === selectedId,
+		)
+
+		// Пока список монтажников загружается или исполнитель не прошёл
+		// городской фильтр, используем данные непосредственно из заявки.
+		if (
+			selectedId &&
+			selectedId === initialId &&
+			!selectedOptionExists &&
+			initialTechnicianName
+		) {
+			options.unshift({
+				value: initialId,
+				label: initialTechnicianName,
+				searchText: initialTechnicianName,
+			})
+		}
+
+		return options
+	}, [
+		filteredTechnicians,
+		selectedTechnicianId,
+		initialTechnicianId,
+		initialTechnicianName,
+	])
 
 	const selectedItem = availableItems.find(
 		item => Number(item.id) === Number(selectedItemId),
@@ -649,12 +684,14 @@ export default function RequestEquipmentPanel({
 	}, [requestId, canManageEquipment])
 
 	useEffect(() => {
+		const technicianId = String(initialTechnicianId || '')
+
 		setSelectedCity(String(requestCity || '').trim())
-		setSelectedTechnicianId('')
-		setInstalledByUserId('')
+		setSelectedTechnicianId(technicianId)
+		setInstalledByUserId(technicianId)
 		setSelectedItemId('')
 		setQuantity(1)
-	}, [requestId, requestCity])
+	}, [requestId, requestCity, initialTechnicianId])
 
 	useEffect(() => {
 		const hasActiveDetachTimer = attachedItems.some(item => {
@@ -793,7 +830,7 @@ export default function RequestEquipmentPanel({
 
 			if (canManageEquipment) {
 				params.append('include_stock', includeStock ? 'true' : 'false')
-				
+
 				if (selectedCity.trim()) {
 					params.append('city', selectedCity.trim())
 				}
