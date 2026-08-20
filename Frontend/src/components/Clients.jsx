@@ -48,6 +48,11 @@ export default function Clients() {
 	const [pickerQuery, setPickerQuery] = useState('')
 	const [isPickerOpen, setIsPickerOpen] = useState(false)
 
+	// Счётчики машин и подклиентов приходят только в /clients/grouped.
+	// Копим их по мере загрузки страниц, чтобы в результатах поиска не
+	// рисовать "Машин: 0" там, где число просто неизвестно.
+	const [knownClientCounts, setKnownClientCounts] = useState({})
+
 	// Автодополнение фильтра по ответственному (ввод имени → список совпадений).
 	const [responsibleQuery, setResponsibleQuery] = useState('')
 	const [isResponsibleOpen, setIsResponsibleOpen] = useState(false)
@@ -285,6 +290,75 @@ export default function Clients() {
 
 		return company || person || `Клиент #${client.id}`
 	}
+
+	// Совпадает ли клиент с введённым текстом. Одна функция на поиск в
+	// списке и на подсказки, чтобы результаты нигде не расходились.
+	const clientMatchesQuery = (client, query) => {
+		if (!query) return true
+
+		return [
+			client.name,
+			client.company_name,
+			client.client_name,
+			client.bin_iin,
+			client.phone,
+			client.email,
+			client.monitoring_login,
+			client.source_client_name,
+			client.source_parent_client_name,
+		]
+			.filter(Boolean)
+			.some((field) => String(field).toLowerCase().includes(query))
+	}
+
+	const clientMatchesFilters = (client) => {
+		if (clientFilters.status && client.status !== clientFilters.status) {
+			return false
+		}
+
+		if (
+			clientFilters.responsible &&
+			Number(client.responsible_manager_id) !==
+				Number(clientFilters.responsible)
+		) {
+			return false
+		}
+
+		return true
+	}
+
+	const clientSearchQuery = pickerQuery.trim().toLowerCase()
+	const isClientSearchActive = clientSearchQuery.length > 0
+
+	// Результаты поиска: плоский список карточек вместо групп.
+	// Совпадения в начале названия идут первыми — как в заявках.
+	const clientSearchResults = !isClientSearchActive
+		? []
+		: (clients || [])
+				.filter(
+					(c) =>
+						clientMatchesFilters(c) && clientMatchesQuery(c, clientSearchQuery),
+				)
+				.map((c) => {
+					const known = knownClientCounts[String(c.id)]
+
+					if (known && known.vehicle_count !== undefined) {
+						return { ...c, ...known }
+					}
+
+					return { ...c, __countsUnknown: true }
+				})
+				.sort((a, b) => {
+					const aName = getPickerClientName(a).toLowerCase()
+					const bName = getPickerClientName(b).toLowerCase()
+
+					const aStarts = aName.startsWith(clientSearchQuery) ? 0 : 1
+					const bStarts = bName.startsWith(clientSearchQuery) ? 0 : 1
+
+					if (aStarts !== bStarts) return aStarts - bStarts
+
+					return aName.localeCompare(bName, 'ru')
+				})
 
 	// Полный список клиентов (из /clients), отфильтрованный по статусу,
 	// ответственному и тексту — это опции выпадающего навигатора.
@@ -902,6 +976,19 @@ export default function Clients() {
 
 				clientGroupsSnapshotRef.current = nextSnapshot
 			}
+
+			setKnownClientCounts((prev) => {
+				const next = { ...prev }
+
+				flattenClientsFromGroups(groups).forEach((client) => {
+					next[String(client.id)] = {
+						vehicle_count: client.vehicle_count,
+						children_count: getClientChildrenCount(client),
+					}
+				})
+
+				return next
+			})
 
 			setClientGroups(groups)
 
@@ -2545,7 +2632,10 @@ export default function Clients() {
 							</span>
 
 							<span className='client-tree-stat'>
-								Машин: <b>{client.vehicle_count || 0}</b>
+								Машин:{' '}
+								<b>
+									{client.__countsUnknown ? '—' : client.vehicle_count || 0}
+								</b>
 							</span>
 
 							{hasChildren && (
@@ -2809,7 +2899,7 @@ export default function Clients() {
 									className={`request-count-badge ${client.vehicle_count > 0 ? 'active' : ''}`}
 									style={{ marginLeft: '8px' }}
 								>
-									{client.vehicle_count || 0}
+									{client.__countsUnknown ? '—' : client.vehicle_count || 0}
 								</span>
 							</div>
 
@@ -2942,50 +3032,27 @@ export default function Clients() {
 								onClick={(e) => e.stopPropagation()}
 							>
 								<label>Найти клиента</label>
-								<input
-									className={`filter-input ${pickerQuery ? 'filter-active' : ''}`}
-									type='text'
-									placeholder='ФИО, компания, телефон, email...'
-									value={pickerQuery}
-									onFocus={() => setIsPickerOpen(true)}
-									onChange={(e) => {
-										setPickerQuery(e.target.value)
-										setIsPickerOpen(true)
-									}}
-								/>
+								<div className='client-search-field'>
+									<input
+										className={`filter-input ${pickerQuery ? 'filter-active' : ''}`}
+										type='text'
+										placeholder='ФИО, компания, телефон, email...'
+										value={pickerQuery}
+										onChange={(e) => setPickerQuery(e.target.value)}
+									/>
 
-								{isPickerOpen && (
-									<div className='client-picker-dropdown'>
-										{filteredPickerClients.length === 0 ? (
-											<div className='client-picker-empty'>
-												Ничего не найдено
-											</div>
-										) : (
-											filteredPickerClients.map((c) => (
-												<button
-													key={c.id}
-													type='button'
-													className='client-picker-option'
-													onClick={() => handlePickClient(c)}
-												>
-													<span className='client-picker-option-name'>
-														{getPickerClientName(c)}
-													</span>
-													<span className='client-picker-option-meta'>
-														<span
-															className={`client-picker-status client-status-${String(
-																c.status || 'ACTIVE',
-															).toLowerCase()}`}
-														>
-															{getClientStatusLabel(c.status || 'ACTIVE')}
-														</span>
-														{c.phone ? ` · ${c.phone}` : ''}
-													</span>
-												</button>
-											))
-										)}
-									</div>
-								)}
+									{pickerQuery && (
+										<button
+											type='button'
+											className='client-search-clear'
+											onClick={() => setPickerQuery('')}
+											title='Очистить поиск'
+										>
+											×
+										</button>
+									)}
+								</div>
+
 							</div>
 
 							<div className='filter-group'>
@@ -3069,6 +3136,47 @@ export default function Clients() {
 							style={{ padding: '40px', textAlign: 'center', color: '#c53030' }}
 						>
 							{error}
+						</div>
+					) : isClientSearchActive ? (
+						<div className='client-groups-list'>
+							<div className='client-group-block'>
+								<div className='client-group-header not-clickable client-group-parent'>
+									<div className='client-group-main'>
+										<div>
+											<div className='client-group-title'>
+												Результаты поиска
+											</div>
+
+											<div className='client-group-subtitle'>
+												Найдено: {clientSearchResults.length} · запрос «
+												{pickerQuery.trim()}»
+											</div>
+										</div>
+									</div>
+
+									<div className='client-group-actions'>
+										<button
+											type='button'
+											className='btn-details'
+											onClick={() => setPickerQuery('')}
+										>
+											Сбросить
+										</button>
+									</div>
+								</div>
+
+								<div className='client-group-tree-list'>
+									{clientSearchResults.length === 0 ? (
+										<div className='client-search-empty'>
+											Ничего не найдено
+										</div>
+									) : (
+										clientSearchResults.map((client) =>
+											renderClientCard(client, 0),
+										)
+									)}
+								</div>
+							</div>
 						</div>
 					) : clientGroups.length === 0 ? (
 						<div

@@ -1898,3 +1898,44 @@
 		margin-left: 0;
 	}
 }
+
+.client-search-field {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.client-search-field .filter-input {
+	width: 100%;
+	padding-right: 30px;
+}
+
+.client-search-clear {
+	position: absolute;
+	right: 6px;
+	width: 20px;
+	height: 20px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	border-radius: 50%;
+	background: #eef1ea;
+	color: #6b7280;
+	font-size: 15px;
+	line-height: 1;
+	cursor: pointer;
+	transition: background 0.15s ease, color 0.15s ease;
+}
+
+.client-search-clear:hover {
+	background: #e0e6d8;
+	color: #2e5902;
+}
+
+.client-search-empty {
+	padding: 28px 20px;
+	text-align: center;
+	color: #9ca3af;
+	font-size: 14px;
+}
