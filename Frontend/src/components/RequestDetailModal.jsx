@@ -1445,6 +1445,13 @@ export default function RequestDetailModal({
 											)}
 										</div>
 
+										{isTechDropdownOpen && (
+											<div
+												className='footer-tech-backdrop'
+												onClick={() => setTechDropdownOpen(false)}
+											/>
+										)}
+
 										<div className='footer-tech-search' ref={techSearchRef}>
 											<button
 												type='button'
