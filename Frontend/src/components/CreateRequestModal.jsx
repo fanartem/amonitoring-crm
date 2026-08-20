@@ -3021,8 +3021,7 @@ export default function CreateRequestModal({
 																	>
 																		{gpsTrackerItems.map(item => (
 																			<option key={item.id} value={item.code}>
-																				{item.name} —{' '}
-																				{formatMoney(item.default_price)}
+																				{item.name}
 																			</option>
 																		))}
 
