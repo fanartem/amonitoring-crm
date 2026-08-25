@@ -154,6 +154,13 @@ REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES = [
     "requests.status.manage",
 ]
 
+REQUEST_COMMENT_PERMISSION_CODES = [
+    "requests.comments.create",
+    "requests.comment",
+    "requests.comments.manage",
+    "requests.manage",
+]
+
 
 def to_bool(value) -> bool:
     if isinstance(value, bool):
@@ -168,8 +175,12 @@ def to_bool(value) -> bool:
     return str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
 
 
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
 def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user:
+    if not current_user or permissions_are_loaded(current_user):
         return False
 
     return current_user.get("role") in roles
@@ -231,8 +242,7 @@ def user_can_view_own_or_responsible_requests(current_user: dict) -> bool:
 
 def user_can_view_assigned_requests(current_user: dict) -> bool:
     return (
-        to_bool(current_user.get("can_be_request_executor"))
-        or user_has_any_permission(current_user, REQUEST_VIEW_ASSIGNED_PERMISSION_CODES)
+        user_has_any_permission(current_user, REQUEST_VIEW_ASSIGNED_PERMISSION_CODES)
         or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
     )
 
@@ -252,8 +262,7 @@ def user_can_edit_own_or_responsible_request(current_user: dict, request: dict) 
 
 def user_can_self_accept_requests(current_user: dict) -> bool:
     return (
-        to_bool(current_user.get("can_be_request_executor"))
-        or user_has_any_permission(current_user, REQUEST_SELF_ACCEPT_PERMISSION_CODES)
+        user_has_any_permission(current_user, REQUEST_SELF_ACCEPT_PERMISSION_CODES)
         or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
     )
 
@@ -267,9 +276,18 @@ def user_can_complete_any_request(current_user: dict) -> bool:
 
 def user_can_complete_assigned_request(current_user: dict) -> bool:
     return (
-        to_bool(current_user.get("can_be_request_executor"))
-        or user_has_any_permission(current_user, REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES)
+        user_has_any_permission(current_user, REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES)
         or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
+    )
+
+
+def user_can_comment_requests(current_user: dict) -> bool:
+    return (
+        user_has_any_permission(current_user, REQUEST_COMMENT_PERMISSION_CODES)
+        or has_legacy_role(
+            current_user,
+            [ADMIN, ROP, MANAGER, TECH_SUPPORT, ACCOUNTANT, WAREHOUSE_MANAGER, SENIOR_TECHNICIAN, TECHNICIAN],
+        )
     )
 
 
@@ -1681,6 +1699,12 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
 
             if not request:
                 raise HTTPException(status_code=404, detail="Заявка не найдена или удалена")
+
+            if not user_can_comment_requests(current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для добавления комментариев к заявке"
+                )
             
             user_city = None
 

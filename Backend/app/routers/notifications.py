@@ -10,6 +10,54 @@ from app.permissions import has_any_permission
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 
+NOTIFICATION_VIEW_PERMISSION_CODES = [
+    "notifications.view",
+    "notifications.manage",
+]
+
+NOTIFICATION_SETTINGS_PERMISSION_CODES = [
+    "notifications.settings.manage",
+    "notifications.manage",
+    "settings.notifications.manage",
+    "settings.manage",
+]
+
+
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
+def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
+    if not current_user or permissions_are_loaded(current_user):
+        return False
+
+    return current_user.get("role") in roles
+
+
+def user_has_any_permission(current_user: dict | None, permission_codes: list[str]) -> bool:
+    return has_any_permission(current_user, permission_codes)
+
+
+def require_notifications_view(current_user: dict):
+    if user_has_any_permission(current_user, NOTIFICATION_VIEW_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT", "ACCOUNTANT", "WAREHOUSE_MANAGER", "SENIOR_TECHNICIAN", "TECHNICIAN"],
+    ):
+        return
+
+    raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра уведомлений")
+
+
+def require_notification_settings_self_manage(current_user: dict):
+    if user_has_any_permission(current_user, NOTIFICATION_VIEW_PERMISSION_CODES + NOTIFICATION_SETTINGS_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT", "ACCOUNTANT", "WAREHOUSE_MANAGER", "SENIOR_TECHNICIAN", "TECHNICIAN"],
+    ):
+        return
+
+    raise HTTPException(status_code=403, detail="Недостаточно прав для настройки уведомлений")
+
+
 def normalize_bool(value):
     return bool(value)
 
@@ -34,6 +82,8 @@ def get_notifications(
     Список уведомлений текущего пользователя.
     По умолчанию возвращает последние 30 уведомлений.
     """
+    require_notifications_view(current_user)
+
     connection = get_connection()
 
     try:
@@ -88,6 +138,8 @@ def get_unread_count(current_user: dict = Depends(get_current_user)):
     """
     Количество непрочитанных уведомлений для badge в колокольчике.
     """
+    require_notifications_view(current_user)
+
     connection = get_connection()
 
     try:
@@ -117,6 +169,8 @@ def mark_all_notifications_as_read(current_user: dict = Depends(get_current_user
     """
     Пометить все уведомления текущего пользователя как прочитанные.
     """
+    require_notifications_view(current_user)
+
     connection = get_connection()
 
     try:
@@ -156,6 +210,8 @@ def mark_notification_as_read(
     Пометить одно уведомление как прочитанное.
     Пользователь может менять только свои уведомления.
     """
+    require_notifications_view(current_user)
+
     connection = get_connection()
 
     try:
@@ -212,6 +268,8 @@ def delete_read_notifications(current_user: dict = Depends(get_current_user)):
     Удалить все прочитанные уведомления текущего пользователя.
     Непрочитанные уведомления не удаляются.
     """
+    require_notifications_view(current_user)
+
     connection = get_connection()
 
     try:
@@ -246,6 +304,8 @@ def get_notification_settings(current_user: dict = Depends(get_current_user)):
 
     Если персональной настройки нет, используется default_enabled из notification_types.
     """
+    require_notification_settings_self_manage(current_user)
+
     connection = get_connection()
 
     try:
@@ -287,6 +347,8 @@ def update_notification_settings(
     """
     Обновление настроек уведомлений текущего пользователя пачкой.
     """
+    require_notification_settings_self_manage(current_user)
+
     connection = get_connection()
 
     try:
@@ -361,7 +423,7 @@ def can_manage_request_time_conflict_settings(current_user: dict) -> bool:
             current_user,
             REQUEST_TIME_CONFLICT_SETTINGS_PERMISSION_CODES,
         )
-        or current_user.get("role") == "ADMIN"
+        or has_legacy_role(current_user, ["ADMIN"])
     )
 
 

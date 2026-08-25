@@ -109,7 +109,14 @@ ALLOWED_CLIENT_PAYMENT_TYPES = [
     CLIENT_PAYMENT_POSTPAYMENT,
 ]
 
-def has_legacy_role(current_user: dict, roles: list[str]) -> bool:
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
+def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
+    if not current_user or permissions_are_loaded(current_user):
+        return False
+
     return current_user.get("role") in roles
 
 def can_view_clients(current_user: dict) -> bool:
@@ -173,7 +180,7 @@ def can_open_client_details_for_router(client: dict, current_user: dict) -> bool
     if can_view_all_clients(current_user):
         return True
 
-    if has_any_permission(current_user, CLIENT_VIEW_OWN_PERMISSION_CODES) or current_user.get("role") == MANAGER:
+    if has_any_permission(current_user, CLIENT_VIEW_OWN_PERMISSION_CODES) or has_legacy_role(current_user, [MANAGER]):
         return is_client_owned_by_user(client, current_user)
 
     return False
@@ -291,7 +298,7 @@ def get_default_responsible_manager_id(data: ClientCreate, current_user: dict):
 
         return requested_responsible_id
 
-    if current_user.get("role") == MANAGER or current_user.get("can_be_responsible_manager"):
+    if current_user.get("can_be_responsible_manager"):
         return current_user["id"]
 
     return None

@@ -298,7 +298,14 @@ VEHICLE_TRANSFER_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER"]
 VEHICLE_TRANSFER_HISTORY_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER"]
 
 
-def has_legacy_role(current_user: dict, roles: list[str]) -> bool:
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
+def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
+    if not current_user or permissions_are_loaded(current_user):
+        return False
+
     return current_user.get("role") in roles
 
 

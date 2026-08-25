@@ -523,6 +523,40 @@ def has_any_permission(user: dict | None, permission_codes: list[str]) -> bool:
     return any(has_permission(user, code) for code in permission_codes)
 
 
+def permissions_are_loaded(user: dict | None) -> bool:
+    """
+    True means the user object came from the new access layer and its
+    effective permission list is authoritative, even when the list is empty.
+    """
+    return user is not None and isinstance(user.get("permissions"), list)
+
+
+def should_use_legacy_role_fallback(user: dict | None) -> bool:
+    """
+    Role fallback is allowed only for legacy user dictionaries that do not
+    contain the loaded permissions list. Once permissions are loaded, an empty
+    list must mean no action access.
+    """
+    if not user:
+        return False
+
+    if is_super_admin(user):
+        return False
+
+    return not permissions_are_loaded(user)
+
+
+def has_any_permission_or_legacy(
+    user: dict | None,
+    permission_codes: list[str],
+    legacy_roles: list[str],
+) -> bool:
+    if has_any_permission(user, permission_codes):
+        return True
+
+    return has_legacy_role(user, legacy_roles)
+
+
 def require_permission(
     user: dict | None,
     permission_code: str,
@@ -591,6 +625,9 @@ def get_role(user: dict | None) -> str | None:
 
 
 def has_legacy_role(user: dict | None, roles: list[str]) -> bool:
+    if not should_use_legacy_role_fallback(user):
+        return False
+
     role = get_role(user)
     return role in roles if role else False
 
@@ -777,16 +814,16 @@ def can_view_attachment(attachment: dict, current_user: dict) -> bool:
     if has_any_permission(current_user, ATTACHMENT_VIEW_ALL_PERMISSION_CODES):
         return True
 
-    if role in [ADMIN, ROP, MANAGER, ACCOUNTANT, WAREHOUSE_MANAGER, TECH_SUPPORT]:
+    if has_legacy_role(current_user, [ADMIN, ROP, MANAGER, ACCOUNTANT, WAREHOUSE_MANAGER, TECH_SUPPORT]):
         return True
 
-    if role == TECHNICIAN:
+    if has_legacy_role(current_user, [TECHNICIAN]):
         return (
             attachment.get("uploaded_by") is not None
             and int(attachment["uploaded_by"]) == int(current_user["id"])
         )
 
-    if role == SENIOR_TECHNICIAN:
+    if has_legacy_role(current_user, [SENIOR_TECHNICIAN]):
         uploaded_by_role = attachment.get("uploaded_by_role")
         return uploaded_by_role in [TECHNICIAN, SENIOR_TECHNICIAN]
 
@@ -799,7 +836,7 @@ def can_delete_attachment(attachment: dict, current_user: dict, within_time_limi
 
     role = get_role(current_user)
 
-    if role in [ADMIN, ROP]:
+    if has_legacy_role(current_user, [ADMIN, ROP]):
         return True
 
     is_owner = (
@@ -835,7 +872,7 @@ def can_open_client_details(client: dict, current_user: dict) -> bool:
     if can_view_all_client_details(current_user):
         return True
 
-    if has_any_permission(current_user, ["clients.view_own"]) or role == MANAGER:
+    if has_any_permission(current_user, ["clients.view_own"]) or has_legacy_role(current_user, [MANAGER]):
         return is_client_owned_by_user(client, current_user)
 
     return False
@@ -847,7 +884,7 @@ def can_edit_client(client: dict, current_user: dict) -> bool:
     if can_edit_all_clients(current_user):
         return True
 
-    if has_any_permission(current_user, CLIENTS_EDIT_OWN_PERMISSION_CODES) or role == MANAGER:
+    if has_any_permission(current_user, CLIENTS_EDIT_OWN_PERMISSION_CODES) or has_legacy_role(current_user, [MANAGER]):
         return is_client_owned_by_user(client, current_user)
 
     return False
@@ -862,10 +899,10 @@ def can_create_request_for_client(client: dict, current_user: dict) -> bool:
     if has_any_permission(current_user, ["requests.create_all", "requests.manage"]):
         return True
 
-    if role in [ADMIN, ROP, TECH_SUPPORT]:
+    if has_legacy_role(current_user, [ADMIN, ROP, TECH_SUPPORT]):
         return True
 
-    if has_any_permission(current_user, REQUEST_CREATE_PERMISSION_CODES) or role == MANAGER:
+    if has_any_permission(current_user, REQUEST_CREATE_PERMISSION_CODES) or has_legacy_role(current_user, [MANAGER]):
         return is_client_owned_by_user(client, current_user)
 
     return False
@@ -931,7 +968,7 @@ def can_change_support_request_status(user: dict, support_request: dict | None =
     if has_any_permission(user, SUPPORT_REQUEST_STATUS_PERMISSION_CODES):
         return True
 
-    if role in [ADMIN, ROP, TECH_SUPPORT]:
+    if has_legacy_role(user, [ADMIN, ROP, TECH_SUPPORT]):
         return True
 
     if not support_request:
@@ -942,7 +979,7 @@ def can_change_support_request_status(user: dict, support_request: dict | None =
     return (
         assigned_to is not None
         and int(assigned_to) == int(user["id"])
-        and role in SUPPORT_REQUEST_ASSIGNEE_ROLES
+        and has_legacy_role(user, SUPPORT_REQUEST_ASSIGNEE_ROLES)
     )
 
 

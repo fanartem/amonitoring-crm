@@ -114,7 +114,14 @@ CLIENT_PRICE_MANAGE_OWN_LEGACY_ROLES = [
 ]
 
 
-def has_legacy_role(current_user: dict, roles: list[str]) -> bool:
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
+def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
+    if not current_user or permissions_are_loaded(current_user):
+        return False
+
     return current_user.get("role") in roles
 
 

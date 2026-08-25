@@ -2,23 +2,65 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.database import get_connection
 from app.security import get_current_user
 from app.schemas import CityCreate, CityUpdate
+from app.permissions import has_any_permission
 
 router = APIRouter(prefix="/cities", tags=["Cities"])
 
+CITY_MANAGE_PERMISSION_CODES = [
+    "cities.manage",
+    "settings.cities.manage",
+    "settings.manage",
+]
 
-def require_admin(current_user: dict):
-    if current_user["role"] not in {"ADMIN", "ROP"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Только Админ и РОП могут управлять городами"
-        )
+CITY_CREATE_PERMISSION_CODES = [
+    "cities.create",
+    "cities.manage",
+    "settings.cities.manage",
+    "settings.manage",
+]
+
+CITY_EDIT_PERMISSION_CODES = [
+    "cities.edit",
+    "cities.manage",
+    "settings.cities.manage",
+    "settings.manage",
+]
+
+CITY_DELETE_PERMISSION_CODES = [
+    "cities.delete",
+    "cities.deactivate",
+    "cities.manage",
+    "settings.cities.manage",
+    "settings.manage",
+]
+
+
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
+def has_legacy_role(current_user: dict | None, roles: set[str]) -> bool:
+    if not current_user or permissions_are_loaded(current_user):
+        return False
+
+    return current_user.get("role") in roles
+
+
+def require_city_permission(current_user: dict, permission_codes: list[str]):
+    if has_any_permission(current_user, permission_codes) or has_legacy_role(current_user, {"ADMIN", "ROP"}):
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail="Недостаточно прав для управления городами"
+    )
 
 
 @router.get("")
 def get_cities(active_only: bool = True):
     """
     Получить список городов.
-    Доступ: все авторизованные пользователи.
+    Endpoint оставлен без авторизации, чтобы форма регистрации могла загрузить города.
     По умолчанию возвращает только активные города.
     """
     connection = get_connection()
@@ -53,11 +95,7 @@ def create_city(
     data: CityCreate,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Добавить город.
-    Доступ: только ADMIN.
-    """
-    require_admin(current_user)
+    require_city_permission(current_user, CITY_CREATE_PERMISSION_CODES)
 
     name = data.name.strip()
 
@@ -115,11 +153,7 @@ def update_city(
     data: CityUpdate,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Редактировать город или включить/отключить его.
-    Доступ: только ADMIN.
-    """
-    require_admin(current_user)
+    require_city_permission(current_user, CITY_EDIT_PERMISSION_CODES)
 
     update_data = data.dict(exclude_unset=True)
 
@@ -216,13 +250,7 @@ def deactivate_city(
     city_id: int,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Отключить город.
-    Доступ: только ADMIN.
-
-    Не удаляем физически, чтобы старые заявки и пользователи с этим городом не сломались.
-    """
-    require_admin(current_user)
+    require_city_permission(current_user, CITY_DELETE_PERMISSION_CODES)
 
     connection = get_connection()
 

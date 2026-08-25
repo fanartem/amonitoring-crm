@@ -10,13 +10,6 @@ from app.permissions import (
 router = APIRouter(prefix="/users", tags=["Users"])
 
 def ensure_can_view_request_executors(current_user: dict):
-    """
-    Кто может видеть справочник исполнителей:
-    - Супер-Админ;
-    - пользователи, которые видят заявки;
-    - пользователи, которые назначают исполнителей;
-    - пользователи со складскими доступами, потому что склад использует сотрудников.
-    """
     if is_super_admin(current_user):
         return
 
@@ -24,10 +17,13 @@ def ensure_can_view_request_executors(current_user: dict):
         current_user,
         [
             "requests.view",
+            "requests.view_all",
+            "requests.view_assigned",
             "requests.executors.manage",
             "warehouse.view",
             "warehouse.inventory.view",
             "warehouse.inventory.manage",
+            "warehouse.my_inventory.view",
         ],
     ):
         return
@@ -39,13 +35,19 @@ def ensure_can_view_request_executors(current_user: dict):
 
 
 def ensure_can_view_responsible_managers(current_user: dict):
-    """
-    Кто может видеть справочник ответственных менеджеров.
-    """
     if is_super_admin(current_user):
         return
 
-    if has_permission(current_user, "clients.responsible.reassign"):
+    if has_any_permission(
+        current_user,
+        [
+            "clients.responsible.reassign",
+            "clients.responsible.manage",
+            "clients.responsible_manager.manage",
+            "clients.reassign",
+            "clients.manage",
+        ],
+    ):
         return
 
     raise HTTPException(
@@ -55,12 +57,6 @@ def ensure_can_view_responsible_managers(current_user: dict):
 
 @router.get("/technicians")
 def get_technicians(current_user: dict = Depends(get_current_user)):
-    """
-    Список пользователей, которых можно назначить исполнителем заявки.
-
-    Теперь определяется не жёстко по TECHNICIAN/SENIOR_TECHNICIAN,
-    а по roles.can_be_request_executor = 1.
-    """
     ensure_can_view_request_executors(current_user)
 
     connection = get_connection()
@@ -94,9 +90,7 @@ def get_technicians(current_user: dict = Depends(get_current_user)):
             users = cursor.fetchall()
 
             for user in users:
-                user["can_be_request_executor"] = bool(
-                    user["can_be_request_executor"]
-                )
+                user["can_be_request_executor"] = bool(user["can_be_request_executor"])
                 user["role_name"] = user.get("role_name") or user.get("role")
                 user["role_badge_color"] = user.get("role_badge_color") or "#64748B"
 
@@ -107,12 +101,6 @@ def get_technicians(current_user: dict = Depends(get_current_user)):
 
 @router.get("/technicians/lookup")
 def get_technicians_lookup(current_user: dict = Depends(get_current_user)):
-    """
-    Справочник исполнителей для отображения имён в старых заявках.
-
-    Возвращает активных и soft-deleted пользователей.
-    НЕ использовать для назначения исполнителя.
-    """
     ensure_can_view_request_executors(current_user)
 
     connection = get_connection()
@@ -149,9 +137,7 @@ def get_technicians_lookup(current_user: dict = Depends(get_current_user)):
             for user in users:
                 user["is_approved"] = bool(user["is_approved"])
                 user["is_active"] = bool(user["is_active"])
-                user["can_be_request_executor"] = bool(
-                    user["can_be_request_executor"]
-                )
+                user["can_be_request_executor"] = bool(user["can_be_request_executor"])
                 user["role_name"] = user.get("role_name") or user.get("role")
                 user["role_badge_color"] = user.get("role_badge_color") or "#64748B"
 
@@ -162,12 +148,6 @@ def get_technicians_lookup(current_user: dict = Depends(get_current_user)):
 
 @router.get("/responsible-managers")
 def get_responsible_managers(current_user: dict = Depends(get_current_user)):
-    """
-    Список пользователей, которых можно назначить ответственными за клиента.
-
-    Теперь определяется не жёстко по MANAGER/ROP/ADMIN,
-    а по roles.can_be_responsible_manager = 1.
-    """
     ensure_can_view_responsible_managers(current_user)
 
     connection = get_connection()
@@ -202,9 +182,7 @@ def get_responsible_managers(current_user: dict = Depends(get_current_user)):
             users = cursor.fetchall()
 
             for user in users:
-                user["can_be_responsible_manager"] = bool(
-                    user["can_be_responsible_manager"]
-                )
+                user["can_be_responsible_manager"] = bool(user["can_be_responsible_manager"])
                 user["role_name"] = user.get("role_name") or user.get("role")
                 user["role_badge_color"] = user.get("role_badge_color") or "#64748B"
 

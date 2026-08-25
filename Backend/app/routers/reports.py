@@ -128,7 +128,14 @@ WAREHOUSE_RETURN_ACTIONS = {
 }
 
 
-def has_legacy_role(current_user: dict, roles: list[str]) -> bool:
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
+def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
+    if not current_user or permissions_are_loaded(current_user):
+        return False
+
     return current_user.get("role") in roles
 
 
@@ -137,6 +144,7 @@ def can_view_request_reports(current_user: dict) -> bool:
         has_any_permission(current_user, [
             "reports.view",
             "reports.requests.view",
+            "reports.requests.view_own",
             "reports.manage",
         ])
         or has_legacy_role(current_user, REQUEST_REPORT_ROLES)

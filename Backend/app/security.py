@@ -10,9 +10,9 @@ from dotenv import load_dotenv
 from app.database import get_connection
 
 from app.permissions import (
-    ADMIN,
     attach_effective_permissions,
     get_user_base_access,
+    has_any_permission,
     is_super_admin,
 )
 
@@ -51,14 +51,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
-    """
-    Проверяет токен и возвращает актуальные данные текущего пользователя.
-
-    Важно:
-    - JWT используется только для user_id/sub.
-    - role/city/permissions не берём из JWT как источник истины.
-    - На каждом запросе подтягиваем актуальные данные из БД.
-    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -109,9 +101,11 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     finally:
         connection.close()
 
-# Специальная проверка для Админов
 def get_current_admin(current_user: dict = Depends(get_current_user)):
-    if not (is_super_admin(current_user) or current_user["role"] == ADMIN):
-        raise HTTPException(status_code=403, detail="Only admins can do this")
+    if not (
+        is_super_admin(current_user)
+        or has_any_permission(current_user, ["admin.access", "employees.manage", "settings.manage"])
+    ):
+        raise HTTPException(status_code=403, detail="Недостаточно прав администратора")
 
     return current_user

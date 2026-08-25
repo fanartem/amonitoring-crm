@@ -153,8 +153,12 @@ def to_bool(value) -> bool:
     return str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
 
 
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
 def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user:
+    if not current_user or permissions_are_loaded(current_user):
         return False
 
     return current_user.get("role") in roles

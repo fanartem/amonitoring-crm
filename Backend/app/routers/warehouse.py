@@ -170,12 +170,44 @@ VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
     "warehouse.manage",
 ]
 
+VEHICLE_EQUIPMENT_VIEW_PERMISSION_CODES = [
+    "vehicles.equipment.view",
+    "vehicles.equipment.view_all",
+    "vehicles.equipment.manage",
+    "warehouse.vehicle_equipment.view",
+    "warehouse.vehicle_equipment.view_all",
+    "warehouse.vehicle_equipment.manage",
+    "warehouse.items.view",
+    "warehouse.items.manage",
+    "warehouse.view",
+    "warehouse.manage",
+]
+
+REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES = [
+    "requests.equipment.view_assigned",
+    "requests.equipment.view_own",
+    "requests.equipment.attach",
+    "requests.equipment.manage",
+    "warehouse.request_equipment.view_assigned",
+    "warehouse.request_equipment.attach",
+    "warehouse.request_equipment.manage",
+    "warehouse.my_inventory.attach",
+    "warehouse.inventory.attach_own",
+]
+
 
 def to_bool(value) -> bool:
     return value is True or value == 1 or str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
 
 
-def has_legacy_role(current_user: dict, roles: list[str]) -> bool:
+def permissions_are_loaded(current_user: dict | None) -> bool:
+    return current_user is not None and isinstance(current_user.get("permissions"), list)
+
+
+def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
+    if not current_user or permissions_are_loaded(current_user):
+        return False
+
     return current_user.get("role") in roles
 
 
@@ -213,8 +245,7 @@ def can_read_inventory_full(current_user: dict) -> bool:
 
 def can_view_my_inventory(current_user: dict) -> bool:
     return (
-        to_bool(current_user.get("can_be_request_executor"))
-        or user_has_any_permission(current_user, MY_INVENTORY_VIEW_PERMISSION_CODES)
+        user_has_any_permission(current_user, MY_INVENTORY_VIEW_PERMISSION_CODES)
         or has_legacy_role(current_user, ["TECHNICIAN", "SENIOR_TECHNICIAN"])
     )
 
@@ -244,7 +275,6 @@ def can_detach_request_equipment_without_time_limit(current_user: dict) -> bool:
 def can_detach_request_equipment_with_time_limit(current_user: dict) -> bool:
     return (
         can_attach_request_equipment(current_user)
-        or to_bool(current_user.get("can_be_request_executor"))
         or has_legacy_role(current_user, REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES)
     )
 
@@ -341,22 +371,21 @@ def require_vehicle_equipment_manage(current_user: dict):
 
 
 def can_user_access_vehicle_equipment(vehicle: dict, current_user: dict) -> bool:
-    role = current_user.get("role")
     user_id = int(current_user["id"])
 
     if can_manage_vehicle_equipment(current_user) or user_has_any_permission(
         current_user,
-        ["vehicles.equipment.view_all", "warehouse.vehicle_equipment.view_all"],
+        VEHICLE_EQUIPMENT_VIEW_PERMISSION_CODES,
     ):
         return True
 
-    if role in ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT"]:
+    if has_legacy_role(current_user, ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT", "SENIOR_TECHNICIAN"]):
         return True
 
-    if role == "SENIOR_TECHNICIAN":
-        return True
-
-    if role == "MANAGER":
+    if user_has_any_permission(
+        current_user,
+        ["vehicles.equipment.view_own", "warehouse.vehicle_equipment.view_own"],
+    ) or has_legacy_role(current_user, ["MANAGER"]):
         created_by = vehicle.get("client_created_by")
         responsible_manager_id = vehicle.get("responsible_manager_id")
 
@@ -377,7 +406,6 @@ def normalize_city(value):
 
 
 def can_user_access_request_equipment(request: dict, current_user: dict) -> bool:
-    role = current_user.get("role")
     user_id = int(current_user["id"])
 
     if can_manage_employee_equipment(current_user) or user_has_any_permission(
@@ -391,13 +419,13 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
     ):
         return True
 
-    if role in ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT"]:
+    if has_legacy_role(current_user, ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT", "SENIOR_TECHNICIAN"]):
         return True
 
-    if role == "SENIOR_TECHNICIAN":
-        return True
-
-    if role == "MANAGER":
+    if user_has_any_permission(
+        current_user,
+        ["requests.equipment.view_own", "warehouse.request_equipment.view_own"],
+    ) or has_legacy_role(current_user, ["MANAGER"]):
         created_by = request.get("created_by")
         responsible_manager_id = request.get("responsible_manager_id")
 
@@ -408,16 +436,17 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
             and int(responsible_manager_id) == user_id
         )
 
-    if role == "TECHNICIAN" or to_bool(current_user.get("can_be_request_executor")):
+    can_use_executor_scope = (
+        to_bool(current_user.get("can_be_request_executor"))
+        and user_has_any_permission(current_user, REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES)
+    ) or has_legacy_role(current_user, ["TECHNICIAN", "SENIOR_TECHNICIAN"])
+
+    if can_use_executor_scope:
         assigned_to = request.get("assigned_to")
 
-        # Если заявка уже назначена этому исполнителю — даём доступ к оборудованию,
-        # даже если оплата/город отличаются. Он уже исполнитель заявки.
         if assigned_to is not None:
             return int(assigned_to) == user_id
 
-        # Если заявка ещё свободная — исполнитель может видеть оборудование
-        # только для оплаченной заявки своего города.
         if not request.get("is_paid"):
             return False
 
