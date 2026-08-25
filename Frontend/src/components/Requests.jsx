@@ -270,13 +270,6 @@ export default function Requests() {
 			'requests.accept_assigned',
 		])
 
-	const canShowNewRequestNotice =
-		canByPermission([
-			'notifications.requests.new',
-			'notifications.requests.create',
-			'notifications.manage',
-		]) || hasLegacyRole(['MANAGER', 'TECH_SUPPORT'])
-
 	useEffect(() => {
 		const openRequestId = location.state?.openRequestId
 
@@ -435,7 +428,11 @@ export default function Requests() {
 							[String(newestCreatedRequest.id)]: 'just-created',
 						}))
 
-						if (showCreatedNotice) {
+						if (
+							showCreatedNotice &&
+							Boolean(newestCreatedRequest.can_delete_own_with_time_limit) &&
+							!Boolean(newestCreatedRequest.can_delete)
+						) {
 							notifyNewRequestCreated({
 								requestId: newestCreatedRequest.id,
 							})
@@ -1874,7 +1871,7 @@ export default function Requests() {
 
 					fetchRequests({
 						scrollToCreatedRequest: !wasEditMode,
-						showCreatedNotice: !wasEditMode && canShowNewRequestNotice,
+						showCreatedNotice: !wasEditMode,
 					})
 				}}
 			/>
