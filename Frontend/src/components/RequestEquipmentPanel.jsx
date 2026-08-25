@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/RequestEquipmentPanel.css'
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 
 const CATEGORIES = {
 	GPS_TRACKER: 'Трекер',
@@ -59,26 +60,6 @@ const renderConditionBadge = item => {
 			БУ
 		</span>
 	)
-}
-
-const getTokenPayload = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return {}
-
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
-
-		return JSON.parse(jsonPayload)
-	} catch {
-		return {}
-	}
 }
 
 const getItemTitle = item => {
@@ -475,17 +456,58 @@ export default function RequestEquipmentPanel({
 	initialTechnicianId = '',
 	initialTechnicianName = '',
 }) {
-	const payload = getTokenPayload()
-	const userRole = String(payload.role || '').toUpperCase()
+	const currentUser = getStoredUser()
 
-	const canManageEquipment = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
+	/*
+		Новая логика:
+		- обычная привязка оборудования доступна по permissions;
+		- управление складом и инвентарями сотрудников вынесено отдельно;
+		- Супер-Админ получает true внутри hasAnyPermission;
+		- legacy fallback оставлен временно для старых системных ролей.
+	*/
 
-	const canAttachEquipment = [
-		'ADMIN',
-		'WAREHOUSE_MANAGER',
-		'SENIOR_TECHNICIAN',
-		'TECHNICIAN',
-	].includes(userRole)
+	const canManageWarehouse =
+		hasAnyPermission(currentUser, [
+			'warehouse.manage',
+			'warehouse.items.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canManageEmployeeEquipment =
+		hasAnyPermission(currentUser, [
+			'warehouse.employee_equipment.manage',
+			'warehouse.employees_equipment.manage',
+			'warehouse.employee_inventory.manage',
+			'warehouse.employees_inventory.manage',
+			'warehouse.inventory.manage_employees',
+			'warehouse.inventory.manage_all',
+			'warehouse.inventory.assign',
+			'warehouse.inventory.transfer',
+			'warehouse.technician_inventory.manage',
+			'warehouse.technicians_inventory.manage',
+			'warehouse.assigned_inventory.manage',
+			'warehouse.manage_employee_equipment',
+			'warehouse.manage_technician_inventory',
+			'warehouse.staff_inventory.manage',
+		]) || canManageWarehouse
+
+	const canManageEquipment = canManageWarehouse || canManageEmployeeEquipment
+
+	const canAttachEquipment =
+		hasAnyPermission(currentUser, [
+			'requests.equipment.attach',
+			'requests.equipment.manage',
+			'warehouse.request_equipment.attach',
+			'warehouse.request_equipment.manage',
+			'warehouse.my_inventory.attach',
+			'warehouse.inventory.attach_own',
+		]) ||
+		canManageEquipment ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'WAREHOUSE_MANAGER',
+			'SENIOR_TECHNICIAN',
+			'TECHNICIAN',
+		])
 
 	const [attachedItems, setAttachedItems] = useState([])
 	const [availableItems, setAvailableItems] = useState([])

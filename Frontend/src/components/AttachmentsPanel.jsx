@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 import '../styles/AttachmentsPanel.css'
 
 const formatFileSize = bytes => {
@@ -27,24 +28,86 @@ const formatDateTime = value => {
 	}
 }
 
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
+const LEGACY_ATTACHMENT_UPLOAD_ROLES = [
+	'ADMIN',
+	'ROP',
+	'MANAGER',
+	'TECH_SUPPORT',
+	'ACCOUNTANT',
+	'WAREHOUSE_MANAGER',
+	'SENIOR_TECHNICIAN',
+	'TECHNICIAN',
+]
 
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
+const LEGACY_ATTACHMENT_MANAGE_ROLES = ['ADMIN', 'ROP', 'MANAGER']
 
-		return JSON.parse(jsonPayload).role
-	} catch {
-		return null
+const hasLegacyRole = (user, roles) => roles.includes(user?.role)
+
+const getEntityAttachmentPrefix = entityType => {
+	const normalized = String(entityType || '').toUpperCase()
+
+	if (normalized === 'CLIENT') return 'clients.attachments'
+	if (normalized === 'REQUEST') return 'requests.attachments'
+
+	return null
+}
+
+const getEntityAttachmentPermissions = (entityType, action) => {
+	const prefix = getEntityAttachmentPrefix(entityType)
+
+	if (!prefix) return []
+
+	if (action === 'view') {
+		return [`${prefix}.view`, `${prefix}.manage`]
 	}
+
+	if (action === 'upload') {
+		return [`${prefix}.upload`, `${prefix}.manage`]
+	}
+
+	if (action === 'rename') {
+		return [`${prefix}.rename`, `${prefix}.edit`, `${prefix}.manage`]
+	}
+
+	if (action === 'delete') {
+		return [`${prefix}.delete`, `${prefix}.manage`]
+	}
+
+	return [`${prefix}.manage`]
+}
+
+const canUploadAttachments = (user, entityType) => {
+	return (
+		hasAnyPermission(user, [
+			'attachments.upload',
+			'attachments.manage',
+			...getEntityAttachmentPermissions(entityType, 'upload'),
+		]) || hasLegacyRole(user, LEGACY_ATTACHMENT_UPLOAD_ROLES)
+	)
+}
+
+const canManageAttachments = (user, entityType) => {
+	return (
+		hasAnyPermission(user, [
+			'attachments.manage',
+			...getEntityAttachmentPermissions(entityType, 'rename'),
+			...getEntityAttachmentPermissions(entityType, 'delete'),
+		]) || hasLegacyRole(user, LEGACY_ATTACHMENT_MANAGE_ROLES)
+	)
+}
+
+const canDownloadAttachment = attachment => attachment?.can_download !== false
+
+const canRenameAttachment = attachment => {
+	if (typeof attachment?.can_rename === 'boolean') return attachment.can_rename
+
+	return true
+}
+
+const canDeleteAttachment = attachment => {
+	if (typeof attachment?.can_delete === 'boolean') return attachment.can_delete
+
+	return true
 }
 
 export default function AttachmentsPanel({ entityType, entityId }) {
@@ -62,8 +125,17 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 	const [isSuccessNoticeLeaving, setIsSuccessNoticeLeaving] = useState(false)
 
 	const normalizedEntityType = String(entityType || '').toUpperCase()
+	const user = getStoredUser()
+	const userRole = user?.role || null
 
-	const userRole = getUserRole()
+	const canUploadCurrentEntity = canUploadAttachments(
+		user,
+		normalizedEntityType,
+	)
+	const canManageCurrentEntity = canManageAttachments(
+		user,
+		normalizedEntityType,
+	)
 
 	const isTechnician = userRole === 'TECHNICIAN'
 	const isSeniorTechnician = userRole === 'SENIOR_TECHNICIAN'
@@ -129,6 +201,12 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 		if (!file) return
 
+		if (!canUploadCurrentEntity) {
+			setError('Недостаточно прав для загрузки файла')
+			e.target.value = ''
+			return
+		}
+
 		const formData = new FormData()
 		formData.append('file', file)
 
@@ -151,11 +229,7 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 				throw new Error(data?.detail || 'Не удалось загрузить файл')
 			}
 
-			if (
-				['MANAGER', 'TECH_SUPPORT', 'SENIOR_TECHNICIAN', 'TECHNICIAN'].includes(
-					userRole,
-				)
-			) {
+			if (!canManageCurrentEntity) {
 				showSuccessNotice(
 					'Файл загружен. У вас есть 2 минуты, чтобы проверить файл. Потом нельзя будет удалить.',
 				)
@@ -301,24 +375,26 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 					<p>{getAttachmentsDescription()}</p>
 				</div>
 
-				<div>
-					<input
-						ref={fileInputRef}
-						type='file'
-						style={{ display: 'none' }}
-						onChange={handleFileSelect}
-						accept='.jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt'
-					/>
+				{canUploadCurrentEntity && (
+					<div>
+						<input
+							ref={fileInputRef}
+							type='file'
+							style={{ display: 'none' }}
+							onChange={handleFileSelect}
+							accept='.jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt'
+						/>
 
-					<button
-						type='button'
-						className='attachments-add-btn'
-						onClick={() => fileInputRef.current?.click()}
-						disabled={uploading}
-					>
-						{uploading ? 'Загрузка...' : '+ Добавить файл'}
-					</button>
-				</div>
+						<button
+							type='button'
+							className='attachments-add-btn'
+							onClick={() => fileInputRef.current?.click()}
+							disabled={uploading}
+						>
+							{uploading ? 'Загрузка...' : '+ Добавить файл'}
+						</button>
+					</div>
+				)}
 			</div>
 
 			{error && <div className='attachments-error'>{error}</div>}
@@ -399,32 +475,38 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 							{editingId !== file.id && (
 								<div className='attachments-actions'>
-									<button
-										type='button'
-										className='attachments-action-btn'
-										onClick={() => downloadAttachment(file)}
-										title='Скачать'
-									>
-										⬇
-									</button>
+									{canDownloadAttachment(file) && (
+										<button
+											type='button'
+											className='attachments-action-btn'
+											onClick={() => downloadAttachment(file)}
+											title='Скачать'
+										>
+											⬇
+										</button>
+									)}
 
-									<button
-										type='button'
-										className='attachments-action-btn'
-										onClick={() => startEdit(file)}
-										title='Переименовать'
-									>
-										✎
-									</button>
+									{canRenameAttachment(file) && (
+										<button
+											type='button'
+											className='attachments-action-btn'
+											onClick={() => startEdit(file)}
+											title='Переименовать'
+										>
+											✎
+										</button>
+									)}
 
-									<button
-										type='button'
-										className='attachments-action-btn danger'
-										onClick={() => deleteAttachment(file)}
-										title='Удалить'
-									>
-										🗑
-									</button>
+									{canDeleteAttachment(file) && (
+										<button
+											type='button'
+											className='attachments-action-btn danger'
+											onClick={() => deleteAttachment(file)}
+											title='Удалить'
+										>
+											🗑
+										</button>
+									)}
 								</div>
 							)}
 						</div>

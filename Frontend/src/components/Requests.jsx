@@ -6,6 +6,7 @@ import CreateRequestModal from './CreateRequestModal'
 import RequestDetailModal from './RequestDetailModal'
 import { notifyNewRequestCreated } from './notifications/NewRequestNotice'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 
 const getUserRole = () => {
 	try {
@@ -139,9 +140,19 @@ export default function Requests() {
 	// по кнопке, чтобы не занимать экран постоянно.
 	const [showMobileFilters, setShowMobileFilters] = useState(false)
 
-	const userRole = getUserRole()
-	const currentUserId = getCurrentUserId()
+	const user = getStoredUser()
+	const userRole = String(user?.role || getUserRole() || '').toUpperCase()
+	const currentUserIdRaw = user?.id ?? user?.user_id ?? getCurrentUserId()
+	const currentUserId = Number.isFinite(Number(currentUserIdRaw))
+		? Number(currentUserIdRaw)
+		: null
+	const dataScope = String(user?.data_scope || '').toUpperCase()
 	const location = useLocation()
+
+	const hasLegacyRole = roles => roles.includes(userRole)
+	const canByPermission = permissionCodes =>
+		hasAnyPermission(user, permissionCodes)
+	const hasRequestExecutorFlag = Boolean(user?.can_be_request_executor)
 
 	// Пишем текущие фильтры в URL с небольшой задержкой — чтобы не дёргать
 	// history API на каждую нажатую клавишу в текстовых полях поиска.
@@ -174,15 +185,30 @@ export default function Requests() {
 		return () => clearTimeout(timeoutId)
 	}, [filters]) // eslint-disable-line react-hooks/exhaustive-deps
 
+	const isTechnicianUser =
+		hasRequestExecutorFlag ||
+		['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(userRole)
+
+	const canViewAllRequests =
+		canByPermission(['requests.view_all', 'requests.manage']) ||
+		dataScope === 'ALL' ||
+		hasLegacyRole(['ADMIN', 'ROP', 'SENIOR_TECHNICIAN', 'WAREHOUSE_MANAGER'])
+
 	const canViewRequestPrice =
-		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
+		canByPermission([
+			'requests.price.view',
+			'requests.prices.view',
+			'requests.view_price',
+			'requests.view_prices',
+			'prices.view',
+			'requests.payment.manage',
+			'requests.pay',
+			'requests.manage',
+		]) ||
+		hasLegacyRole(['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT', 'ACCOUNTANT'])
 
-	const isTechnicianUser = ['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(
-		userRole,
-	)
-
-	const canUseCityFilter = userRole !== 'TECHNICIAN'
-	const canUsePaymentFilter = !isTechnicianUser
+	const canUseCityFilter = canViewAllRequests || !isTechnicianUser
+	const canUsePaymentFilter = canViewRequestPrice
 
 	const [myRequestsFirst, setMyRequestsFirst] = useState(isTechnicianUser)
 
@@ -214,15 +240,42 @@ export default function Requests() {
 		return () => clearInterval(intervalId)
 	}, [isCreateModalOpen])
 
-	const canCreateRequest = ['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'].includes(
-		userRole,
-	)
+	const canCreateRequest =
+		canByPermission(['requests.create', 'requests.manage']) ||
+		hasLegacyRole(['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'])
 
-	const canViewEquipmentButton = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(
-		userRole,
-	)
+	const canViewEquipmentButton =
+		canByPermission([
+			'requests.equipment.view',
+			'requests.equipment.attach',
+			'requests.equipment.manage',
+			'warehouse.employee_equipment.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(['ADMIN', 'WAREHOUSE_MANAGER'])
 
-	const canPayRequests = ['ADMIN', 'ROP', 'ACCOUNTANT'].includes(userRole)
+	const canPayRequests =
+		canByPermission([
+			'requests.payment.manage',
+			'requests.pay',
+			'finance.manage',
+			'prices.manage',
+			'requests.manage',
+		]) || hasLegacyRole(['ADMIN', 'ROP', 'ACCOUNTANT'])
+
+	const canAcceptRequestAsExecutor =
+		isTechnicianUser ||
+		canByPermission([
+			'requests.accept',
+			'requests.accept_own',
+			'requests.accept_assigned',
+		])
+
+	const canShowNewRequestNotice =
+		canByPermission([
+			'notifications.requests.new',
+			'notifications.requests.create',
+			'notifications.manage',
+		]) || hasLegacyRole(['MANAGER', 'TECH_SUPPORT'])
 
 	useEffect(() => {
 		const openRequestId = location.state?.openRequestId
@@ -938,11 +991,26 @@ export default function Requests() {
 
 		if (executors.length === 0) return false
 
-		if (['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(userRole)) {
+		const canCompleteAnyRequest =
+			canByPermission([
+				'requests.status.manage',
+				'requests.change_status',
+				'requests.complete_any',
+				'requests.manage',
+			]) || hasLegacyRole(['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'])
+
+		if (canCompleteAnyRequest) {
 			return true
 		}
 
-		if (userRole === 'TECHNICIAN') {
+		const canCompleteOwnRequest =
+			canByPermission([
+				'requests.complete_own',
+				'requests.complete_assigned',
+				'requests.change_own_status',
+			]) || isTechnicianUser
+
+		if (canCompleteOwnRequest) {
 			return isCurrentUserExecutor(req)
 		}
 
@@ -1561,9 +1629,7 @@ export default function Requests() {
 								<span className='card-value'>{formatDate(req.created_at)}</span>
 							</div>
 							<div className='card-item card-item-scheduled-date'>
-								<span className='card-label'>
-									Дата и время выполнения
-								</span>
+								<span className='card-label'>Дата и время выполнения</span>
 								<span className='card-value'>
 									{formatDate(req.scheduled_at)}
 								</span>
@@ -1755,8 +1821,7 @@ export default function Requests() {
 								</button>
 							)}
 
-							{(userRole === 'TECHNICIAN' ||
-								userRole === 'SENIOR_TECHNICIAN') &&
+							{canAcceptRequestAsExecutor &&
 								req.status === 'NEW' &&
 								!req.assigned_to &&
 								!['PENDING', 'REJECTED'].includes(
@@ -1809,8 +1874,7 @@ export default function Requests() {
 
 					fetchRequests({
 						scrollToCreatedRequest: !wasEditMode,
-						showCreatedNotice:
-							!wasEditMode && ['MANAGER', 'TECH_SUPPORT'].includes(userRole),
+						showCreatedNotice: !wasEditMode && canShowNewRequestNotice,
 					})
 				}}
 			/>

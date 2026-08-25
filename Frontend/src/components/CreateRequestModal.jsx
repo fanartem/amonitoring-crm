@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/CreateRequestModal.css'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 
 const mapTypeToUI = dbType => {
 	if (!dbType) return 'Физ. лицо'
@@ -61,6 +62,42 @@ const CLIENT_PAYMENT_TYPES = {
 	PREPAYMENT: 'Предоплата',
 	POSTPAYMENT: 'Постоплата',
 }
+
+const LEGACY_PAYMENT_TYPE_ROLES = ['ADMIN', 'ROP']
+const LEGACY_SCHEDULE_BYPASS_ROLES = ['ADMIN']
+const LEGACY_SCHEDULE_APPROVAL_DECIDE_ROLES = ['ADMIN', 'ROP']
+
+const getNormalizedUserRole = user => String(user?.role || '').toUpperCase()
+
+const hasLegacyRole = (user, roles) =>
+	roles.includes(getNormalizedUserRole(user))
+
+const canManageClientPaymentType = user =>
+	hasAnyPermission(user, [
+		'clients.payment_type.manage',
+		'clients.payment_type.edit',
+		'clients.payment.manage',
+		'clients.payment.edit',
+		'clients.manage',
+		'requests.client_payment.manage',
+		'requests.payment_type.manage',
+		'requests.payment.manage',
+		'requests.manage',
+	]) || hasLegacyRole(user, LEGACY_PAYMENT_TYPE_ROLES)
+
+const canBypassRequestScheduleRules = user =>
+	hasAnyPermission(user, [
+		'requests.schedule.bypass',
+		'requests.schedule.bypass_limits',
+		'requests.manage',
+	]) || hasLegacyRole(user, LEGACY_SCHEDULE_BYPASS_ROLES)
+
+const canDecideRequestScheduleApproval = user =>
+	hasAnyPermission(user, [
+		'requests.schedule_approval.decide',
+		'requests.schedule.approve',
+		'requests.manage',
+	]) || hasLegacyRole(user, LEGACY_SCHEDULE_APPROVAL_DECIDE_ROLES)
 
 function SearchableSelect({
 	value,
@@ -231,26 +268,6 @@ const mapWorkTypeToAPI = uiWorkType => {
 	return 'DIAGNOSTIC'
 }
 
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
-
-		return JSON.parse(jsonPayload).role
-	} catch {
-		return null
-	}
-}
-
 const VISIT_MINIMUM_LEAD_MINUTES = {
 	ON_SITE_CITY: 25,
 	ON_SITE_OUTSIDE_CITY: 120,
@@ -278,9 +295,7 @@ const HALF_HOUR_OPTIONS = Array.from(
 const HOUR_OPTIONS = Array.from(
 	{
 		length:
-			LAST_AVAILABLE_TIME_MINUTES / 60 -
-			FIRST_AVAILABLE_TIME_MINUTES / 60 +
-			1,
+			LAST_AVAILABLE_TIME_MINUTES / 60 - FIRST_AVAILABLE_TIME_MINUTES / 60 + 1,
 	},
 	(_, index) =>
 		String(FIRST_AVAILABLE_TIME_MINUTES / 60 + index).padStart(2, '0'),
@@ -313,9 +328,7 @@ const getAlmatyNowParts = () => {
 const localDateTimeToComparable = value => {
 	if (!value) return null
 
-	const match = String(value).match(
-		/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/,
-	)
+	const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/)
 
 	if (!match) return null
 
@@ -353,13 +366,11 @@ const splitScheduledAtValue = value => {
 	const normalized = String(value).trim().replace(' ', 'T')
 	const match = normalized.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/)
 
-	return match
-		? { date: match[1], time: match[2] }
-		: { date: '', time: '' }
+	return match ? { date: match[1], time: match[2] } : { date: '', time: '' }
 }
 
-const getMinimumScheduleComparable = (formData, userRole) => {
-	if (userRole === 'ADMIN') return null
+const getMinimumScheduleComparable = (formData, canBypassScheduleRules) => {
+	if (canBypassScheduleRules) return null
 
 	const now = getAlmatyNowParts()
 	const nowComparable = localDateTimeToComparable(`${now.date}T${now.time}`)
@@ -413,8 +424,10 @@ export default function CreateRequestModal({
 }) {
 	const isEditMode = !!editRequestData
 
-	const userRole = getUserRole()
-	const canSetPaymentType = ['ADMIN', 'ROP'].includes(userRole)
+	const user = useMemo(() => getStoredUser(), [])
+	const canSetPaymentType = canManageClientPaymentType(user)
+	const canBypassScheduleRules = canBypassRequestScheduleRules(user)
+	const canDecideScheduleApproval = canDecideRequestScheduleApproval(user)
 
 	const [clientKind, setClientKind] = useState('new')
 	const [clientsList, setClientsList] = useState([])
@@ -1338,7 +1351,7 @@ export default function CreateRequestModal({
 			scheduleWasChanged &&
 			scheduledAt &&
 			!isWorkingScheduleTime(scheduledAt) &&
-			userRole !== 'ADMIN' &&
+			!canDecideScheduleApproval &&
 			!formData.schedule_approval_reason.trim()
 		) {
 			required.push('schedule_approval_reason')
@@ -1395,10 +1408,7 @@ export default function CreateRequestModal({
 			return false
 		}
 
-		if (
-			scheduleWasChanged &&
-			!HALF_HOUR_OPTIONS.includes(formData.work_time)
-		) {
+		if (scheduleWasChanged && !HALF_HOUR_OPTIONS.includes(formData.work_time)) {
 			setMissingFields(['work_time'])
 			setError(
 				'Время начала работ должно быть в диапазоне с 08:00 до 20:00 с шагом 30 минут.',
@@ -1406,9 +1416,12 @@ export default function CreateRequestModal({
 			return false
 		}
 
-		if (scheduleWasChanged && userRole !== 'ADMIN') {
+		if (scheduleWasChanged && !canBypassScheduleRules) {
 			const selectedComparable = localDateTimeToComparable(scheduledAt)
-			const minimumComparable = getMinimumScheduleComparable(formData, userRole)
+			const minimumComparable = getMinimumScheduleComparable(
+				formData,
+				canBypassScheduleRules,
+			)
 
 			if (
 				selectedComparable === null ||
@@ -2025,17 +2038,17 @@ export default function CreateRequestModal({
 	const displayedPriceCalculation = buildDisplayedPriceCalculation()
 	const minimumScheduleComparable = getMinimumScheduleComparable(
 		formData,
-		userRole,
+		canBypassScheduleRules,
 	)
 	const minimumWorkDate =
-		userRole === 'ADMIN' || minimumScheduleComparable === null
+		canBypassScheduleRules || minimumScheduleComparable === null
 			? undefined
 			: comparableToLocalDateTime(
 					getNextAvailableSlotComparable(minimumScheduleComparable),
 				).date
 
 	const isTimeOptionDisabledForDate = (date, time) => {
-		if (userRole === 'ADMIN' || !date) return false
+		if (canBypassScheduleRules || !date) return false
 
 		const candidate = localDateTimeToComparable(`${date}T${time}`)
 
@@ -2603,7 +2616,7 @@ export default function CreateRequestModal({
 										!isWorkingScheduleTime(getScheduledAtValue(formData)) && (
 											<label className='request-modal-field request-modal-full'>
 												<span
-													className={`request-modal-label ${userRole === 'ADMIN' ? '' : 'required'}`}
+													className={`request-modal-label ${canDecideScheduleApproval ? '' : 'required'}`}
 												>
 													Причина выбора нерабочего времени
 												</span>
@@ -2618,8 +2631,8 @@ export default function CreateRequestModal({
 												/>
 
 												<span className='request-modal-hint warning'>
-													{userRole === 'ADMIN'
-														? 'Выбрано нерабочее время. Администратор может назначить его без согласования.'
+													{canDecideScheduleApproval
+														? 'Выбрано нерабочее время. Пользователь с правом согласования может назначить его без дополнительного согласования.'
 														: 'Выбрано нерабочее время. Заявка будет отправлена на согласование администрации.'}
 												</span>
 											</label>

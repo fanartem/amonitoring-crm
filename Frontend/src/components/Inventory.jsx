@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 
@@ -46,18 +47,18 @@ const CATEGORY_ICONS = {
 	OTHER: 'fa-cube',
 }
 
-const getInitials = (name) => {
+const getInitials = name => {
 	if (!name) return '?'
 
 	const parts = name.trim().split(/\s+/).slice(0, 2)
 
 	return parts
-		.map((part) => part[0])
+		.map(part => part[0])
 		.join('')
 		.toUpperCase()
 }
 
-const getStatusClassName = (status) => {
+const getStatusClassName = status => {
 	if (status === 'ASSIGNED_TO_TECH') return 'status-progress'
 	if (status === 'INSTALLED' || status === 'USED') return 'status-done'
 	if (status === 'REPAIR' || status === 'RESERVED') return 'status-new'
@@ -66,27 +67,7 @@ const getStatusClassName = (status) => {
 	return 'status-new'
 }
 
-const getTokenPayload = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return {}
-
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
-
-		return JSON.parse(jsonPayload)
-	} catch {
-		return {}
-	}
-}
-
-const buildParams = (params) => {
+const buildParams = params => {
 	const searchParams = new URLSearchParams()
 
 	Object.entries(params).forEach(([key, value]) => {
@@ -102,13 +83,13 @@ const buildParams = (params) => {
 	return searchParams.toString()
 }
 
-const getItemQuantity = (item) => {
+const getItemQuantity = item => {
 	if (Boolean(item.is_serialized)) return 1
 
 	return Number(item.quantity || 0)
 }
 
-const getItemIdentity = (item) => {
+const getItemIdentity = item => {
 	if (item.identifier_value) {
 		return `${item.identifier_type || 'ID'}: ${item.identifier_value}`
 	}
@@ -120,7 +101,7 @@ const getItemIdentity = (item) => {
 	return 'Без идентификатора'
 }
 
-const normalizeNullable = (value) => {
+const normalizeNullable = value => {
 	const trimmed = String(value || '').trim()
 
 	return trimmed ? trimmed : null
@@ -140,7 +121,7 @@ function TechnicianAutocomplete({
 	const [isOpen, setIsOpen] = useState(false)
 	const containerRef = useRef(null)
 
-	const formatLabel = (tech) =>
+	const formatLabel = tech =>
 		tech ? `${tech.name}${tech.city ? ` · ${tech.city}` : ''}` : ''
 
 	// Синхронизируем текст поля с выбранным id (например, при сбросе формы
@@ -151,12 +132,12 @@ function TechnicianAutocomplete({
 			return
 		}
 
-		const selected = technicians.find((t) => String(t.id) === String(value))
+		const selected = technicians.find(t => String(t.id) === String(value))
 		setQuery(selected ? formatLabel(selected) : '')
 	}, [value, technicians])
 
 	useEffect(() => {
-		const handleClickOutside = (e) => {
+		const handleClickOutside = e => {
 			if (containerRef.current && !containerRef.current.contains(e.target)) {
 				setIsOpen(false)
 			}
@@ -169,24 +150,24 @@ function TechnicianAutocomplete({
 	const excludeSet = new Set(excludeIds.map(String))
 
 	const filtered = technicians
-		.filter((t) => !excludeSet.has(String(t.id)))
-		.filter((t) => {
+		.filter(t => !excludeSet.has(String(t.id)))
+		.filter(t => {
 			const q = query.trim().toLowerCase()
 			if (!q) return true
 
 			return [t.name, t.city]
 				.filter(Boolean)
-				.some((field) => String(field).toLowerCase().includes(q))
+				.some(field => String(field).toLowerCase().includes(q))
 		})
 		.slice(0, 50)
 
-	const handlePick = (tech) => {
+	const handlePick = tech => {
 		onChange(String(tech.id))
 		setQuery(formatLabel(tech))
 		setIsOpen(false)
 	}
 
-	const handleInputChange = (e) => {
+	const handleInputChange = e => {
 		const nextValue = e.target.value
 		setQuery(nextValue)
 		setIsOpen(true)
@@ -215,7 +196,7 @@ function TechnicianAutocomplete({
 					{filtered.length === 0 ? (
 						<div className='tech-picker-empty'>Никого не найдено</div>
 					) : (
-						filtered.map((tech) => (
+						filtered.map(tech => (
 							<button
 								key={tech.id}
 								type='button'
@@ -242,7 +223,7 @@ function HistoryModal({ item, history, onClose }) {
 		<div className='modal-overlay open' onClick={onClose}>
 			<div
 				className='modal-window inventory-modal-wide inventory-history-modal'
-				onClick={(e) => e.stopPropagation()}
+				onClick={e => e.stopPropagation()}
 			>
 				<div className='modal-header'>
 					<span className='modal-title'>История предмета</span>
@@ -261,7 +242,7 @@ function HistoryModal({ item, history, onClose }) {
 					<div className='empty-state'>История пока пустая</div>
 				) : (
 					<div className='inventory-history-list'>
-						{history.map((row) => (
+						{history.map(row => (
 							<div key={row.id} className='inventory-history-row'>
 								<div className='inventory-history-main'>
 									<strong>{row.action}</strong>
@@ -307,16 +288,127 @@ function HistoryModal({ item, history, onClose }) {
 }
 
 export default function Inventory() {
-	const payload = getTokenPayload()
-	const userRole = payload.role
+	const currentUser = getStoredUser()
 
-	const canManageInventory = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
-	const canViewInventory = [
-		'ADMIN',
-		'WAREHOUSE_MANAGER',
-		'SENIOR_TECHNICIAN',
-	].includes(userRole)
-	const canSeeHistory = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
+	const canManageInventory =
+		hasAnyPermission(currentUser, [
+			'warehouse.inventory.manage',
+			'warehouse.inventory.manage_all',
+			'warehouse.employee_inventory.manage',
+			'warehouse.employees_inventory.manage',
+			'warehouse.inventory.manage_employees',
+			'warehouse.technician_inventory.manage',
+			'warehouse.technicians_inventory.manage',
+			'warehouse.assigned_inventory.manage',
+			'warehouse.employee_equipment.manage',
+			'warehouse.manage_employee_equipment',
+			'warehouse.manage_technician_inventory',
+			'warehouse.staff_inventory.manage',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canViewInventory =
+		canManageInventory ||
+		hasAnyPermission(currentUser, [
+			'warehouse.inventory.view',
+			'warehouse.inventory.view_all',
+			'warehouse.employee_inventory.view',
+			'warehouse.employees_inventory.view',
+			'warehouse.technician_inventory.view',
+			'warehouse.technician_inventory.manage',
+			'warehouse.items.view',
+			'warehouse.view',
+		]) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'WAREHOUSE_MANAGER',
+			'SENIOR_TECHNICIAN',
+		])
+
+	const canSeeHistory =
+		canManageInventory ||
+		hasAnyPermission(currentUser, [
+			'warehouse.history.view',
+			'warehouse.items.history.view',
+			'warehouse.items.view',
+			'warehouse.inventory.view',
+			'warehouse.inventory.view_all',
+			'warehouse.view',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canAddManualInventory =
+		canManageInventory ||
+		hasAnyPermission(currentUser, [
+			'warehouse.inventory.manual_add',
+			'warehouse.inventory.assign',
+			'warehouse.employee_inventory.manage',
+			'warehouse.employee_equipment.manage',
+			'warehouse.items.create',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canTransferInventoryToUser =
+		canManageInventory ||
+		hasAnyPermission(currentUser, [
+			'warehouse.inventory.transfer',
+			'warehouse.inventory.assign',
+			'warehouse.employee_inventory.manage',
+			'warehouse.employee_equipment.manage',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canTransferInventoryToStock =
+		canManageInventory ||
+		hasAnyPermission(currentUser, [
+			'warehouse.inventory.transfer_to_stock',
+			'warehouse.inventory.return_to_stock',
+			'warehouse.inventory.transfer',
+			'warehouse.employee_inventory.manage',
+			'warehouse.employee_equipment.manage',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canTransferInventory =
+		canTransferInventoryToUser || canTransferInventoryToStock
+
+	const canEditInventoryItem =
+		canManageInventory ||
+		hasAnyPermission(currentUser, [
+			'warehouse.inventory.edit',
+			'warehouse.items.edit',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canDeleteInventoryItem =
+		canManageInventory ||
+		hasAnyPermission(currentUser, [
+			'warehouse.inventory.delete',
+			'warehouse.items.delete',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canManageInventoryThresholds =
+		canManageInventory ||
+		hasAnyPermission(currentUser, [
+			'warehouse.consumable_thresholds.manage',
+			'warehouse.thresholds.manage',
+			'warehouse.inventory.thresholds.manage',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
 
 	const [inventory, setInventory] = useState([])
 	const [cities, setCities] = useState([])
@@ -414,7 +506,7 @@ export default function Inventory() {
 	// через паузу в наборе, чтобы не дёргать сервер на каждую букву.
 	useEffect(() => {
 		const timeoutId = setTimeout(() => {
-			setFilters((prev) => {
+			setFilters(prev => {
 				const trimmed = searchInput.trim()
 				if (prev.search === trimmed) return prev
 				return { ...prev, search: trimmed }
@@ -479,7 +571,12 @@ export default function Inventory() {
 		}
 	}
 
-	const fetchHistory = async (item) => {
+	const fetchHistory = async item => {
+		if (!canSeeHistory) {
+			alert('Недостаточно прав для просмотра истории инвентаря')
+			return
+		}
+
 		setHistoryItem(item)
 		setHistoryRows([])
 		setHistoryLoading(true)
@@ -505,10 +602,10 @@ export default function Inventory() {
 		}
 	}
 
-	const handleFilterChange = (e) => {
+	const handleFilterChange = e => {
 		const { name, value, type, checked } = e.target
 
-		setFilters((prev) => ({
+		setFilters(prev => ({
 			...prev,
 			[name]: type === 'checkbox' ? checked : value,
 		}))
@@ -526,31 +623,38 @@ export default function Inventory() {
 		})
 	}
 
-	const toggleUser = (userKey) => {
-		setExpandedUsers((prev) => ({
+	const toggleUser = userKey => {
+		setExpandedUsers(prev => ({
 			...prev,
 			[userKey]: !prev[userKey],
 		}))
 	}
 
-	const toggleUserCategory = (key) => {
-		setExpandedUserCategories((prev) => ({
+	const toggleUserCategory = key => {
+		setExpandedUserCategories(prev => ({
 			...prev,
 			[key]: !prev[key],
 		}))
 	}
 
-	const toggleGroup = (groupKey) => {
-		setExpandedGroups((prev) => ({
+	const toggleGroup = groupKey => {
+		setExpandedGroups(prev => ({
 			...prev,
 			[groupKey]: !prev[groupKey],
 		}))
 	}
 
-	const openTransferModal = (item) => {
+	const openTransferModal = item => {
+		if (!canTransferInventory) {
+			alert('Недостаточно прав для переноса инвентаря')
+			return
+		}
+
+		const initialMode = canTransferInventoryToUser ? 'user' : 'stock'
+
 		setTransferItem(item)
 		setTransferForm({
-			mode: 'user',
+			mode: initialMode,
 			target_user_id: '',
 			to_city_id: item.city_id || '',
 			quantity: 1,
@@ -558,24 +662,36 @@ export default function Inventory() {
 		})
 	}
 
-	const submitTransfer = async (e) => {
+	const submitTransfer = async e => {
 		e.preventDefault()
 
 		if (!transferItem) return
 
 		try {
+			if (!canTransferInventory) {
+				throw new Error('Недостаточно прав для переноса инвентаря')
+			}
+
 			const body = {
 				quantity: Number(transferForm.quantity || 1),
 				reason: transferForm.reason || null,
 			}
 
 			if (transferForm.mode === 'user') {
+				if (!canTransferInventoryToUser) {
+					throw new Error('Недостаточно прав для передачи инвентаря сотруднику')
+				}
+
 				if (!transferForm.target_user_id) {
 					throw new Error('Выберите монтажника')
 				}
 
 				body.target_user_id = Number(transferForm.target_user_id)
 			} else {
+				if (!canTransferInventoryToStock) {
+					throw new Error('Недостаточно прав для возврата инвентаря на склад')
+				}
+
 				if (!transferForm.to_city_id) {
 					throw new Error('Выберите город склада')
 				}
@@ -604,7 +720,12 @@ export default function Inventory() {
 		}
 	}
 
-	const openEditModal = (item) => {
+	const openEditModal = item => {
+		if (!canEditInventoryItem) {
+			alert('Недостаточно прав для редактирования инвентаря')
+			return
+		}
+
 		const serialized = Boolean(item.is_serialized)
 
 		setEditItem(item)
@@ -623,10 +744,15 @@ export default function Inventory() {
 		})
 	}
 
-	const submitEdit = async (e) => {
+	const submitEdit = async e => {
 		e.preventDefault()
 
 		if (!editItem) return
+
+		if (!canEditInventoryItem) {
+			alert('Недостаточно прав для редактирования инвентаря')
+			return
+		}
 
 		try {
 			const serialized = Boolean(editForm.is_serialized)
@@ -670,7 +796,12 @@ export default function Inventory() {
 		}
 	}
 
-	const deleteItem = async (item) => {
+	const deleteItem = async item => {
+		if (!canDeleteInventoryItem) {
+			alert('Недостаточно прав для удаления предмета из инвентаря')
+			return
+		}
+
 		if (
 			!window.confirm(
 				`Удалить/переместить в корзину "${item.name}" из инвентаря монтажника?`,
@@ -696,8 +827,13 @@ export default function Inventory() {
 		}
 	}
 
-	const submitManualAdd = async (e) => {
+	const submitManualAdd = async e => {
 		e.preventDefault()
+
+		if (!canAddManualInventory) {
+			alert('Недостаточно прав для ручного добавления инвентаря сотруднику')
+			return
+		}
 
 		if (!manualForm.target_user_id) {
 			alert('Выберите монтажника из списка')
@@ -763,17 +899,27 @@ export default function Inventory() {
 		}
 	}
 
-	const openThresholdModal = (item) => {
+	const openThresholdModal = item => {
+		if (!canManageInventoryThresholds) {
+			alert('Недостаточно прав для изменения порога расходника')
+			return
+		}
+
 		setThresholdItem(item)
 		setThresholdForm({
 			threshold_quantity: item.threshold_quantity || 20,
 		})
 	}
 
-	const submitThreshold = async (e) => {
+	const submitThreshold = async e => {
 		e.preventDefault()
 
 		if (!thresholdItem) return
+
+		if (!canManageInventoryThresholds) {
+			alert('Недостаточно прав для изменения порога расходника')
+			return
+		}
 
 		try {
 			const body = {
@@ -806,19 +952,19 @@ export default function Inventory() {
 		}
 	}
 
-	const handleManualChange = (e) => {
+	const handleManualChange = e => {
 		const { name, value, type, checked } = e.target
 
 		if (name === 'is_serialized') {
 			if (checked) {
-				setManualForm((prev) => ({
+				setManualForm(prev => ({
 					...prev,
 					is_serialized: true,
 					quantity: 1,
 					identifier_type: 'SERIAL',
 				}))
 			} else {
-				setManualForm((prev) => ({
+				setManualForm(prev => ({
 					...prev,
 					is_serialized: false,
 					identifier_type: 'NONE',
@@ -830,23 +976,23 @@ export default function Inventory() {
 			return
 		}
 
-		setManualForm((prev) => ({
+		setManualForm(prev => ({
 			...prev,
 			[name]: type === 'checkbox' ? checked : value,
 		}))
 	}
 
-	const buildInventoryByUsers = (source) => {
+	const buildInventoryByUsers = source => {
 		const usersMap = new Map()
 
-		const normalizeKey = (value) =>
+		const normalizeKey = value =>
 			String(value || '')
 				.trim()
 				.toLowerCase()
 
-		const getUserKey = (item) => String(item.assigned_to_user_id || 'unknown')
+		const getUserKey = item => String(item.assigned_to_user_id || 'unknown')
 
-		const getItemGroupKey = (item) =>
+		const getItemGroupKey = item =>
 			[
 				item.category || 'OTHER',
 				item.name || '',
@@ -856,9 +1002,9 @@ export default function Inventory() {
 				.map(normalizeKey)
 				.join('|')
 
-		;(source || []).forEach((category) => {
-			;(category.groups || []).forEach((group) => {
-				;(group.items || []).forEach((item) => {
+		;(source || []).forEach(category => {
+			;(category.groups || []).forEach(group => {
+				;(group.items || []).forEach(item => {
 					const itemQuantity = getItemQuantity(item)
 					const userKey = getUserKey(item)
 
@@ -926,11 +1072,11 @@ export default function Inventory() {
 		})
 
 		return Array.from(usersMap.values())
-			.map((userGroup) => {
+			.map(userGroup => {
 				const categories = Array.from(userGroup.categoriesMap.values())
-					.map((categoryGroup) => {
+					.map(categoryGroup => {
 						const groups = Array.from(categoryGroup.groupsMap.values())
-							.map((group) => ({
+							.map(group => ({
 								...group,
 								items: group.items.sort((a, b) => {
 									const statusCompare = String(a.status || '').localeCompare(
@@ -1012,7 +1158,7 @@ export default function Inventory() {
 					</p>
 				</div>
 
-				{canManageInventory && (
+				{canAddManualInventory && (
 					<button
 						className='btn-green'
 						onClick={() => setManualModalOpen(true)}
@@ -1025,7 +1171,7 @@ export default function Inventory() {
 			<button
 				type='button'
 				className='mobile-filters-toggle'
-				onClick={() => setShowMobileFilters((prev) => !prev)}
+				onClick={() => setShowMobileFilters(prev => !prev)}
 			>
 				<span className='mobile-filters-toggle-label'>
 					<i className='fa-solid fa-filter'></i>
@@ -1053,7 +1199,7 @@ export default function Inventory() {
 							}
 							name='search'
 							value={searchInput}
-							onChange={(e) => setSearchInput(e.target.value)}
+							onChange={e => setSearchInput(e.target.value)}
 							placeholder='Название, IMEI, серийник, монтажник...'
 						/>
 					</div>
@@ -1071,7 +1217,7 @@ export default function Inventory() {
 							onChange={handleFilterChange}
 						>
 							<option value=''>Все города</option>
-							{cities.map((city) => (
+							{cities.map(city => (
 								<option key={city.id} value={city.id}>
 									{city.name}
 								</option>
@@ -1085,9 +1231,7 @@ export default function Inventory() {
 							id='filter-technician'
 							technicians={technicians}
 							value={filters.user_id}
-							onChange={(id) =>
-								setFilters((prev) => ({ ...prev, user_id: id }))
-							}
+							onChange={id => setFilters(prev => ({ ...prev, user_id: id }))}
 							placeholder='Все монтажники...'
 						/>
 					</div>
@@ -1162,7 +1306,7 @@ export default function Inventory() {
 				<div className='empty-state'>Инвентарь пуст</div>
 			) : (
 				<div className='inventory-tree'>
-					{userInventoryGroups.map((userGroup) => {
+					{userInventoryGroups.map(userGroup => {
 						// Для админа/склад-менеджера инвентарь каждого монтажника
 						// свёрнут по умолчанию — разворачивается по клику.
 						const isUserOpen = expandedUsers[userGroup.user_key] ?? false
@@ -1204,7 +1348,7 @@ export default function Inventory() {
 
 								{isUserOpen && (
 									<div className='inventory-user-body inventory-reveal'>
-										{userGroup.categories.map((category) => {
+										{userGroup.categories.map(category => {
 											const userCategoryKey = `${userGroup.user_key}-${category.category}`
 											const isCategoryOpen =
 												expandedUserCategories[userCategoryKey] ?? true
@@ -1254,7 +1398,7 @@ export default function Inventory() {
 
 													{isCategoryOpen && (
 														<div className='inventory-category-body inventory-reveal'>
-															{category.groups.map((group) => {
+															{category.groups.map(group => {
 																const groupKey = `${userGroup.user_key}-${category.category}-${group.group_key}`
 																const isGroupOpen =
 																	expandedGroups[groupKey] ?? true
@@ -1296,7 +1440,7 @@ export default function Inventory() {
 
 																		{isGroupOpen && (
 																			<div className='inventory-items-list inventory-reveal'>
-																				{group.items.map((item) => (
+																				{group.items.map(item => (
 																					<div
 																						key={item.id}
 																						className={`inventory-item-card ${getStatusClassName(
@@ -1367,48 +1511,49 @@ export default function Inventory() {
 																								</button>
 																							)}
 
-																							{canManageInventory && (
-																								<>
-																									<button
-																										className='btn-green'
-																										onClick={() =>
-																											openTransferModal(item)
-																										}
-																									>
-																										Перенос
-																									</button>
+																							{canTransferInventory && (
+																								<button
+																									className='btn-green'
+																									onClick={() =>
+																										openTransferModal(item)
+																									}
+																								>
+																									Перенос
+																								</button>
+																							)}
 
+																							{canEditInventoryItem && (
+																								<button
+																									className='btn-details'
+																									onClick={() =>
+																										openEditModal(item)
+																									}
+																								>
+																									Редактировать
+																								</button>
+																							)}
+
+																							{!Boolean(item.is_serialized) &&
+																								canManageInventoryThresholds && (
 																									<button
 																										className='btn-details'
 																										onClick={() =>
-																											openEditModal(item)
+																											openThresholdModal(item)
 																										}
 																									>
-																										Редактировать
+																										Порог
 																									</button>
+																								)}
 
-																									{!Boolean(
-																										item.is_serialized,
-																									) && (
-																										<button
-																											className='btn-details'
-																											onClick={() =>
-																												openThresholdModal(item)
-																											}
-																										>
-																											Порог
-																										</button>
-																									)}
-
-																									<button
-																										className='btn-reset'
-																										onClick={() =>
-																											deleteItem(item)
-																										}
-																									>
-																										Удалить
-																									</button>
-																								</>
+																							{canDeleteInventoryItem && (
+																								<button
+																									className='btn-reset'
+																									onClick={() =>
+																										deleteItem(item)
+																									}
+																								>
+																									Удалить
+																								</button>
 																							)}
 																						</div>
 																					</div>
@@ -1442,7 +1587,7 @@ export default function Inventory() {
 				/>
 			)}
 
-			{transferItem && (
+			{transferItem && canTransferInventory && (
 				<div
 					className='modal-overlay open'
 					onClick={() => setTransferItem(null)}
@@ -1450,7 +1595,7 @@ export default function Inventory() {
 					<form
 						className='modal-window inventory-modal-wide inventory-transfer-modal'
 						onSubmit={submitTransfer}
-						onClick={(e) => e.stopPropagation()}
+						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<h3>Перенос предмета</h3>
@@ -1472,8 +1617,8 @@ export default function Inventory() {
 							<label>Куда перенести</label>
 							<select
 								value={transferForm.mode}
-								onChange={(e) =>
-									setTransferForm((prev) => ({
+								onChange={e =>
+									setTransferForm(prev => ({
 										...prev,
 										mode: e.target.value,
 										target_user_id: '',
@@ -1481,8 +1626,12 @@ export default function Inventory() {
 									}))
 								}
 							>
-								<option value='user'>Другому монтажнику</option>
-								<option value='stock'>На склад</option>
+								{canTransferInventoryToUser && (
+									<option value='user'>Другому монтажнику</option>
+								)}
+								{canTransferInventoryToStock && (
+									<option value='stock'>На склад</option>
+								)}
 							</select>
 						</div>
 
@@ -1494,8 +1643,8 @@ export default function Inventory() {
 									technicians={technicians}
 									excludeIds={[transferItem.assigned_to_user_id]}
 									value={transferForm.target_user_id}
-									onChange={(id) =>
-										setTransferForm((prev) => ({
+									onChange={id =>
+										setTransferForm(prev => ({
 											...prev,
 											target_user_id: id,
 										}))
@@ -1508,8 +1657,8 @@ export default function Inventory() {
 								<label>Город склада</label>
 								<select
 									value={transferForm.to_city_id}
-									onChange={(e) =>
-										setTransferForm((prev) => ({
+									onChange={e =>
+										setTransferForm(prev => ({
 											...prev,
 											to_city_id: e.target.value,
 										}))
@@ -1517,7 +1666,7 @@ export default function Inventory() {
 									required
 								>
 									<option value=''>Выберите город</option>
-									{cities.map((city) => (
+									{cities.map(city => (
 										<option key={city.id} value={city.id}>
 											{city.name}
 										</option>
@@ -1534,8 +1683,8 @@ export default function Inventory() {
 								max={getItemQuantity(transferItem)}
 								value={transferForm.quantity}
 								disabled={Boolean(transferItem.is_serialized)}
-								onChange={(e) =>
-									setTransferForm((prev) => ({
+								onChange={e =>
+									setTransferForm(prev => ({
 										...prev,
 										quantity: e.target.value,
 									}))
@@ -1547,8 +1696,8 @@ export default function Inventory() {
 							<label>Комментарий</label>
 							<textarea
 								value={transferForm.reason}
-								onChange={(e) =>
-									setTransferForm((prev) => ({
+								onChange={e =>
+									setTransferForm(prev => ({
 										...prev,
 										reason: e.target.value,
 									}))
@@ -1573,12 +1722,12 @@ export default function Inventory() {
 				</div>
 			)}
 
-			{editItem && (
+			{editItem && canEditInventoryItem && (
 				<div className='modal-overlay open' onClick={() => setEditItem(null)}>
 					<form
 						className='modal-window inventory-modal-wide inventory-edit-modal'
 						onSubmit={submitEdit}
-						onClick={(e) => e.stopPropagation()}
+						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<h3>Редактировать предмет</h3>
@@ -1596,8 +1745,8 @@ export default function Inventory() {
 								<label>Категория</label>
 								<select
 									value={editForm.category}
-									onChange={(e) =>
-										setEditForm((prev) => ({
+									onChange={e =>
+										setEditForm(prev => ({
 											...prev,
 											category: e.target.value,
 										}))
@@ -1615,8 +1764,8 @@ export default function Inventory() {
 								<label>Наименование</label>
 								<input
 									value={editForm.name}
-									onChange={(e) =>
-										setEditForm((prev) => ({ ...prev, name: e.target.value }))
+									onChange={e =>
+										setEditForm(prev => ({ ...prev, name: e.target.value }))
 									}
 									required
 								/>
@@ -1626,8 +1775,8 @@ export default function Inventory() {
 								<label>Производитель</label>
 								<input
 									value={editForm.manufacturer}
-									onChange={(e) =>
-										setEditForm((prev) => ({
+									onChange={e =>
+										setEditForm(prev => ({
 											...prev,
 											manufacturer: e.target.value,
 										}))
@@ -1639,8 +1788,8 @@ export default function Inventory() {
 								<label>Модель</label>
 								<input
 									value={editForm.model}
-									onChange={(e) =>
-										setEditForm((prev) => ({ ...prev, model: e.target.value }))
+									onChange={e =>
+										setEditForm(prev => ({ ...prev, model: e.target.value }))
 									}
 								/>
 							</div>
@@ -1649,8 +1798,8 @@ export default function Inventory() {
 								<label>Статус</label>
 								<select
 									value={editForm.status}
-									onChange={(e) =>
-										setEditForm((prev) => ({ ...prev, status: e.target.value }))
+									onChange={e =>
+										setEditForm(prev => ({ ...prev, status: e.target.value }))
 									}
 								>
 									<option value='ASSIGNED_TO_TECH'>У монтажника</option>
@@ -1667,8 +1816,8 @@ export default function Inventory() {
 									min='1'
 									value={editForm.quantity}
 									disabled={Boolean(editForm.is_serialized)}
-									onChange={(e) =>
-										setEditForm((prev) => ({
+									onChange={e =>
+										setEditForm(prev => ({
 											...prev,
 											quantity: e.target.value,
 										}))
@@ -1682,15 +1831,15 @@ export default function Inventory() {
 										<label>Тип идентификатора</label>
 										<select
 											value={editForm.identifier_type}
-											onChange={(e) =>
-												setEditForm((prev) => ({
+											onChange={e =>
+												setEditForm(prev => ({
 													...prev,
 													identifier_type: e.target.value,
 												}))
 											}
 										>
-											{IDENTIFIER_TYPES.filter((type) => type !== 'NONE').map(
-												(type) => (
+											{IDENTIFIER_TYPES.filter(type => type !== 'NONE').map(
+												type => (
 													<option key={type} value={type}>
 														{type}
 													</option>
@@ -1703,8 +1852,8 @@ export default function Inventory() {
 										<label>Идентификатор</label>
 										<input
 											value={editForm.identifier_value}
-											onChange={(e) =>
-												setEditForm((prev) => ({
+											onChange={e =>
+												setEditForm(prev => ({
 													...prev,
 													identifier_value: e.target.value,
 												}))
@@ -1716,8 +1865,8 @@ export default function Inventory() {
 										<label>Серийный номер</label>
 										<input
 											value={editForm.serial_number}
-											onChange={(e) =>
-												setEditForm((prev) => ({
+											onChange={e =>
+												setEditForm(prev => ({
 													...prev,
 													serial_number: e.target.value,
 												}))
@@ -1731,8 +1880,8 @@ export default function Inventory() {
 								<label>Примечание</label>
 								<textarea
 									value={editForm.note}
-									onChange={(e) =>
-										setEditForm((prev) => ({ ...prev, note: e.target.value }))
+									onChange={e =>
+										setEditForm(prev => ({ ...prev, note: e.target.value }))
 									}
 								/>
 							</div>
@@ -1754,7 +1903,7 @@ export default function Inventory() {
 				</div>
 			)}
 
-			{manualModalOpen && (
+			{manualModalOpen && canAddManualInventory && (
 				<div
 					className='modal-overlay open'
 					onClick={() => setManualModalOpen(false)}
@@ -1762,7 +1911,7 @@ export default function Inventory() {
 					<form
 						className='modal-window inventory-modal-wide inventory-manual-modal'
 						onSubmit={submitManualAdd}
-						onClick={(e) => e.stopPropagation()}
+						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<h3>Добавить предмет монтажнику</h3>
@@ -1782,8 +1931,8 @@ export default function Inventory() {
 									id='manual-add-technician'
 									technicians={technicians}
 									value={manualForm.target_user_id}
-									onChange={(id) =>
-										setManualForm((prev) => ({ ...prev, target_user_id: id }))
+									onChange={id =>
+										setManualForm(prev => ({ ...prev, target_user_id: id }))
 									}
 									placeholder='Введите имя монтажника...'
 								/>
@@ -1798,7 +1947,7 @@ export default function Inventory() {
 									required
 								>
 									<option value=''>Выберите город</option>
-									{cities.map((city) => (
+									{cities.map(city => (
 										<option key={city.id} value={city.id}>
 											{city.name}
 										</option>
@@ -1868,8 +2017,8 @@ export default function Inventory() {
 											value={manualForm.identifier_type}
 											onChange={handleManualChange}
 										>
-											{IDENTIFIER_TYPES.filter((type) => type !== 'NONE').map(
-												(type) => (
+											{IDENTIFIER_TYPES.filter(type => type !== 'NONE').map(
+												type => (
 													<option key={type} value={type}>
 														{type}
 													</option>
@@ -1947,7 +2096,7 @@ export default function Inventory() {
 				</div>
 			)}
 
-			{thresholdItem && (
+			{thresholdItem && canManageInventoryThresholds && (
 				<div
 					className='modal-overlay open'
 					onClick={() => setThresholdItem(null)}
@@ -1955,7 +2104,7 @@ export default function Inventory() {
 					<form
 						className='modal-window inventory-modal-wide inventory-threshold-modal'
 						onSubmit={submitThreshold}
-						onClick={(e) => e.stopPropagation()}
+						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<h3>Порог расходника</h3>
@@ -1979,7 +2128,7 @@ export default function Inventory() {
 								type='number'
 								min='0'
 								value={thresholdForm.threshold_quantity}
-								onChange={(e) =>
+								onChange={e =>
 									setThresholdForm({
 										threshold_quantity: e.target.value,
 									})

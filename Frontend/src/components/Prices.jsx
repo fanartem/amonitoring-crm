@@ -1,26 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 import '../styles/Prices.css'
-
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
-
-		return JSON.parse(jsonPayload).role
-	} catch {
-		return null
-	}
-}
 
 const categoryLabels = {
 	GPS_TRACKER: 'Трекеры',
@@ -74,33 +55,118 @@ export default function Prices() {
 	const [isClientDropdownOpen, setClientDropdownOpen] = useState(false)
 	const clientSearchRef = useRef(null)
 
-	const userRole = getUserRole()
+	const currentUser = getStoredUser()
 
-	const canReadPrices = [
-		'ADMIN',
-		'ROP',
-		'MANAGER',
-		'TECH_SUPPORT',
-		'ACCOUNTANT',
-	].includes(userRole)
+	/*
+		Новая логика:
+		- основной источник доступа — permissions из localStorage.user_data.permissions;
+		- Супер-Админ получает true внутри hasAnyPermission;
+		- legacy role fallback оставлен временно для старых системных ролей.
+	*/
 
-	const canManageBasePrices = ['ADMIN', 'ROP'].includes(userRole)
-	const canManageClientPrices = ['ADMIN', 'ROP', 'MANAGER'].includes(userRole)
+	const canReadPrices =
+		hasAnyPermission(currentUser, [
+			'prices.view',
+			'prices.manage',
+			'base_prices.view',
+			'base_prices.manage',
+			'client_prices.view',
+			'client_prices.view_all',
+			'client_prices.view_own',
+			'client_prices.manage',
+			'client_prices.manage_all',
+			'client_prices.manage_own',
+			'requests.price.view',
+			'requests.prices.view',
+		]) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'ROP',
+			'MANAGER',
+			'TECH_SUPPORT',
+			'ACCOUNTANT',
+		])
+
+	const canCreateBasePrice =
+		hasAnyPermission(currentUser, [
+			'prices.manage',
+			'base_prices.manage',
+			'base_prices.create',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+
+	const canEditBasePrice =
+		hasAnyPermission(currentUser, [
+			'prices.manage',
+			'base_prices.manage',
+			'base_prices.edit',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+
+	const canDeleteBasePrice =
+		hasAnyPermission(currentUser, [
+			'prices.manage',
+			'base_prices.manage',
+			'base_prices.delete',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+
+	const canRestoreBasePrice =
+		hasAnyPermission(currentUser, [
+			'prices.manage',
+			'base_prices.manage',
+			'base_prices.restore',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+
+	const canManageBasePrices =
+		canCreateBasePrice ||
+		canEditBasePrice ||
+		canDeleteBasePrice ||
+		canRestoreBasePrice
+
+	const canViewAllClientPrices =
+		hasAnyPermission(currentUser, [
+			'prices.manage',
+			'client_prices.view',
+			'client_prices.view_all',
+			'client_prices.manage',
+			'client_prices.manage_all',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'TECH_SUPPORT', 'ACCOUNTANT'])
+
+	const canViewOwnClientPrices =
+		hasAnyPermission(currentUser, [
+			'client_prices.view_own',
+			'client_prices.manage_own',
+		]) || hasLegacyRole(currentUser, ['MANAGER'])
+
+	const canViewClientPrices = canViewAllClientPrices || canViewOwnClientPrices
+
+	const canManageAllClientPrices =
+		hasAnyPermission(currentUser, [
+			'prices.manage',
+			'client_prices.manage',
+			'client_prices.manage_all',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+
+	const canManageOwnClientPrices =
+		hasAnyPermission(currentUser, ['client_prices.manage_own']) ||
+		hasLegacyRole(currentUser, ['MANAGER'])
 
 	useEffect(() => {
 		if (!canReadPrices) return
 
 		fetchPrices()
-		fetchClients()
-	}, [canReadPrices])
+
+		if (canViewClientPrices) {
+			fetchClients()
+		}
+	}, [canReadPrices, canViewClientPrices])
 
 	useEffect(() => {
-		if (selectedClientId) {
+		if (selectedClientId && canViewClientPrices) {
 			fetchClientPrices(selectedClientId)
 		} else {
 			setClientPrices([])
 		}
-	}, [selectedClientId])
+	}, [selectedClientId, canViewClientPrices])
 
 	useEffect(() => {
 		if (isCreateModalOpen) {
@@ -202,11 +268,21 @@ export default function Prices() {
 	}
 
 	const openCreateModal = () => {
+		if (!canCreateBasePrice) {
+			setError('Недостаточно прав для создания базовой цены')
+			return
+		}
+
 		resetBaseForm()
 		setCreateModalOpen(true)
 	}
 
 	const openEditModal = price => {
+		if (!canEditBasePrice) {
+			setError('Недостаточно прав для редактирования базовой цены')
+			return
+		}
+
 		setEditingPrice(price)
 		setBaseForm({
 			code: price.code || '',
@@ -236,6 +312,15 @@ export default function Prices() {
 	const handleSaveBasePrice = async e => {
 		e.preventDefault()
 		setError('')
+
+		const canSaveBasePrice = editingPrice
+			? canEditBasePrice
+			: canCreateBasePrice
+
+		if (!canSaveBasePrice) {
+			setError('Недостаточно прав для сохранения базовой цены')
+			return
+		}
 
 		if (!baseForm.code.trim()) {
 			setError('Код цены обязателен')
@@ -304,9 +389,17 @@ export default function Prices() {
 	}
 
 	const handleToggleBasePrice = async price => {
-		if (!canManageBasePrices) return
-
 		const isActive = Boolean(price.is_active)
+
+		if (isActive && !canDeleteBasePrice) {
+			setError('Недостаточно прав для отключения базовой цены')
+			return
+		}
+
+		if (!isActive && !canRestoreBasePrice) {
+			setError('Недостаточно прав для восстановления базовой цены')
+			return
+		}
 		const confirmText = isActive
 			? `Отключить позицию "${price.name}"?`
 			: `Включить позицию "${price.name}"?`
@@ -339,6 +432,13 @@ export default function Prices() {
 	}
 
 	const startEditClientPrice = item => {
+		if (!canManageSelectedClientPrices) {
+			setError(
+				'Недостаточно прав для изменения индивидуальных цен этого клиента',
+			)
+			return
+		}
+
 		setEditingClientPriceId(item.price_item_id)
 		setClientPriceValue(item.effective_price ?? item.default_price ?? '')
 	}
@@ -350,6 +450,13 @@ export default function Prices() {
 
 	const saveClientPrice = async item => {
 		if (!selectedClientId) return
+
+		if (!canManageSelectedClientPrices) {
+			setError(
+				'Недостаточно прав для изменения индивидуальных цен этого клиента',
+			)
+			return
+		}
 
 		const price = Number(clientPriceValue)
 
@@ -389,6 +496,11 @@ export default function Prices() {
 
 	const resetClientPrice = async item => {
 		if (!selectedClientId) return
+
+		if (!canManageSelectedClientPrices) {
+			setError('Недостаточно прав для сброса индивидуальной цены этого клиента')
+			return
+		}
 
 		if (!window.confirm(`Сбросить индивидуальную цену "${item.name}"?`)) return
 
@@ -449,10 +561,32 @@ export default function Prices() {
 		)
 	}
 
-	const visibleClientsForPrices =
-		userRole === 'MANAGER'
-			? clients.filter(client => client.can_edit || client.can_create_request)
-			: clients
+	const currentUserId = Number(currentUser?.id || 0)
+
+	const isOwnClientForPrices = client => {
+		if (!client) return false
+
+		return (
+			Boolean(client.can_edit) ||
+			Boolean(client.can_create_request) ||
+			Number(client.created_by) === currentUserId ||
+			Number(client.responsible_manager_id) === currentUserId
+		)
+	}
+
+	const selectedClient = clients.find(
+		client => String(client.id) === String(selectedClientId),
+	)
+
+	const canManageSelectedClientPrices =
+		canManageAllClientPrices ||
+		(canManageOwnClientPrices && isOwnClientForPrices(selectedClient))
+
+	const visibleClientsForPrices = canViewAllClientPrices
+		? clients
+		: canViewOwnClientPrices
+			? clients.filter(isOwnClientForPrices)
+			: []
 
 	const filteredClientsForPrices = clientSearchTerm.trim()
 		? visibleClientsForPrices.filter(client =>
@@ -494,7 +628,7 @@ export default function Prices() {
 					<p>Справочник базовых и индивидуальных цен клиентов.</p>
 				</div>
 
-				{canManageBasePrices && (
+				{canCreateBasePrice && (
 					<button className='prices-primary-btn' onClick={openCreateModal}>
 						+ Добавить цену
 					</button>
@@ -554,7 +688,9 @@ export default function Prices() {
 														<td data-label='Код'>
 															<span className='prices-code'>{price.code}</span>
 														</td>
-														<td data-label='Цена'>{formatMoney(price.default_price)}</td>
+														<td data-label='Цена'>
+															{formatMoney(price.default_price)}
+														</td>
 														<td data-label='Ед.'>{price.unit || 'шт'}</td>
 														<td data-label='Статус'>
 															<span
@@ -567,27 +703,33 @@ export default function Prices() {
 															<div className='prices-actions'>
 																{canManageBasePrices ? (
 																	<>
-																		<button
-																			className='prices-edit-btn'
-																			onClick={() => openEditModal(price)}
-																		>
-																			Редактировать
-																		</button>
+																		{canEditBasePrice && (
+																			<button
+																				className='prices-edit-btn'
+																				onClick={() => openEditModal(price)}
+																			>
+																				Редактировать
+																			</button>
+																		)}
 
-																		<button
-																			className={
-																				price.is_active
-																					? 'prices-disable-btn'
-																					: 'prices-enable-btn'
-																			}
-																			onClick={() =>
-																				handleToggleBasePrice(price)
-																			}
-																		>
-																			{price.is_active
-																				? 'Отключить'
-																				: 'Включить'}
-																		</button>
+																		{((price.is_active && canDeleteBasePrice) ||
+																			(!price.is_active &&
+																				canRestoreBasePrice)) && (
+																			<button
+																				className={
+																					price.is_active
+																						? 'prices-disable-btn'
+																						: 'prices-enable-btn'
+																				}
+																				onClick={() =>
+																					handleToggleBasePrice(price)
+																				}
+																			>
+																				{price.is_active
+																					? 'Отключить'
+																					: 'Включить'}
+																			</button>
+																		)}
 																	</>
 																) : (
 																	<span className='prices-readonly'>
@@ -615,7 +757,10 @@ export default function Prices() {
 						</div>
 					</div>
 
-					<div className='prices-field prices-client-search' ref={clientSearchRef}>
+					<div
+						className='prices-field prices-client-search'
+						ref={clientSearchRef}
+					>
 						<span>Клиент</span>
 
 						<div className='prices-client-search-input-wrap'>
@@ -690,7 +835,10 @@ export default function Prices() {
 											key={item.price_item_id}
 											className={!item.is_active ? 'prices-muted-row' : ''}
 										>
-											<td data-label='Наименование' className='prices-cell-stack'>
+											<td
+												data-label='Наименование'
+												className='prices-cell-stack'
+											>
 												<strong>{item.name}</strong>
 												<div className='prices-small-muted'>
 													{categoryLabels[item.category] || item.category} ·{' '}
@@ -698,7 +846,9 @@ export default function Prices() {
 												</div>
 											</td>
 
-											<td data-label='Базовая'>{formatMoney(item.default_price)}</td>
+											<td data-label='Базовая'>
+												{formatMoney(item.default_price)}
+											</td>
 
 											<td data-label='Цена клиента'>
 												{editingClientPriceId === item.price_item_id ? (
@@ -724,7 +874,7 @@ export default function Prices() {
 
 											<td className='prices-actions-cell'>
 												<div className='prices-actions'>
-													{canManageClientPrices ? (
+													{canManageSelectedClientPrices ? (
 														editingClientPriceId === item.price_item_id ? (
 															<>
 																<button
@@ -870,7 +1020,13 @@ export default function Prices() {
 								Отмена
 							</button>
 
-							<button type='submit' className='prices-primary-btn'>
+							<button
+								type='submit'
+								className='prices-primary-btn'
+								disabled={
+									editingPrice ? !canEditBasePrice : !canCreateBasePrice
+								}
+							>
 								Сохранить
 							</button>
 						</div>

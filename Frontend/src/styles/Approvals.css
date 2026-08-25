@@ -29,13 +29,21 @@
 
 .approval-card {
 	border: 1px solid #eaeaea;
-	border-radius: 8px;
+	border-radius: 10px;
 	padding: 20px;
 	background: #fff;
 	display: flex;
 	flex-direction: column;
 	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02);
-	min-height: 190px;
+	min-height: 205px;
+	transition:
+		box-shadow 0.15s ease,
+		transform 0.15s ease;
+}
+
+.approval-card:hover {
+	box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+	transform: translateY(-1px);
 }
 
 .approval-info {
@@ -52,62 +60,59 @@
 .approval-email {
 	font-size: 13px;
 	color: #888;
-	margin-bottom: 15px;
+	margin-bottom: 10px;
 	word-break: break-word;
 }
 
+.approval-city {
+	font-size: 13px;
+	color: #666;
+	margin-top: 4px;
+	margin-bottom: 10px;
+	font-weight: 500;
+}
+
 .approval-role {
-	margin-bottom: 14px;
+	margin-bottom: 10px;
 }
 
 .approval-date {
 	font-size: 12px;
 	color: #a0a0a0;
-	margin-top: 2px;
+	margin-top: 8px;
 }
 
-/* Бейджи ролей — как в Employees.css */
 .role-badge {
 	display: inline-block;
 	padding: 5px 12px;
 	border-radius: 20px;
 	font-size: 12px;
-	font-weight: 600;
+	font-weight: 700;
 	width: fit-content;
 }
 
-.role-admin {
-	background: #f0f4c3;
-	color: #558b2f;
-}
-.role-manager {
-	background: #e3f2fd;
-	color: #1565c0;
-}
-.role-senior {
-	background: #fff3e0;
-	color: #e65100;
-}
-.role-tech {
-	background: #f5f5f5;
-	color: #616161;
-}
-.role-accountant {
-	background: #dbeee9;
-	color: #35b192;
-}
-.role-warehouse {
-	background: #f3e5f5;
-	color: #7b1fa2;
-}
-.role-rop {
-	background: #ede7f6;
-	color: #5e35b1;
+.role-badge.dynamic-role-badge {
+	border: 1px solid transparent;
 }
 
-.role-support {
-	background: #d4f2fa;
-	color: #067a97;
+.approval-role-flags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.approval-role-flag {
+	display: inline-flex;
+	width: fit-content;
+	padding: 3px 8px;
+	border-radius: 999px;
+	background: #f1f5f9;
+	color: #475569;
+	font-size: 10px;
+	font-weight: 800;
+	text-transform: uppercase;
+	letter-spacing: 0.25px;
 }
 
 .approval-actions {
@@ -121,11 +126,18 @@
 	flex: 1;
 	padding: 8px;
 	border: none;
-	border-radius: 4px;
-	font-weight: 500;
+	border-radius: 5px;
+	font-weight: 600;
 	cursor: pointer;
 	font-size: 13px;
-	transition: background 0.2s;
+	transition:
+		background 0.2s ease,
+		transform 0.1s ease;
+}
+
+.btn-approve:active,
+.btn-reject:active {
+	transform: scale(0.98);
 }
 
 .btn-approve {
@@ -159,11 +171,35 @@
 	padding: 20px;
 	color: #c62828;
 	background: #ffebee;
+	border: 1px solid #ffcdd2;
 	border-radius: 8px;
 	margin-bottom: 20px;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.approvals-info {
+	padding: 10px 12px;
+	color: #475569;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	margin-bottom: 14px;
+	font-size: 13px;
+	font-weight: 600;
 }
 
 .approvals-loading {
 	padding: 20px;
 	color: #888;
+}
+
+@media (max-width: 560px) {
+	.approvals-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.approval-actions {
+		flex-direction: column;
+	}
 }

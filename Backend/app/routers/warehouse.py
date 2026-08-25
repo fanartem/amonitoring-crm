@@ -5,6 +5,7 @@ import json
 
 from app.database import get_connection
 from app.security import get_current_user
+from app.permissions import has_any_permission, is_super_admin
 from app.schemas import (
     WarehouseItemCreate,
     WarehouseItemUpdate,
@@ -88,31 +89,196 @@ ALLOWED_CONDITION_STATUSES = [
     "USED",
 ]
 
+WAREHOUSE_FULL_READ_PERMISSION_CODES = [
+    "warehouse.view",
+    "warehouse.items.view",
+    "warehouse.manage",
+    "warehouse.items.manage",
+]
+
+WAREHOUSE_MANAGE_PERMISSION_CODES = [
+    "warehouse.manage",
+    "warehouse.items.manage",
+]
+
+INVENTORY_FULL_READ_PERMISSION_CODES = [
+    "warehouse.inventory.view",
+    "warehouse.inventory.view_all",
+    "warehouse.inventory.manage",
+    "warehouse.inventory.manage_all",
+    "warehouse.employee_inventory.view",
+    "warehouse.employee_inventory.manage",
+    "warehouse.employees_inventory.view",
+    "warehouse.employees_inventory.manage",
+    "warehouse.technician_inventory.view",
+    "warehouse.technician_inventory.manage",
+]
+
+EMPLOYEE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
+    "warehouse.employee_equipment.manage",
+    "warehouse.employees_equipment.manage",
+    "warehouse.employee_inventory.manage",
+    "warehouse.employees_inventory.manage",
+    "warehouse.inventory.manage_employees",
+    "warehouse.inventory.manage_all",
+    "warehouse.inventory.assign",
+    "warehouse.inventory.transfer",
+    "warehouse.technician_inventory.manage",
+    "warehouse.technicians_inventory.manage",
+    "warehouse.assigned_inventory.manage",
+    "warehouse.manage_employee_equipment",
+    "warehouse.manage_technician_inventory",
+    "warehouse.staff_inventory.manage",
+]
+
+MY_INVENTORY_VIEW_PERMISSION_CODES = [
+    "warehouse.my_inventory.view",
+    "warehouse.inventory.view_own",
+]
+
+REQUEST_EQUIPMENT_READ_PERMISSION_CODES = [
+    "requests.equipment.view",
+    "requests.equipment.manage",
+    "warehouse.request_equipment.view",
+    "warehouse.request_equipment.manage",
+    "warehouse.view",
+    "warehouse.items.view",
+    "warehouse.manage",
+    "warehouse.items.manage",
+]
+
+REQUEST_EQUIPMENT_ATTACH_PERMISSION_CODES = [
+    "requests.equipment.attach",
+    "requests.equipment.manage",
+    "warehouse.request_equipment.attach",
+    "warehouse.request_equipment.manage",
+    "warehouse.my_inventory.attach",
+    "warehouse.inventory.attach_own",
+]
+
+REQUEST_EQUIPMENT_DETACH_WITHOUT_TIME_LIMIT_PERMISSION_CODES = [
+    "requests.equipment.detach_any",
+    "requests.equipment.manage",
+    "warehouse.request_equipment.detach_any",
+    "warehouse.request_equipment.manage",
+]
+
+VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
+    "vehicles.equipment.manage",
+    "warehouse.vehicle_equipment.manage",
+    "warehouse.items.manage",
+    "warehouse.manage",
+]
+
+
+def to_bool(value) -> bool:
+    return value is True or value == 1 or str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
+
+
+def has_legacy_role(current_user: dict, roles: list[str]) -> bool:
+    return current_user.get("role") in roles
+
+
+def user_has_any_permission(current_user: dict, permission_codes: list[str]) -> bool:
+    return is_super_admin(current_user) or has_any_permission(current_user, permission_codes)
+
+
+def can_manage_warehouse(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, WAREHOUSE_MANAGE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        WAREHOUSE_MANAGE_ROLES,
+    )
+
+
+def can_manage_employee_equipment(current_user: dict) -> bool:
+    return can_manage_warehouse(current_user) or user_has_any_permission(
+        current_user,
+        EMPLOYEE_EQUIPMENT_MANAGE_PERMISSION_CODES,
+    )
+
+
+def can_read_warehouse_full(current_user: dict) -> bool:
+    return can_manage_warehouse(current_user) or user_has_any_permission(
+        current_user,
+        WAREHOUSE_FULL_READ_PERMISSION_CODES,
+    ) or has_legacy_role(current_user, WAREHOUSE_FULL_READ_ROLES)
+
+
+def can_read_inventory_full(current_user: dict) -> bool:
+    return can_manage_employee_equipment(current_user) or user_has_any_permission(
+        current_user,
+        INVENTORY_FULL_READ_PERMISSION_CODES,
+    ) or has_legacy_role(current_user, INVENTORY_FULL_READ_ROLES)
+
+
+def can_view_my_inventory(current_user: dict) -> bool:
+    return (
+        to_bool(current_user.get("can_be_request_executor"))
+        or user_has_any_permission(current_user, MY_INVENTORY_VIEW_PERMISSION_CODES)
+        or has_legacy_role(current_user, ["TECHNICIAN", "SENIOR_TECHNICIAN"])
+    )
+
+
+def can_read_request_equipment(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, REQUEST_EQUIPMENT_READ_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        REQUEST_EQUIPMENT_READ_ROLES,
+    )
+
+
+def can_attach_request_equipment(current_user: dict) -> bool:
+    return (
+        can_manage_employee_equipment(current_user)
+        or user_has_any_permission(current_user, REQUEST_EQUIPMENT_ATTACH_PERMISSION_CODES)
+        or has_legacy_role(current_user, ["ADMIN", "WAREHOUSE_MANAGER", "SENIOR_TECHNICIAN", "TECHNICIAN"])
+    )
+
+
+def can_detach_request_equipment_without_time_limit(current_user: dict) -> bool:
+    return can_manage_warehouse(current_user) or user_has_any_permission(
+        current_user,
+        REQUEST_EQUIPMENT_DETACH_WITHOUT_TIME_LIMIT_PERMISSION_CODES,
+    )
+
+
+def can_detach_request_equipment_with_time_limit(current_user: dict) -> bool:
+    return (
+        can_attach_request_equipment(current_user)
+        or to_bool(current_user.get("can_be_request_executor"))
+        or has_legacy_role(current_user, REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES)
+    )
+
+
+def can_manage_vehicle_equipment(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        WAREHOUSE_MANAGE_ROLES,
+    )
+
+
 def require_warehouse_full_read(current_user: dict):
-    if current_user["role"] not in WAREHOUSE_FULL_READ_ROLES:
+    if not can_read_warehouse_full(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра склада"
         )
 
+
 def require_request_equipment_read(current_user: dict):
-    if current_user["role"] not in REQUEST_EQUIPMENT_READ_ROLES:
+    if not can_read_request_equipment(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра оборудования заявки"
         )
 
+
 def require_request_equipment_attach(current_user: dict):
-    if current_user["role"] not in [
-        "ADMIN",
-        "WAREHOUSE_MANAGER",
-        "SENIOR_TECHNICIAN",
-        "TECHNICIAN",
-    ]:
+    if not can_attach_request_equipment(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для добавления оборудования в заявку"
         )
+
 
 def enrich_request_equipment_detach_permissions(
     rows: list[dict],
@@ -124,15 +290,13 @@ def enrich_request_equipment_detach_permissions(
     - detach_seconds_left
     - detach_time_limit_seconds
 
-    ADMIN / WAREHOUSE_MANAGER могут отвязать всегда.
-    TECHNICIAN / SENIOR_TECHNICIAN могут отвязать только своё оборудование
-    в течение 2 минут после attached_at.
+    Полный складской/административный доступ может отвязать без лимита.
+    Исполнитель заявки может отвязать своё оборудование в течение 2 минут.
     """
-    role = current_user.get("role")
     user_id = int(current_user["id"])
 
-    can_detach_without_time_limit = role in WAREHOUSE_MANAGE_ROLES
-    can_detach_with_time_limit = role in REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES
+    can_detach_without_time_limit = can_detach_request_equipment_without_time_limit(current_user)
+    can_detach_with_time_limit = can_detach_request_equipment_with_time_limit(current_user)
 
     for row in rows:
         age_seconds_raw = row.get("detach_age_seconds")
@@ -166,18 +330,25 @@ def enrich_request_equipment_detach_permissions(
             row["detach_seconds_left"] = seconds_left
 
     return rows
-    
+
+
 def require_vehicle_equipment_manage(current_user: dict):
-    if current_user["role"] not in WAREHOUSE_MANAGE_ROLES:
+    if not can_manage_vehicle_equipment(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Привязывать оборудование напрямую к авто могут только Админ или Зав. складом"
+            detail="Недостаточно прав для управления оборудованием автомобиля"
         )
 
 
 def can_user_access_vehicle_equipment(vehicle: dict, current_user: dict) -> bool:
     role = current_user.get("role")
     user_id = int(current_user["id"])
+
+    if can_manage_vehicle_equipment(current_user) or user_has_any_permission(
+        current_user,
+        ["vehicles.equipment.view_all", "warehouse.vehicle_equipment.view_all"],
+    ):
+        return True
 
     if role in ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT"]:
         return True
@@ -197,7 +368,8 @@ def can_user_access_vehicle_equipment(vehicle: dict, current_user: dict) -> bool
         )
 
     return False
-    
+
+
 def normalize_city(value):
     if value is None:
         return None
@@ -207,6 +379,17 @@ def normalize_city(value):
 def can_user_access_request_equipment(request: dict, current_user: dict) -> bool:
     role = current_user.get("role")
     user_id = int(current_user["id"])
+
+    if can_manage_employee_equipment(current_user) or user_has_any_permission(
+        current_user,
+        [
+            "requests.equipment.view_all",
+            "requests.equipment.manage_all",
+            "warehouse.request_equipment.view_all",
+            "warehouse.request_equipment.manage_all",
+        ],
+    ):
+        return True
 
     if role in ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT"]:
         return True
@@ -225,15 +408,15 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
             and int(responsible_manager_id) == user_id
         )
 
-    if role == "TECHNICIAN":
+    if role == "TECHNICIAN" or to_bool(current_user.get("can_be_request_executor")):
         assigned_to = request.get("assigned_to")
 
-        # Если заявка уже назначена этому монтажнику — даём доступ к оборудованию,
+        # Если заявка уже назначена этому исполнителю — даём доступ к оборудованию,
         # даже если оплата/город отличаются. Он уже исполнитель заявки.
         if assigned_to is not None:
             return int(assigned_to) == user_id
 
-        # Если заявка ещё свободная — монтажник может видеть оборудование
+        # Если заявка ещё свободная — исполнитель может видеть оборудование
         # только для оплаченной заявки своего города.
         if not request.get("is_paid"):
             return False
@@ -245,12 +428,14 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
 
     return False
 
+
 def require_warehouse_manage(current_user: dict):
-    if current_user["role"] not in WAREHOUSE_MANAGE_ROLES:
+    if not can_manage_warehouse(current_user):
         raise HTTPException(status_code=403, detail="Недостаточно прав для управления складом")
-    
+
+
 def require_inventory_full_read(current_user: dict):
-    if current_user["role"] not in INVENTORY_FULL_READ_ROLES:
+    if not can_read_inventory_full(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра инвентаря монтажников"
@@ -505,9 +690,16 @@ def find_serialized_by_identifier(cursor, identifier_type: str, identifier_value
 def require_inventory_target_user(cursor, target_user_id: int):
     cursor.execute(
         """
-        SELECT id, name, role, city, is_approved
-        FROM users
-        WHERE id = %s
+        SELECT
+            u.id,
+            u.name,
+            u.role,
+            u.city,
+            u.is_approved,
+            r.can_be_request_executor
+        FROM users u
+        LEFT JOIN roles r ON r.code = u.role
+        WHERE u.id = %s
         LIMIT 1
         """,
         (target_user_id,)
@@ -518,10 +710,13 @@ def require_inventory_target_user(cursor, target_user_id: int):
     if not user:
         raise HTTPException(status_code=404, detail="Монтажник не найден")
 
-    if user["role"] not in ["TECHNICIAN", "SENIOR_TECHNICIAN"]:
+    if not (
+        to_bool(user.get("can_be_request_executor"))
+        or user.get("role") in ["TECHNICIAN", "SENIOR_TECHNICIAN"]
+    ):
         raise HTTPException(
             status_code=400,
-            detail="Инвентарь можно выдавать только монтажнику или старшему монтажнику"
+            detail="Инвентарь можно выдавать только пользователю, который может быть исполнителем заявки"
         )
 
     if not user["is_approved"]:
@@ -832,10 +1027,10 @@ def get_my_inventory(
     low_stock: bool = Query(False),
     current_user: dict = Depends(get_current_user),
 ):
-    if current_user["role"] not in ["TECHNICIAN", "SENIOR_TECHNICIAN"]:
+    if not can_view_my_inventory(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Этот раздел доступен только монтажникам"
+            detail="Этот раздел доступен только исполнителям заявок"
         )
 
     connection = get_connection()
@@ -4812,7 +5007,6 @@ def detach_equipment_from_request(
     """
     require_request_equipment_read(current_user)
 
-    role = current_user.get("role")
     user_id = int(current_user["id"])
 
     connection = get_connection()
@@ -4920,13 +5114,13 @@ def detach_equipment_from_request(
                 )
 
             can_detach = False
-            is_warehouse_manager = role in WAREHOUSE_MANAGE_ROLES
-            is_limited_detach_role = role in REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES
+            can_detach_without_time_limit = can_detach_request_equipment_without_time_limit(current_user)
+            can_detach_with_time_limit = can_detach_request_equipment_with_time_limit(current_user)
 
-            if is_warehouse_manager:
+            if can_detach_without_time_limit:
                 can_detach = True
 
-            elif is_limited_detach_role:
+            elif can_detach_with_time_limit:
                 is_attached_by_current_user = (
                     link.get("attached_by") is not None
                     and int(link["attached_by"]) == user_id
@@ -5062,7 +5256,7 @@ def detach_equipment_from_request(
 
             history_action = (
                 "EQUIPMENT_DETACHED_BY_TECH_WITHIN_TIME_LIMIT"
-                if is_limited_detach_role and not is_warehouse_manager
+                if not can_detach_without_time_limit
                 else "EQUIPMENT_DETACHED"
             )
 
@@ -5215,9 +5409,10 @@ def get_available_inventory_for_request_vehicle(
             ]
             values = []
 
-            role = current_user["role"]
+            has_warehouse_manage_access = can_manage_warehouse(current_user)
+            has_employee_equipment_access = can_manage_employee_equipment(current_user)
 
-            if role in WAREHOUSE_MANAGE_ROLES:
+            if has_warehouse_manage_access or has_employee_equipment_access:
                 availability_clauses = []
 
                 if assigned_to_user_id:
@@ -5240,7 +5435,10 @@ def get_available_inventory_for_request_vehicle(
                         """
                     )
 
-                if include_stock:
+                # Прямой доступ к складу оставляем только для управления складом.
+                # Доступ "Управление оборудованием у сотрудников" видит инвентари сотрудников,
+                # но не получает складские остатки напрямую.
+                if include_stock and has_warehouse_manage_access:
                     availability_clauses.append(
                         """
                         (
@@ -5253,7 +5451,7 @@ def get_available_inventory_for_request_vehicle(
                 conditions.append("(" + " OR ".join(availability_clauses) + ")")
 
             else:
-                # Монтажник / старший монтажник видит только свой инвентарь.
+                # Исполнитель заявки видит только свой инвентарь.
                 conditions.append(
                     """
                     wi.status = 'ASSIGNED_TO_TECH'
@@ -5479,8 +5677,9 @@ def attach_equipment_to_request_vehicle(
                     detail="Нельзя привязать оборудование из корзины"
                 )
 
-            role = current_user["role"]
-            is_warehouse_manager = role in WAREHOUSE_MANAGE_ROLES
+            has_warehouse_manage_access = can_manage_warehouse(current_user)
+            has_employee_equipment_access = can_manage_employee_equipment(current_user)
+            can_attach_foreign_inventory = has_warehouse_manage_access or has_employee_equipment_access
 
             item_assigned_user_id = item.get("assigned_to_user_id")
             item_is_from_inventory = (
@@ -5498,11 +5697,11 @@ def attach_equipment_to_request_vehicle(
                     detail="Оборудование недоступно для добавления в заявку"
                 )
 
-            if not is_warehouse_manager:
+            if not can_attach_foreign_inventory:
                 if not item_is_from_inventory:
                     raise HTTPException(
                         status_code=403,
-                        detail="Монтажник может добавить только оборудование из своего инвентаря"
+                        detail="Можно добавить только оборудование из своего инвентаря"
                     )
 
                 if int(item_assigned_user_id) != int(current_user["id"]):
@@ -5511,19 +5710,19 @@ def attach_equipment_to_request_vehicle(
                         detail="Нельзя добавить оборудование из чужого инвентаря"
                     )
 
-            if item_is_from_stock and not is_warehouse_manager:
+            if item_is_from_stock and not has_warehouse_manage_access:
                 raise HTTPException(
                     status_code=403,
-                    detail="Добавлять оборудование напрямую со склада может только админ или заведующий складом"
+                    detail="Добавлять оборудование напрямую со склада может только пользователь с правом управления складом"
                 )
 
             installed_by_user_id = None
 
             if data.installed_by_user_id:
-                if not is_warehouse_manager and int(data.installed_by_user_id) != int(current_user["id"]):
+                if not can_attach_foreign_inventory and int(data.installed_by_user_id) != int(current_user["id"]):
                     raise HTTPException(
                         status_code=403,
-                        detail="Нельзя указать другого монтажника как установившего"
+                        detail="Нельзя указать другого исполнителя как установившего"
                     )
 
                 target_user = require_inventory_target_user(
@@ -5873,4 +6072,3 @@ def get_request_vehicle_equipment(
 
     finally:
         connection.close()
-

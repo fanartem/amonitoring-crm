@@ -9,26 +9,7 @@ import RequestDetailModal from './RequestDetailModal'
 import AttachmentsPanel from './AttachmentsPanel'
 import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
-
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(function (c) {
-					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-				})
-				.join(''),
-		)
-		return JSON.parse(jsonPayload).role
-	} catch (error) {
-		return null
-	}
-}
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 
 export default function Clients() {
 	const [clients, setClients] = useState([])
@@ -119,71 +100,134 @@ export default function Clients() {
 
 	const [showVehicles, setShowVehicles] = useState(false)
 
-	const userRole = getUserRole()
+	const currentUser = getStoredUser()
+	const userRole = currentUser.role || null
 	const location = useLocation()
 
 	const canViewRequestPrice =
-		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
+		hasAnyPermission(currentUser, [
+			'prices.view',
+			'prices.manage',
+			'requests.price.view',
+			'requests.prices.view',
+			'requests.view_price',
+			'requests.view_prices',
+		]) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'ROP',
+			'MANAGER',
+			'TECH_SUPPORT',
+			'ACCOUNTANT',
+			'WAREHOUSE_MANAGER',
+		])
 
-	const canCreateClient = ['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'].includes(
-		userRole,
-	)
+	const canCreateClient =
+		hasAnyPermission(currentUser, ['clients.create', 'clients.manage']) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'])
 
-	const canDeleteClient = ['ADMIN', 'ROP'].includes(userRole)
+	const canDeleteClient =
+		hasAnyPermission(currentUser, ['clients.delete', 'clients.manage']) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
 
-	const canSoftDeleteVehicle = userRole === 'ADMIN'
+	const canSoftDeleteVehicle =
+		hasAnyPermission(currentUser, ['vehicles.delete', 'vehicles.manage']) ||
+		hasLegacyRole(currentUser, ['ADMIN'])
 
-	const canViewVehicleTrash = [
-		'ADMIN',
-		'ROP',
-		'ACCOUNTANT',
-		'MANAGER',
-		'WAREHOUSE_MANAGER',
-	].includes(userRole)
+	const canViewVehicleTrash =
+		hasAnyPermission(currentUser, [
+			'vehicles.trash.view',
+			'vehicles.deleted.view',
+			'vehicles.restore',
+			'vehicles.delete',
+			'vehicles.manage',
+		]) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'ROP',
+			'ACCOUNTANT',
+			'MANAGER',
+			'WAREHOUSE_MANAGER',
+		])
 
-	const canRestoreVehicle = userRole === 'ADMIN'
+	const canRestoreVehicle =
+		hasAnyPermission(currentUser, ['vehicles.restore', 'vehicles.manage']) ||
+		hasLegacyRole(currentUser, ['ADMIN'])
 
-	const canTransferVehicle = ['ADMIN', 'ROP', 'MANAGER'].includes(userRole)
+	const canTransferVehicle =
+		hasAnyPermission(currentUser, [
+			'vehicles.transfer',
+			'vehicles.transfer_client',
+			'vehicles.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'MANAGER'])
 
-	const canAddVehicleToClient = (client) => {
+	const canAddVehicleToClient = client => {
 		return (
-			['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'].includes(userRole) &&
-			Boolean(client?.can_create_request) &&
+			(Boolean(client?.can_create_request) ||
+				hasAnyPermission(currentUser, [
+					'vehicles.create',
+					'vehicles.manage',
+					'clients.manage',
+				]) ||
+				hasLegacyRole(currentUser, [
+					'ADMIN',
+					'ROP',
+					'MANAGER',
+					'TECH_SUPPORT',
+				])) &&
 			String(client?.status || 'ACTIVE') !== 'BLOCKED'
 		)
 	}
 
-	const canManageDirectVehicleEquipment = [
-		'ADMIN',
-		'WAREHOUSE_MANAGER',
-	].includes(userRole)
+	const canManageDirectVehicleEquipment =
+		hasAnyPermission(currentUser, [
+			'vehicles.equipment.manage',
+			'warehouse.vehicle_equipment.manage',
+			'warehouse.manage',
+			'warehouse.items.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
 
-	const canOpenClientDetails = (client) => Boolean(client?.can_open_details)
+	const canViewResponsibleFilter =
+		hasAnyPermission(currentUser, [
+			'clients.view_all',
+			'clients.reassign',
+			'clients.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
 
-	const canEditClient = (client) => Boolean(client?.can_edit)
+	const canOpenClientDetails = client => Boolean(client?.can_open_details)
 
-	const canChangeClientStatus = (client) => Boolean(client?.can_change_status)
+	const canEditClient = client => Boolean(client?.can_edit)
 
-	const canReassignClient = (client) => Boolean(client?.can_reassign)
+	const canChangeClientStatus = client => Boolean(client?.can_change_status)
 
-	const canChangeClientPaymentType = (client) =>
+	const canReassignClient = client => Boolean(client?.can_reassign)
+
+	const canChangeClientPaymentType = client =>
 		Boolean(client?.can_change_payment_type) ||
-		['ADMIN', 'ROP'].includes(userRole)
+		hasAnyPermission(currentUser, [
+			'clients.payment_type.manage',
+			'clients.manage',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
 
-	const canViewClientMonitoringPassword = (client) =>
+	const canViewClientMonitoringPassword = client =>
 		Boolean(client?.can_view_monitoring_password) ||
-		['ADMIN', 'ROP', 'TECH_SUPPORT'].includes(userRole)
+		hasAnyPermission(currentUser, [
+			'clients.monitoring_password.view',
+			'clients.manage',
+		]) ||
+		hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'TECH_SUPPORT'])
 
-	const getClientPaymentTypeLabel = (paymentType) => {
+	const getClientPaymentTypeLabel = paymentType => {
 		if (paymentType === 'POSTPAYMENT') return 'Постоплата'
 		return 'Предоплата'
 	}
 
-	const getClientPaymentTypeClass = (paymentType) => {
+	const getClientPaymentTypeClass = paymentType => {
 		return paymentType === 'POSTPAYMENT' ? 'postpayment' : 'prepayment'
 	}
 
-	const getRequestPaymentText = (req) => {
+	const getRequestPaymentText = req => {
 		const paymentType =
 			req.client_payment_type || selectedClient?.payment_type || 'PREPAYMENT'
 		const isPaid = Boolean(req.is_paid)
@@ -195,9 +239,9 @@ export default function Clients() {
 		return isPaid ? 'Предоплата · оплачено' : 'Предоплата · не оплачено'
 	}
 
-	const getRequestExecutors = (req) => {
+	const getRequestExecutors = req => {
 		if (Array.isArray(req.executors) && req.executors.length > 0) {
-			return req.executors.map((executor) => ({
+			return req.executors.map(executor => ({
 				id: executor.user_id,
 				name: executor.user_name || getTechName(executor.user_id),
 			}))
@@ -215,31 +259,31 @@ export default function Clients() {
 		return []
 	}
 
-	const getRequestExecutorsLabel = (req) => {
+	const getRequestExecutorsLabel = req => {
 		const executors = getRequestExecutors(req)
 
 		if (executors.length === 0) return 'Не назначены'
 
 		return executors
-			.map((executor) => executor.name || `ID: ${executor.id}`)
+			.map(executor => executor.name || `ID: ${executor.id}`)
 			.join(', ')
 	}
 
-	const getClientStatusLabel = (status) => {
+	const getClientStatusLabel = status => {
 		if (status === 'ACTIVE') return 'Активный'
 		if (status === 'DEBTOR') return 'Должник'
 		if (status === 'BLOCKED') return 'Заблокирован'
 		return status || '—'
 	}
 
-	const getClientResponsibleLabel = (client) => {
+	const getClientResponsibleLabel = client => {
 		return client?.responsible_manager_name || 'Не назначен'
 	}
 
 	// --- Фильтры клиентов + выпадающий навигатор ---
 
-	const handleClientFilterChange = (e) =>
-		setClientFilters((prev) => ({ ...prev, [e.target.name]: e.target.value }))
+	const handleClientFilterChange = e =>
+		setClientFilters(prev => ({ ...prev, [e.target.name]: e.target.value }))
 
 	const resetClientFilters = () => {
 		setClientFilters({ status: '', responsible: '' })
@@ -250,19 +294,17 @@ export default function Clients() {
 	}
 
 	// Менеджеры, подходящие под введённый текст (для автодополнения).
-	const filteredResponsibleManagers = (responsibleManagers || []).filter(
-		(m) => {
-			const q = responsibleQuery.trim().toLowerCase()
+	const filteredResponsibleManagers = (responsibleManagers || []).filter(m => {
+		const q = responsibleQuery.trim().toLowerCase()
 
-			if (!q) return true
+		if (!q) return true
 
-			return [m.name, m.role]
-				.filter(Boolean)
-				.some((field) => String(field).toLowerCase().includes(q))
-		},
-	)
+		return [m.name, m.role]
+			.filter(Boolean)
+			.some(field => String(field).toLowerCase().includes(q))
+	})
 
-	const handleResponsibleQueryChange = (e) => {
+	const handleResponsibleQueryChange = e => {
 		const value = e.target.value
 
 		setResponsibleQuery(value)
@@ -270,17 +312,17 @@ export default function Clients() {
 
 		// Очистили поле — снимаем фильтр по ответственному.
 		if (!value.trim()) {
-			setClientFilters((prev) => ({ ...prev, responsible: '' }))
+			setClientFilters(prev => ({ ...prev, responsible: '' }))
 		}
 	}
 
-	const handlePickResponsible = (manager) => {
-		setClientFilters((prev) => ({ ...prev, responsible: String(manager.id) }))
+	const handlePickResponsible = manager => {
+		setClientFilters(prev => ({ ...prev, responsible: String(manager.id) }))
 		setResponsibleQuery(manager.name)
 		setIsResponsibleOpen(false)
 	}
 
-	const getPickerClientName = (client) => {
+	const getPickerClientName = client => {
 		const company = client.company_name
 		const person = client.name || client.client_name
 
@@ -308,10 +350,10 @@ export default function Clients() {
 			client.source_parent_client_name,
 		]
 			.filter(Boolean)
-			.some((field) => String(field).toLowerCase().includes(query))
+			.some(field => String(field).toLowerCase().includes(query))
 	}
 
-	const clientMatchesFilters = (client) => {
+	const clientMatchesFilters = client => {
 		if (clientFilters.status && client.status !== clientFilters.status) {
 			return false
 		}
@@ -336,10 +378,10 @@ export default function Clients() {
 		? []
 		: (clients || [])
 				.filter(
-					(c) =>
+					c =>
 						clientMatchesFilters(c) && clientMatchesQuery(c, clientSearchQuery),
 				)
-				.map((c) => {
+				.map(c => {
 					const known = knownClientCounts[String(c.id)]
 
 					if (known && known.vehicle_count !== undefined) {
@@ -363,7 +405,7 @@ export default function Clients() {
 	// Полный список клиентов (из /clients), отфильтрованный по статусу,
 	// ответственному и тексту — это опции выпадающего навигатора.
 	const filteredPickerClients = (clients || [])
-		.filter((c) => {
+		.filter(c => {
 			if (clientFilters.status && c.status !== clientFilters.status) {
 				return false
 			}
@@ -389,13 +431,13 @@ export default function Clients() {
 				c.monitoring_login,
 			]
 				.filter(Boolean)
-				.some((field) => String(field).toLowerCase().includes(q))
+				.some(field => String(field).toLowerCase().includes(q))
 		})
 		.slice(0, 50)
 
 	// Переход к клиенту: используем существующий механизм навигации
 	// (прокрутка к нужной группе/строке и подсветка).
-	const handlePickClient = (client) => {
+	const handlePickClient = client => {
 		if (!client) return
 
 		setIsPickerOpen(false)
@@ -411,7 +453,7 @@ export default function Clients() {
 		setPendingListClientId(Number(client.id))
 	}
 
-	const renderClientBadges = (client) => {
+	const renderClientBadges = client => {
 		if (!client) return null
 
 		const status = client.status || 'ACTIVE'
@@ -438,7 +480,7 @@ export default function Clients() {
 		)
 	}
 
-	const getClientChildrenCount = (client) => {
+	const getClientChildrenCount = client => {
 		return Number(client?.children_count || client?.children?.length || 0)
 	}
 
@@ -496,7 +538,7 @@ export default function Clients() {
 		fetchTechniciansLookup()
 		fetchClients() // полный список клиентов для выпадающего навигатора
 
-		if (['ADMIN', 'ROP'].includes(userRole)) {
+		if (canViewResponsibleFilter) {
 			fetchResponsibleManagers()
 		}
 	}, [])
@@ -605,7 +647,7 @@ export default function Clients() {
 			const allClients = flattenClientsFromGroups(clientGroups)
 
 			let client = allClients.find(
-				(c) => Number(c.id) === Number(pendingOpenClientId),
+				c => Number(c.id) === Number(pendingOpenClientId),
 			)
 
 			if (!client) {
@@ -664,16 +706,16 @@ export default function Clients() {
 
 		if (!result) return
 
-		setExpandedGroups((prev) => ({
+		setExpandedGroups(prev => ({
 			...prev,
 			[pendingClientPosition.group_name]: true,
 		}))
 
 		if (pendingClientPosition.ancestor_ids?.length > 0) {
-			setExpandedClientNodes((prev) => {
+			setExpandedClientNodes(prev => {
 				const next = { ...prev }
 
-				pendingClientPosition.ancestor_ids.forEach((clientId) => {
+				pendingClientPosition.ancestor_ids.forEach(clientId => {
 					next[clientId] = true
 				})
 
@@ -730,7 +772,7 @@ export default function Clients() {
 		if (!pendingHighlightVehicleId || clientVehicles.length === 0) return
 
 		const vehicleId = Number(pendingHighlightVehicleId)
-		const vehicleExists = clientVehicles.some((v) => Number(v.id) === vehicleId)
+		const vehicleExists = clientVehicles.some(v => Number(v.id) === vehicleId)
 
 		if (!vehicleExists) return
 
@@ -765,9 +807,7 @@ export default function Clients() {
 			return
 
 		const vehicleId = Number(pendingHighlightDeletedVehicleId)
-		const vehicleExists = deletedVehicles.some(
-			(v) => Number(v.id) === vehicleId,
-		)
+		const vehicleExists = deletedVehicles.some(v => Number(v.id) === vehicleId)
 
 		if (!vehicleExists) return
 
@@ -788,28 +828,28 @@ export default function Clients() {
 		}, 2500)
 	}, [deletedVehicles, pendingHighlightDeletedVehicleId])
 
-	const flattenClientsFromGroups = (groups) => {
+	const flattenClientsFromGroups = groups => {
 		const result = []
 
-		const walkClient = (client) => {
+		const walkClient = client => {
 			if (!client) return
 
 			result.push(client)
-			;(client.children || []).forEach((child) => walkClient(child))
+			;(client.children || []).forEach(child => walkClient(child))
 		}
 
-		;(groups || []).forEach((group) => {
+		;(groups || []).forEach(group => {
 			if (group.parent_client) {
 				result.push(group.parent_client)
 			}
 
-			;(group.clients || []).forEach((client) => walkClient(client))
+			;(group.clients || []).forEach(client => walkClient(client))
 		})
 
 		return result
 	}
 
-	const buildClientSnapshot = (client) => {
+	const buildClientSnapshot = client => {
 		return JSON.stringify({
 			id: client.id,
 			name: client.name,
@@ -833,19 +873,19 @@ export default function Clients() {
 		})
 	}
 
-	const markClientsHighlighted = (changes) => {
+	const markClientsHighlighted = changes => {
 		if (!changes || Object.keys(changes).length === 0) return
 
-		setAutoHighlightedClients((prev) => ({
+		setAutoHighlightedClients(prev => ({
 			...prev,
 			...changes,
 		}))
 
 		setTimeout(() => {
-			setAutoHighlightedClients((prev) => {
+			setAutoHighlightedClients(prev => {
 				const next = { ...prev }
 
-				Object.keys(changes).forEach((id) => {
+				Object.keys(changes).forEach(id => {
 					delete next[id]
 				})
 
@@ -870,7 +910,7 @@ export default function Clients() {
 			}
 
 			const data = await response.json()
-			setClients(data.filter((c) => !c.is_deleted))
+			setClients(data.filter(c => !c.is_deleted))
 		} catch (err) {
 			if (!silent) {
 				setError(err.message)
@@ -950,7 +990,7 @@ export default function Clients() {
 				const nextSnapshot = {}
 				const changes = {}
 
-				flattenClientsFromGroups(groups).forEach((client) => {
+				flattenClientsFromGroups(groups).forEach(client => {
 					const clientId = String(client.id)
 					const snapshot = buildClientSnapshot(client)
 
@@ -970,17 +1010,17 @@ export default function Clients() {
 			} else {
 				const nextSnapshot = {}
 
-				flattenClientsFromGroups(groups).forEach((client) => {
+				flattenClientsFromGroups(groups).forEach(client => {
 					nextSnapshot[String(client.id)] = buildClientSnapshot(client)
 				})
 
 				clientGroupsSnapshotRef.current = nextSnapshot
 			}
 
-			setKnownClientCounts((prev) => {
+			setKnownClientCounts(prev => {
 				const next = { ...prev }
 
-				flattenClientsFromGroups(groups).forEach((client) => {
+				flattenClientsFromGroups(groups).forEach(client => {
 					next[String(client.id)] = {
 						vehicle_count: client.vehicle_count,
 						children_count: getClientChildrenCount(client),
@@ -996,11 +1036,11 @@ export default function Clients() {
 
 			if (openedClient) {
 				const freshClient = flattenClientsFromGroups(groups).find(
-					(client) => Number(client.id) === Number(openedClient.id),
+					client => Number(client.id) === Number(openedClient.id),
 				)
 
 				if (freshClient) {
-					setSelectedClient((prev) =>
+					setSelectedClient(prev =>
 						prev && Number(prev.id) === Number(freshClient.id)
 							? {
 									...prev,
@@ -1014,7 +1054,7 @@ export default function Clients() {
 			if (initial) {
 				const initialExpanded = {}
 
-				groups.forEach((group) => {
+				groups.forEach(group => {
 					initialExpanded[group.group_name] = true
 				})
 
@@ -1054,8 +1094,8 @@ export default function Clients() {
 		}
 	}
 
-	const updateClientLocally = (updatedClient) => {
-		setSelectedClient((prev) => {
+	const updateClientLocally = updatedClient => {
+		setSelectedClient(prev => {
 			if (!prev || Number(prev.id) !== Number(updatedClient.id)) return prev
 
 			return {
@@ -1064,8 +1104,8 @@ export default function Clients() {
 			}
 		})
 
-		setClients((prev) =>
-			prev.map((client) =>
+		setClients(prev =>
+			prev.map(client =>
 				Number(client.id) === Number(updatedClient.id)
 					? {
 							...client,
@@ -1075,8 +1115,8 @@ export default function Clients() {
 			),
 		)
 
-		const updateClientInTree = (items) =>
-			(items || []).map((client) => {
+		const updateClientInTree = items =>
+			(items || []).map(client => {
 				const nextClient =
 					Number(client.id) === Number(updatedClient.id)
 						? {
@@ -1091,8 +1131,8 @@ export default function Clients() {
 				}
 			})
 
-		setClientGroups((prev) =>
-			prev.map((group) => ({
+		setClientGroups(prev =>
+			prev.map(group => ({
 				...group,
 				parent_client:
 					group.parent_client &&
@@ -1149,10 +1189,10 @@ export default function Clients() {
 		}
 	}
 
-	const getTechName = (techId) => {
+	const getTechName = techId => {
 		if (!techId) return null
 
-		const tech = techniciansLookup.find((t) => Number(t.id) === Number(techId))
+		const tech = techniciansLookup.find(t => Number(t.id) === Number(techId))
 
 		if (!tech) return `ID: ${techId}`
 
@@ -1169,21 +1209,21 @@ export default function Clients() {
 		INDIVIDUAL: 'Физ. лицо',
 	}
 
-	const getClientTypeLabel = (type) => {
+	const getClientTypeLabel = type => {
 		return clientTypeLabels[type] || type || '—'
 	}
 
-	const getClientIdentifierLabel = (client) => {
+	const getClientIdentifierLabel = client => {
 		const type = client?.client_type || client?.type
 
 		return type === 'INDIVIDUAL' ? 'ИИН' : 'БИН'
 	}
 
-	const getClientIdentifierValue = (client) => {
+	const getClientIdentifierValue = client => {
 		return client?.bin_iin || '—'
 	}
 
-	const getClientDisplayName = (client) => {
+	const getClientDisplayName = client => {
 		const clientType = client.client_type || client.type
 
 		if (clientType === 'TOO' || clientType === 'IP') {
@@ -1193,7 +1233,7 @@ export default function Clients() {
 		return client.client_name || client.name || client.company_name || '—'
 	}
 
-	const getClientSubtitle = (client) => {
+	const getClientSubtitle = client => {
 		const clientType = client.client_type || client.type
 
 		if (
@@ -1206,7 +1246,7 @@ export default function Clients() {
 		return getClientTypeLabel(clientType)
 	}
 
-	const getEquipmentBadgeText = (item) => {
+	const getEquipmentBadgeText = item => {
 		const titleParts = []
 
 		if (item.name) titleParts.push(item.name)
@@ -1235,11 +1275,11 @@ export default function Clients() {
 		return `${title}${quantityText}${sourceText}`
 	}
 
-	const getVehicleEquipment = (vehicleId) => {
+	const getVehicleEquipment = vehicleId => {
 		return vehicleEquipmentMap[vehicleId] || []
 	}
 
-	const getEquipmentBadgeKey = (item) => {
+	const getEquipmentBadgeKey = item => {
 		return item.source_key || `${item.source_type || 'REQUEST'}-${item.link_id}`
 	}
 
@@ -1252,22 +1292,22 @@ export default function Clients() {
 		return `${title} (${plate})`
 	}
 
-	const getVehicleInstallText = (vehicle) => {
+	const getVehicleInstallText = vehicle => {
 		return `${vehicle.has_blocking ? 'С блокировкой' : 'Без блокировки'} • ${
 			vehicle.has_beacon ? 'Маяк' : 'Без маяка'
 		}`
 	}
 
-	const getCreatorName = (req) => {
+	const getCreatorName = req => {
 		return req.created_by_name || 'Создатель не указан'
 	}
 
-	const getCreatorRoleLabel = (req) => {
+	const getCreatorRoleLabel = req => {
 		if (!req.created_by_role) return null
 		return roleLabels[req.created_by_role] || req.created_by_role
 	}
 
-	const fetchClientRequests = async (clientId) => {
+	const fetchClientRequests = async clientId => {
 		try {
 			const res = await fetch(`${API_BASE_URL}/clients/${clientId}/requests`, {
 				headers: getAuthHeaders(),
@@ -1283,7 +1323,7 @@ export default function Clients() {
 		}
 	}
 
-	const fetchEquipmentForClientVehicles = async (vehiclesList) => {
+	const fetchEquipmentForClientVehicles = async vehiclesList => {
 		if (!Array.isArray(vehiclesList) || vehiclesList.length === 0) {
 			return
 		}
@@ -1292,7 +1332,7 @@ export default function Clients() {
 			const equipmentByVehicle = {}
 
 			await Promise.all(
-				vehiclesList.map(async (vehicle) => {
+				vehiclesList.map(async vehicle => {
 					if (!vehicle?.id) return
 
 					try {
@@ -1319,7 +1359,7 @@ export default function Clients() {
 				}),
 			)
 
-			setVehicleEquipmentMap((prev) => ({
+			setVehicleEquipmentMap(prev => ({
 				...prev,
 				...equipmentByVehicle,
 			}))
@@ -1328,7 +1368,7 @@ export default function Clients() {
 		}
 	}
 
-	const fetchClientById = async (clientId) => {
+	const fetchClientById = async clientId => {
 		try {
 			const res = await fetch(`${API_BASE_URL}/clients/${clientId}`, {
 				headers: getAuthHeaders(),
@@ -1347,7 +1387,7 @@ export default function Clients() {
 		}
 	}
 
-	const fetchClientGroupedPosition = async (clientId) => {
+	const fetchClientGroupedPosition = async clientId => {
 		try {
 			const res = await fetch(
 				`${API_BASE_URL}/clients/${clientId}/grouped-position?page_size=${clientGroupsPageSizeRef.current}`,
@@ -1369,7 +1409,7 @@ export default function Clients() {
 		}
 	}
 
-	const handleClientClick = async (client) => {
+	const handleClientClick = async client => {
 		if (!canOpenClientDetails(client)) {
 			alert('У вас нет доступа к деталям этого клиента')
 			return
@@ -1473,24 +1513,24 @@ export default function Clients() {
 		}
 	}
 
-	const handleVehiclesPageChange = (nextPage) => {
+	const handleVehiclesPageChange = nextPage => {
 		if (!selectedClient) return
 
 		fetchClientVehicles(selectedClient.id, true, nextPage, vehiclesPageSize)
 	}
 
-	const handleVehiclesPageSizeChange = (nextPageSize) => {
+	const handleVehiclesPageSizeChange = nextPageSize => {
 		if (!selectedClient) return
 
 		fetchClientVehicles(selectedClient.id, true, 1, nextPageSize)
 	}
 
-	const fetchEquipmentForClientRequests = async (requestsList) => {
+	const fetchEquipmentForClientRequests = async requestsList => {
 		try {
 			const equipmentByVehicle = {}
 
 			await Promise.all(
-				requestsList.map(async (req) => {
+				requestsList.map(async req => {
 					if (!req.id) return
 
 					try {
@@ -1653,7 +1693,7 @@ export default function Clients() {
 		setCreateModalOpen(true)
 	}
 
-	const handleClientStatusChange = async (nextStatus) => {
+	const handleClientStatusChange = async nextStatus => {
 		if (!selectedClient) return
 
 		const oldStatus = selectedClient.status || 'ACTIVE'
@@ -1703,7 +1743,7 @@ export default function Clients() {
 		}
 	}
 
-	const handleClientPaymentTypeChange = async (nextPaymentType) => {
+	const handleClientPaymentTypeChange = async nextPaymentType => {
 		if (!selectedClient) return
 
 		const oldPaymentType = selectedClient.payment_type || 'PREPAYMENT'
@@ -1754,7 +1794,7 @@ export default function Clients() {
 		}
 	}
 
-	const handleClientResponsibleChange = async (value) => {
+	const handleClientResponsibleChange = async value => {
 		if (!selectedClient) return
 
 		const nextResponsibleId = value ? Number(value) : null
@@ -1765,7 +1805,7 @@ export default function Clients() {
 		if (nextResponsibleId === currentResponsibleId) return
 
 		const responsible = responsibleManagers.find(
-			(user) => Number(user.id) === Number(nextResponsibleId),
+			user => Number(user.id) === Number(nextResponsibleId),
 		)
 
 		const responsibleName = responsible
@@ -1816,24 +1856,24 @@ export default function Clients() {
 
 	const toggleDropdown = (e, clientId) => {
 		e.stopPropagation()
-		setActiveDropdown((prev) => (prev === clientId ? null : clientId))
+		setActiveDropdown(prev => (prev === clientId ? null : clientId))
 	}
 
-	const toggleGroup = (groupName) => {
-		setExpandedGroups((prev) => ({
+	const toggleGroup = groupName => {
+		setExpandedGroups(prev => ({
 			...prev,
 			[groupName]: !prev[groupName],
 		}))
 	}
 
-	const toggleClientNode = (clientId) => {
-		setExpandedClientNodes((prev) => ({
+	const toggleClientNode = clientId => {
+		setExpandedClientNodes(prev => ({
 			...prev,
 			[clientId]: !prev[clientId],
 		}))
 	}
 
-	const getEmptyVehicleForm = (clientId) => ({
+	const getEmptyVehicleForm = clientId => ({
 		client_id: clientId,
 		brand: '',
 		model: '',
@@ -1855,7 +1895,7 @@ export default function Clients() {
 		setEditingVehicle(getEmptyVehicleForm(selectedClient.id))
 	}
 
-	const openEditVehicleModal = (vehicle) => {
+	const openEditVehicleModal = vehicle => {
 		setVehicleFormMode('edit')
 		setEditingVehicle(vehicle)
 	}
@@ -1865,7 +1905,7 @@ export default function Clients() {
 		setVehicleFormMode('edit')
 	}
 
-	const handleVehicleSubmit = async (e) => {
+	const handleVehicleSubmit = async e => {
 		e.preventDefault()
 
 		if (!editingVehicle || !selectedClient) return
@@ -1970,7 +2010,7 @@ export default function Clients() {
 		}
 	}
 
-	const getVehicleDeleteReasonTypeLabel = (type) => {
+	const getVehicleDeleteReasonTypeLabel = type => {
 		if (type === 'EQUIPMENT_REMOVED') {
 			return 'Устройства сняты, машина удалена из GlonassSoft'
 		}
@@ -1986,7 +2026,7 @@ export default function Clients() {
 		return type || '—'
 	}
 
-	const fetchDeletedVehicles = async (clientId) => {
+	const fetchDeletedVehicles = async clientId => {
 		if (!clientId) return
 
 		setDeletedVehiclesLoading(true)
@@ -2014,7 +2054,7 @@ export default function Clients() {
 		}
 	}
 
-	const openDeleteVehicleModal = (vehicle) => {
+	const openDeleteVehicleModal = vehicle => {
 		setDeletingVehicle(vehicle)
 		setDeleteVehicleForm({
 			delete_reason_type: 'SERVICE_STOPPED_SIM_BLOCKED',
@@ -2030,7 +2070,7 @@ export default function Clients() {
 		})
 	}
 
-	const handleVehicleDeleteSubmit = async (e) => {
+	const handleVehicleDeleteSubmit = async e => {
 		e.preventDefault()
 
 		if (!deletingVehicle) return
@@ -2099,7 +2139,7 @@ export default function Clients() {
 		}
 	}
 
-	const handleVehicleRestore = async (vehicle) => {
+	const handleVehicleRestore = async vehicle => {
 		if (!vehicle) return
 
 		const confirmText =
@@ -2146,7 +2186,7 @@ export default function Clients() {
 		}
 	}
 
-	const getVinHistoryClientName = (vehicle) => {
+	const getVinHistoryClientName = vehicle => {
 		if (!vehicle) return 'Клиент не указан'
 
 		return (
@@ -2158,7 +2198,7 @@ export default function Clients() {
 		)
 	}
 
-	const getVinHistoryVehicleTitle = (vehicle) => {
+	const getVinHistoryVehicleTitle = vehicle => {
 		if (!vehicle) return 'Автомобиль не найден'
 
 		const title =
@@ -2170,7 +2210,7 @@ export default function Clients() {
 		return `${title} · ${plate}`
 	}
 
-	const fetchVehicleVinHistory = async (vehicleId) => {
+	const fetchVehicleVinHistory = async vehicleId => {
 		setVinHistoryLoading(true)
 		setVinHistoryData(null)
 
@@ -2197,7 +2237,7 @@ export default function Clients() {
 		}
 	}
 
-	const openVinHistoryModal = (vehicle) => {
+	const openVinHistoryModal = vehicle => {
 		setVinHistoryVehicle(vehicle)
 		fetchVehicleVinHistory(vehicle.id)
 	}
@@ -2208,7 +2248,7 @@ export default function Clients() {
 		setVinHistoryLoading(false)
 	}
 
-	const fetchVehicleTransferHistory = async (vehicleId) => {
+	const fetchVehicleTransferHistory = async vehicleId => {
 		setTransferVehicleHistoryLoading(true)
 		setTransferVehicleHistory([])
 
@@ -2235,7 +2275,7 @@ export default function Clients() {
 		}
 	}
 
-	const openTransferVehicleModal = (vehicle) => {
+	const openTransferVehicleModal = vehicle => {
 		setTransferringVehicle(vehicle)
 		setTransferVehicleForm({
 			new_client_id: '',
@@ -2255,7 +2295,7 @@ export default function Clients() {
 		setTransferVehicleHistory([])
 	}
 
-	const buildVehicleForAttachModal = (vehicle) => {
+	const buildVehicleForAttachModal = vehicle => {
 		if (!vehicle) return null
 
 		return {
@@ -2268,7 +2308,7 @@ export default function Clients() {
 		}
 	}
 
-	const openAttachEquipmentToVehicleModal = (vehicle) => {
+	const openAttachEquipmentToVehicleModal = vehicle => {
 		setAttachEquipmentVehicle(buildVehicleForAttachModal(vehicle))
 	}
 
@@ -2297,7 +2337,7 @@ export default function Clients() {
 		}
 	}
 
-	const handleVehicleTransferSubmit = async (e) => {
+	const handleVehicleTransferSubmit = async e => {
 		e.preventDefault()
 
 		if (!transferringVehicle) return
@@ -2313,8 +2353,7 @@ export default function Clients() {
 		}
 
 		const targetClient = clients.find(
-			(client) =>
-				Number(client.id) === Number(transferVehicleForm.new_client_id),
+			client => Number(client.id) === Number(transferVehicleForm.new_client_id),
 		)
 
 		const confirmText =
@@ -2405,7 +2444,7 @@ export default function Clients() {
 		WAREHOUSE_MANAGER: 'role-warehouse',
 	}
 
-	const formatDate = (dateString) => {
+	const formatDate = dateString => {
 		if (!dateString) return '—'
 		const d = new Date(dateString)
 		return (
@@ -2415,7 +2454,7 @@ export default function Clients() {
 		)
 	}
 
-	const formatMoney = (value) => {
+	const formatMoney = value => {
 		const number = Number(value || 0)
 
 		if (Number.isNaN(number)) return `${value} тг`
@@ -2448,7 +2487,7 @@ export default function Clients() {
 
 					<select
 						value={pageSize}
-						onChange={(e) => {
+						onChange={e => {
 							onPageSizeChange(Number(e.target.value))
 							onPageChange(1)
 						}}
@@ -2509,7 +2548,7 @@ export default function Clients() {
 		return null
 	}
 
-	const findClientInGroups = (targetClientId) => {
+	const findClientInGroups = targetClientId => {
 		for (
 			let groupIndex = 0;
 			groupIndex < clientGroups.length;
@@ -2551,8 +2590,10 @@ export default function Clients() {
 	}
 
 	const renderClientCard = (client, level = 0) => {
+		const children = Array.isArray(client?.children) ? client.children : []
 		const childrenCount = getClientChildrenCount(client)
-		const hasChildren = childrenCount > 0
+		const hasChildren = childrenCount > 0 || children.length > 0
+		const hasLoadedChildren = children.length > 0
 		const isExpanded = Boolean(expandedClientNodes[client.id])
 		const isNested = level > 0
 		const hierarchyBadgeText = getClientHierarchyBadgeText(client, level)
@@ -2561,7 +2602,7 @@ export default function Clients() {
 			return (
 				<div
 					key={client.id}
-					ref={(el) => {
+					ref={el => {
 						clientRefs.current[Number(client.id)] = el
 					}}
 					className={`client-tree-row-wrapper client-tree-row-wrapper-nested client-level-${Math.min(level, 4)} ${
@@ -2584,7 +2625,7 @@ export default function Clients() {
 								<button
 									type='button'
 									className='client-node-toggle small'
-									onClick={(e) => {
+									onClick={e => {
 										e.stopPropagation()
 										toggleClientNode(client.id)
 									}}
@@ -2640,15 +2681,14 @@ export default function Clients() {
 
 							{hasChildren && (
 								<span className='client-tree-stat'>
-									Подклиентов:{' '}
-									<b>{client.children_count || client.children.length}</b>
+									Подклиентов: <b>{client.children_count || children.length}</b>
 								</span>
 							)}
 
 							{canOpenClientDetails(client) && (
 								<button
 									className='btn-details'
-									onClick={(e) => {
+									onClick={e => {
 										e.stopPropagation()
 										handleClientClick(client)
 									}}
@@ -2660,12 +2700,12 @@ export default function Clients() {
 							{(canEditClient(client) || canDeleteClient) && (
 								<div
 									className='client-tree-actions'
-									onClick={(e) => e.stopPropagation()}
+									onClick={e => e.stopPropagation()}
 								>
 									<button
 										type='button'
 										className='client-tree-actions-btn'
-										onClick={(e) => toggleDropdown(e, client.id)}
+										onClick={e => toggleDropdown(e, client.id)}
 									>
 										&#8942;
 									</button>
@@ -2675,7 +2715,7 @@ export default function Clients() {
 											{canEditClient(client) && (
 												<div
 													className='client-tree-dropdown-item'
-													onClick={(e) => handleEditClientClick(e, client)}
+													onClick={e => handleEditClientClick(e, client)}
 												>
 													Редактировать
 												</div>
@@ -2684,7 +2724,7 @@ export default function Clients() {
 											{canDeleteClient && (
 												<div
 													className='client-tree-dropdown-item danger'
-													onClick={(e) =>
+													onClick={e =>
 														handleDeleteClient(
 															e,
 															client.id,
@@ -2702,11 +2742,9 @@ export default function Clients() {
 						</div>
 					</div>
 
-					{hasChildren && isExpanded && (
+					{hasLoadedChildren && isExpanded && (
 						<div className='client-tree-children-list'>
-							{client.children.map((child) =>
-								renderClientCard(child, level + 1),
-							)}
+							{children.map(child => renderClientCard(child, level + 1))}
 						</div>
 					)}
 				</div>
@@ -2716,7 +2754,7 @@ export default function Clients() {
 		return (
 			<div
 				key={client.id}
-				ref={(el) => {
+				ref={el => {
 					clientRefs.current[Number(client.id)] = el
 				}}
 				className={`client-tree-item ${
@@ -2756,7 +2794,7 @@ export default function Clients() {
 								<button
 									type='button'
 									className='client-node-toggle'
-									onClick={(e) => {
+									onClick={e => {
 										e.stopPropagation()
 										toggleClientNode(client.id)
 									}}
@@ -2797,7 +2835,7 @@ export default function Clients() {
 										color: '#888',
 										lineHeight: '1',
 									}}
-									onClick={(e) => toggleDropdown(e, client.id)}
+									onClick={e => toggleDropdown(e, client.id)}
 								>
 									&#8942;
 								</div>
@@ -2830,7 +2868,7 @@ export default function Clients() {
 														: 'none',
 													color: '#333',
 												}}
-												onClick={(e) => handleEditClientClick(e, client)}
+												onClick={e => handleEditClientClick(e, client)}
 											>
 												Редактировать
 											</div>
@@ -2845,7 +2883,7 @@ export default function Clients() {
 													fontSize: '14px',
 													color: '#c62828',
 												}}
-												onClick={(e) =>
+												onClick={e =>
 													handleDeleteClient(
 														e,
 														client.id,
@@ -2916,7 +2954,7 @@ export default function Clients() {
 						{canOpenClientDetails(client) && (
 							<button
 								className='btn-details'
-								onClick={(e) => {
+								onClick={e => {
 									e.stopPropagation()
 									handleClientClick(client)
 								}}
@@ -2927,9 +2965,9 @@ export default function Clients() {
 					</div>
 				</div>
 
-				{hasChildren && isExpanded && (
+				{hasLoadedChildren && isExpanded && (
 					<div className='client-tree-children-list root'>
-						{client.children.map((child) => renderClientCard(child, level + 1))}
+						{children.map(child => renderClientCard(child, level + 1))}
 					</div>
 				)}
 			</div>
@@ -2937,7 +2975,7 @@ export default function Clients() {
 	}
 
 	const filteredTransferClients = (clients || [])
-		.filter((client) => {
+		.filter(client => {
 			if (!client || client.is_deleted) return false
 
 			if (selectedClient && Number(client.id) === Number(selectedClient.id)) {
@@ -2956,7 +2994,7 @@ export default function Clients() {
 				client.email,
 			]
 				.filter(Boolean)
-				.some((field) => String(field).toLowerCase().includes(q))
+				.some(field => String(field).toLowerCase().includes(q))
 		})
 		.slice(0, 50)
 
@@ -3003,7 +3041,7 @@ export default function Clients() {
 					<button
 						type='button'
 						className='mobile-filters-toggle'
-						onClick={() => setShowMobileFilters((prev) => !prev)}
+						onClick={() => setShowMobileFilters(prev => !prev)}
 					>
 						<span className='mobile-filters-toggle-label'>
 							<i className='fa-solid fa-filter'></i>
@@ -3029,7 +3067,7 @@ export default function Clients() {
 						<div className='filters-bar clients-filters-bar'>
 							<div
 								className='filter-group filter-main client-picker'
-								onClick={(e) => e.stopPropagation()}
+								onClick={e => e.stopPropagation()}
 							>
 								<label>Найти клиента</label>
 								<div className='client-search-field'>
@@ -3038,7 +3076,7 @@ export default function Clients() {
 										type='text'
 										placeholder='ФИО, компания, телефон, email...'
 										value={pickerQuery}
-										onChange={(e) => setPickerQuery(e.target.value)}
+										onChange={e => setPickerQuery(e.target.value)}
 									/>
 
 									{pickerQuery && (
@@ -3052,7 +3090,6 @@ export default function Clients() {
 										</button>
 									)}
 								</div>
-
 							</div>
 
 							<div className='filter-group'>
@@ -3072,10 +3109,10 @@ export default function Clients() {
 								</select>
 							</div>
 
-							{['ADMIN', 'ROP'].includes(userRole) && (
+							{canViewResponsibleFilter && (
 								<div
 									className='filter-group filter-typeahead'
-									onClick={(e) => e.stopPropagation()}
+									onClick={e => e.stopPropagation()}
 								>
 									<label>Ответственный</label>
 									<input
@@ -3096,7 +3133,7 @@ export default function Clients() {
 													Ничего не найдено
 												</div>
 											) : (
-												filteredResponsibleManagers.map((manager) => (
+												filteredResponsibleManagers.map(manager => (
 													<button
 														key={manager.id}
 														type='button'
@@ -3167,11 +3204,9 @@ export default function Clients() {
 
 								<div className='client-group-tree-list'>
 									{clientSearchResults.length === 0 ? (
-										<div className='client-search-empty'>
-											Ничего не найдено
-										</div>
+										<div className='client-search-empty'>Ничего не найдено</div>
 									) : (
-										clientSearchResults.map((client) =>
+										clientSearchResults.map(client =>
 											renderClientCard(client, 0),
 										)
 									)}
@@ -3194,7 +3229,7 @@ export default function Clients() {
 								onPageSizeChange: setClientGroupsPageSize,
 							})}
 							<div className='client-groups-list'>
-								{paginatedClientGroups.map((group) => {
+								{paginatedClientGroups.map(group => {
 									const hasSubclients =
 										group.clients && group.clients.length > 0
 									const isExpanded = Boolean(expandedGroups[group.group_name])
@@ -3202,7 +3237,7 @@ export default function Clients() {
 									return (
 										<div key={group.group_name} className='client-group-block'>
 											<div
-												ref={(el) => {
+												ref={el => {
 													groupRefs.current[group.group_name] = el
 												}}
 												className={`client-group-header ${
@@ -3287,7 +3322,7 @@ export default function Clients() {
 														canOpenClientDetails(group.parent_client) && (
 															<button
 																className='btn-details'
-																onClick={(e) => {
+																onClick={e => {
 																	e.stopPropagation()
 																	handleClientClick(group.parent_client)
 																}}
@@ -3308,7 +3343,7 @@ export default function Clients() {
 												group.clients &&
 												group.clients.length > 0 && (
 													<div className='client-group-tree-list'>
-														{group.clients.map((client) =>
+														{group.clients.map(client =>
 															renderClientCard(client, 0),
 														)}
 													</div>
@@ -3402,9 +3437,7 @@ export default function Clients() {
 											<button
 												type='button'
 												className='btn-details'
-												onClick={() =>
-													setShowMonitoringPassword((prev) => !prev)
-												}
+												onClick={() => setShowMonitoringPassword(prev => !prev)}
 												style={{
 													padding: '4px 8px',
 													fontSize: '12px',
@@ -3432,7 +3465,7 @@ export default function Clients() {
 									<select
 										className='client-inline-select client-status-select'
 										value={selectedClient.status || 'ACTIVE'}
-										onChange={(e) => handleClientStatusChange(e.target.value)}
+										onChange={e => handleClientStatusChange(e.target.value)}
 										disabled={clientActionLoading}
 									>
 										<option value='ACTIVE'>Активный</option>
@@ -3463,7 +3496,7 @@ export default function Clients() {
 									<select
 										className='client-inline-select client-payment-select'
 										value={selectedClient.payment_type || 'PREPAYMENT'}
-										onChange={(e) =>
+										onChange={e =>
 											handleClientPaymentTypeChange(e.target.value)
 										}
 										disabled={clientActionLoading}
@@ -3492,14 +3525,12 @@ export default function Clients() {
 								<select
 									className='client-inline-select'
 									value={selectedClient.responsible_manager_id || ''}
-									onChange={(e) =>
-										handleClientResponsibleChange(e.target.value)
-									}
+									onChange={e => handleClientResponsibleChange(e.target.value)}
 									disabled={clientActionLoading}
 								>
 									<option value=''>Не назначен</option>
 
-									{responsibleManagers.map((user) => (
+									{responsibleManagers.map(user => (
 										<option key={user.id} value={user.id}>
 											{user.name} ·{' '}
 											{user.role === 'MANAGER'
@@ -3524,7 +3555,7 @@ export default function Clients() {
 								{canEditClient(selectedClient) && (
 									<button
 										className='btn-edit-request client-detail-action-btn'
-										onClick={(e) => handleEditClientClick(e, selectedClient)}
+										onClick={e => handleEditClientClick(e, selectedClient)}
 										disabled={clientActionLoading}
 									>
 										✎ Редактировать
@@ -3534,7 +3565,7 @@ export default function Clients() {
 								{canDeleteClient && (
 									<button
 										className='btn-delete-client-detail client-detail-action-btn'
-										onClick={(e) =>
+										onClick={e =>
 											handleDeleteClient(
 												e,
 												selectedClient.id,
@@ -3644,10 +3675,10 @@ export default function Clients() {
 									})}
 
 									<div style={{ display: 'grid', gap: '10px' }}>
-										{clientVehicles.map((v) => (
+										{clientVehicles.map(v => (
 											<div
 												key={v.id}
-												ref={(el) => {
+												ref={el => {
 													vehicleRefs.current[Number(v.id)] = el
 												}}
 												className={`vehicle-card${Number(highlightedVehicleId) === Number(v.id) ? ' vehicle-highlighted' : ''}`}
@@ -3660,7 +3691,7 @@ export default function Clients() {
 
 														<div className='vehicle-equipment-badges'>
 															{getVehicleEquipment(v.id).length > 0 ? (
-																getVehicleEquipment(v.id).map((item) => (
+																getVehicleEquipment(v.id).map(item => (
 																	<span
 																		key={getEquipmentBadgeKey(item)}
 																		className='vehicle-equipment-badge'
@@ -3778,10 +3809,10 @@ export default function Clients() {
 										</div>
 									) : (
 										<div style={{ display: 'grid', gap: '10px' }}>
-											{deletedVehicles.map((vehicle) => (
+											{deletedVehicles.map(vehicle => (
 												<div
 													key={vehicle.id}
-													ref={(el) => {
+													ref={el => {
 														vehicleRefs.current[Number(vehicle.id)] = el
 													}}
 													className={`vehicle-trash-card${
@@ -3872,7 +3903,7 @@ export default function Clients() {
 							</div>
 						) : null}
 
-						{clientRequests.map((req) => (
+						{clientRequests.map(req => (
 							<div
 								key={req.id}
 								className='request-card'
@@ -4096,7 +4127,7 @@ export default function Clients() {
 								>
 									<button
 										className='btn-details'
-										onClick={(e) => {
+										onClick={e => {
 											e.stopPropagation()
 											setSelectedRequestId(req.id)
 										}}
@@ -4115,7 +4146,7 @@ export default function Clients() {
 				<div className='modal-overlay open' onClick={closeVehicleModal}>
 					<div
 						className='modal-window vehicle-modal-window'
-						onClick={(e) => e.stopPropagation()}
+						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<span className='modal-title'>
@@ -4153,7 +4184,7 @@ export default function Clients() {
 											<input
 												className='vehicle-input'
 												value={editingVehicle.brand || ''}
-												onChange={(e) =>
+												onChange={e =>
 													setEditingVehicle({
 														...editingVehicle,
 														brand: e.target.value,
@@ -4168,7 +4199,7 @@ export default function Clients() {
 											<input
 												className='vehicle-input'
 												value={editingVehicle.model || ''}
-												onChange={(e) =>
+												onChange={e =>
 													setEditingVehicle({
 														...editingVehicle,
 														model: e.target.value,
@@ -4183,7 +4214,7 @@ export default function Clients() {
 											<input
 												className='vehicle-input'
 												value={editingVehicle.plate_number || ''}
-												onChange={(e) =>
+												onChange={e =>
 													setEditingVehicle({
 														...editingVehicle,
 														plate_number: e.target.value,
@@ -4201,7 +4232,7 @@ export default function Clients() {
 												min='1900'
 												max='2100'
 												value={editingVehicle.year || ''}
-												onChange={(e) =>
+												onChange={e =>
 													setEditingVehicle({
 														...editingVehicle,
 														year: e.target.value,
@@ -4216,7 +4247,7 @@ export default function Clients() {
 												className='vehicle-input'
 												maxLength='17'
 												value={editingVehicle.vin || ''}
-												onChange={(e) =>
+												onChange={e =>
 													setEditingVehicle({
 														...editingVehicle,
 														vin: e.target.value.toUpperCase(),
@@ -4237,7 +4268,7 @@ export default function Clients() {
 
 										<div className='vehicle-equipment-badges modal-equipment-badges'>
 											{getVehicleEquipment(editingVehicle.id).length > 0 ? (
-												getVehicleEquipment(editingVehicle.id).map((item) => (
+												getVehicleEquipment(editingVehicle.id).map(item => (
 													<span
 														key={getEquipmentBadgeKey(item)}
 														className='vehicle-equipment-badge'
@@ -4308,7 +4339,7 @@ export default function Clients() {
 				<div className='modal-overlay open' onClick={closeTransferVehicleModal}>
 					<div
 						className='modal-window vehicle-modal-window'
-						onClick={(e) => e.stopPropagation()}
+						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<span className='modal-title'>
@@ -4371,7 +4402,7 @@ export default function Clients() {
 											<input
 												className='vehicle-input'
 												value={transferClientQuery}
-												onChange={(e) => setTransferClientQuery(e.target.value)}
+												onChange={e => setTransferClientQuery(e.target.value)}
 												placeholder='ФИО, компания, телефон, email...'
 											/>
 										</label>
@@ -4383,8 +4414,8 @@ export default function Clients() {
 											<select
 												className='vehicle-input'
 												value={transferVehicleForm.new_client_id}
-												onChange={(e) =>
-													setTransferVehicleForm((prev) => ({
+												onChange={e =>
+													setTransferVehicleForm(prev => ({
 														...prev,
 														new_client_id: e.target.value,
 													}))
@@ -4393,7 +4424,7 @@ export default function Clients() {
 											>
 												<option value=''>— выберите нового клиента —</option>
 
-												{filteredTransferClients.map((client) => (
+												{filteredTransferClients.map(client => (
 													<option key={client.id} value={client.id}>
 														{getClientDisplayName(client)}
 														{client.phone ? ` · ${client.phone}` : ''}
@@ -4409,8 +4440,8 @@ export default function Clients() {
 											<textarea
 												className='vehicle-input vehicle-transfer-textarea'
 												value={transferVehicleForm.reason}
-												onChange={(e) =>
-													setTransferVehicleForm((prev) => ({
+												onChange={e =>
+													setTransferVehicleForm(prev => ({
 														...prev,
 														reason: e.target.value,
 													}))
@@ -4437,7 +4468,7 @@ export default function Clients() {
 										</div>
 									) : (
 										<div className='vehicle-transfer-history-list'>
-											{transferVehicleHistory.map((row) => (
+											{transferVehicleHistory.map(row => (
 												<div
 													key={row.id}
 													className='vehicle-transfer-history-row'
@@ -4505,7 +4536,7 @@ export default function Clients() {
 				<div className='modal-overlay open' onClick={closeDeleteVehicleModal}>
 					<div
 						className='modal-window vehicle-modal-window'
-						onClick={(e) => e.stopPropagation()}
+						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<span className='modal-title'>Удаление машины в корзину</span>
@@ -4567,8 +4598,8 @@ export default function Clients() {
 											<select
 												className='vehicle-input'
 												value={deleteVehicleForm.delete_reason_type}
-												onChange={(e) =>
-													setDeleteVehicleForm((prev) => ({
+												onChange={e =>
+													setDeleteVehicleForm(prev => ({
 														...prev,
 														delete_reason_type: e.target.value,
 													}))
@@ -4592,8 +4623,8 @@ export default function Clients() {
 											<textarea
 												className='vehicle-input vehicle-transfer-textarea'
 												value={deleteVehicleForm.delete_reason}
-												onChange={(e) =>
-													setDeleteVehicleForm((prev) => ({
+												onChange={e =>
+													setDeleteVehicleForm(prev => ({
 														...prev,
 														delete_reason: e.target.value,
 													}))
@@ -4636,7 +4667,7 @@ export default function Clients() {
 				<div className='modal-overlay open' onClick={closeVinHistoryModal}>
 					<div
 						className='modal-window vehicle-modal-window vin-history-modal-window'
-						onClick={(e) => e.stopPropagation()}
+						onClick={e => e.stopPropagation()}
 					>
 						<div className='modal-header'>
 							<span className='modal-title'>История VIN</span>
@@ -4689,7 +4720,7 @@ export default function Clients() {
 											</div>
 										) : (
 											<div className='vin-history-list'>
-												{vinHistoryData.related_vehicles.map((vehicle) => (
+												{vinHistoryData.related_vehicles.map(vehicle => (
 													<div
 														key={vehicle.id}
 														className={`vin-history-card ${
@@ -4759,7 +4790,7 @@ export default function Clients() {
 											</div>
 										) : (
 											<div className='vin-history-link-list'>
-												{vinHistoryData.links.map((link) => (
+												{vinHistoryData.links.map(link => (
 													<div key={link.id} className='vin-history-link-card'>
 														<div className='vin-history-link-arrow'>
 															<div>
@@ -4851,7 +4882,7 @@ export default function Clients() {
 						const freshClient = await fetchClientById(editedClientId)
 
 						if (freshClient) {
-							setSelectedClient((prev) =>
+							setSelectedClient(prev =>
 								prev && Number(prev.id) === Number(freshClient.id)
 									? {
 											...prev,

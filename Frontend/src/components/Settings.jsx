@@ -1,28 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 import '../styles/Settings.css'
 
 const ADMIN_ONLY_NOTIFICATION_TYPES = ['REQUEST_TIME_CONFLICT']
-
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
-
-		return JSON.parse(jsonPayload).role
-	} catch {
-		return null
-	}
-}
 
 export default function Settings() {
 	const [cities, setCities] = useState([])
@@ -34,7 +15,7 @@ export default function Settings() {
 	const [notificationSettings, setNotificationSettings] = useState([])
 	const [notificationLoading, setNotificationLoading] = useState(false)
 	const [notificationError, setNotificationError] = useState('')
-	
+
 	const [timeConflictCities, setTimeConflictCities] = useState([])
 	const [timeConflictCitiesLoading, setTimeConflictCitiesLoading] =
 		useState(false)
@@ -43,13 +24,46 @@ export default function Settings() {
 		useState(false)
 	const [timeConflictCitiesSaved, setTimeConflictCitiesSaved] = useState('')
 
-	const userRole = getUserRole()
+	const currentUser = getStoredUser()
+	const userRole = currentUser.role || null
+
 	const isAdmin = userRole === 'ADMIN'
 	const isRop = userRole === 'ROP'
 	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
 
-	const canViewWarehouseNotifications = isAdmin || isWarehouseManager
-	const canManageCities = isAdmin || isRop
+	/*
+	Новая логика:
+	- Супер-Админ получает true через hasPermission / hasAnyPermission.
+	- Основной источник — permissions из localStorage.user_data.permissions.
+	- Legacy fallback пока оставляем для старых ролей.
+	*/
+
+	const canViewWarehouseNotifications =
+		hasAnyPermission(currentUser, [
+			'warehouse.view',
+			'warehouse.manage',
+			'warehouse.items.view',
+			'warehouse.items.manage',
+		]) ||
+		isAdmin ||
+		isWarehouseManager
+
+	const canManageCities =
+		hasAnyPermission(currentUser, [
+			'settings.manage_cities',
+			'cities.manage',
+			'cities.create',
+			'cities.edit',
+		]) ||
+		isAdmin ||
+		isRop
+
+	const canManageTimeConflictCities =
+		hasAnyPermission(currentUser, [
+			'settings.manage_notifications',
+			'notifications.manage',
+			'notifications.request_time_conflict.manage',
+		]) || isAdmin
 
 	useEffect(() => {
 		fetchNotificationSettings()
@@ -58,10 +72,10 @@ export default function Settings() {
 			fetchCities()
 		}
 
-		if (isAdmin) {
+		if (canManageTimeConflictCities) {
 			fetchTimeConflictIgnoredCities()
 		}
-	}, [canManageCities, isAdmin])
+	}, [canManageCities, canManageTimeConflictCities])
 
 	const fetchNotificationSettings = async () => {
 		setNotificationLoading(true)
@@ -332,7 +346,7 @@ export default function Settings() {
 
 	const visibleNotificationSettings = notificationSettings.filter(item => {
 		if (ADMIN_ONLY_NOTIFICATION_TYPES.includes(item.type_code)) {
-			return isAdmin
+			return canManageTimeConflictCities
 		}
 
 		if (item.category === 'WAREHOUSE') {
@@ -427,7 +441,7 @@ export default function Settings() {
 					</div>
 				)}
 
-				{isAdmin && (
+				{canManageTimeConflictCities && (
 					<div className='settings-conflict-cities'>
 						<div className='settings-conflict-cities-header'>
 							<div>

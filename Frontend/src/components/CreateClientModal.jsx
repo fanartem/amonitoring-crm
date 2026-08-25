@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 import '../styles/Requests.css'
 import '../styles/CreateClientModal.css'
 
@@ -34,25 +35,42 @@ const getErrorMessage = async res => {
 	return text || 'Ошибка сохранения клиента'
 }
 
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
+const hasLegacyRole = (user, roles) => roles.includes(user?.role)
 
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
+const canManageClientStatus = user =>
+	hasAnyPermission(user, [
+		'clients.status.manage',
+		'clients.status.edit',
+		'clients.update_status',
+		'clients.edit_status',
+		'clients.manage',
+	]) || hasLegacyRole(user, ['ADMIN', 'ROP', 'ACCOUNTANT'])
 
-		return JSON.parse(jsonPayload).role
-	} catch {
-		return null
-	}
-}
+const canManageResponsibleManager = user =>
+	hasAnyPermission(user, [
+		'clients.responsible_manager.manage',
+		'clients.responsible.manage',
+		'clients.assign_responsible',
+		'clients.edit_responsible',
+		'clients.manage',
+	]) || hasLegacyRole(user, ['ADMIN', 'ROP'])
+
+const canManageClientPaymentType = user =>
+	hasAnyPermission(user, [
+		'clients.payment_type.manage',
+		'clients.payment.manage',
+		'clients.edit_payment',
+		'clients.manage',
+	]) || hasLegacyRole(user, ['ADMIN', 'ROP'])
+
+const canManageClientMonitoringPassword = user =>
+	hasAnyPermission(user, [
+		'clients.monitoring_credentials.manage',
+		'clients.credentials.manage',
+		'clients.monitoring_password.manage',
+		'clients.edit_monitoring_credentials',
+		'clients.manage',
+	]) || hasLegacyRole(user, ['ADMIN', 'ROP', 'TECH_SUPPORT'])
 
 function SearchableSelect({
 	value,
@@ -229,16 +247,12 @@ export default function CreateClientModal({
 
 	const [responsibleManagers, setResponsibleManagers] = useState([])
 
-	const userRole = getUserRole()
+	const user = getStoredUser()
 
-	const canSetClientStatus = ['ADMIN', 'ROP', 'ACCOUNTANT'].includes(userRole)
-	const canSetResponsibleManager = ['ADMIN', 'ROP'].includes(userRole)
-
-	const canSetPaymentType = ['ADMIN', 'ROP'].includes(userRole)
-
-	const canSetMonitoringPassword = ['ADMIN', 'ROP', 'TECH_SUPPORT'].includes(
-		userRole,
-	)
+	const canSetClientStatus = canManageClientStatus(user)
+	const canSetResponsibleManager = canManageResponsibleManager(user)
+	const canSetPaymentType = canManageClientPaymentType(user)
+	const canSetMonitoringPassword = canManageClientMonitoringPassword(user)
 
 	const fetchClients = async () => {
 		try {
@@ -327,7 +341,13 @@ export default function CreateClientModal({
 		}
 
 		setError('')
-	}, [isOpen, editClient, isEditMode, canSetResponsibleManager])
+	}, [
+		isOpen,
+		editClient,
+		isEditMode,
+		canSetResponsibleManager,
+		canSetMonitoringPassword,
+	])
 
 	if (!isOpen) return null
 

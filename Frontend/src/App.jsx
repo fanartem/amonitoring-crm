@@ -19,6 +19,9 @@ import NewRequestNotice from './components/notifications/NewRequestNotice'
 import Calendar from './components/Calendar'
 import SupportRequests from './components/SupportRequests'
 
+import ProtectedRoute from './components/ProtectedRoute'
+import AccessDenied from './components/AccessDenied'
+
 const isTokenExpired = token => {
 	try {
 		if (!token) return true
@@ -78,27 +81,139 @@ export default function App() {
 					>
 						<Routes>
 							<Route path='/' element={<Navigate to='/requests' replace />} />
+
 							<Route
 								path='/login'
 								element={<Navigate to='/requests' replace />}
 							/>
 
-							{/* Home временно оставляем, но напрямую на него не кидаем */}
-							<Route path='/home' element={<Home />} />
+							<Route path='/access-denied' element={<AccessDenied />} />
 
-							<Route path='/warehouse' element={<Warehouse />} />
-							<Route path='/trash' element={<Trash />} />
-							<Route path='/approvals' element={<Approvals />} />
-							<Route path='/clients' element={<Clients />} />
-							<Route path='/requests' element={<Requests />} />
-							<Route path='/support-requests' element={<SupportRequests />} />
-							<Route path='/calendar' element={<Calendar />} />
-							<Route path='/employees' element={<Employees />} />
-							<Route path='/settings' element={<Settings />} />
-							<Route path='/prices' element={<Prices />} />
-							<Route path='/my-inventory' element={<MyInventory />} />
-							<Route path='/inventory' element={<Inventory />} />
-							<Route path='/reports' element={<Reports />} />
+							<Route
+								path='/home'
+								element={
+									<ProtectedRoute routeKey='requests'>
+										<Home />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/calendar'
+								element={
+									<ProtectedRoute routeKey='calendar'>
+										<Calendar />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/requests'
+								element={
+									<ProtectedRoute routeKey='requests'>
+										<Requests />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/support-requests'
+								element={
+									<ProtectedRoute routeKey='support_requests'>
+										<SupportRequests />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/clients'
+								element={
+									<ProtectedRoute routeKey='clients'>
+										<Clients />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/prices'
+								element={
+									<ProtectedRoute routeKey='prices'>
+										<Prices />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/employees'
+								element={
+									<ProtectedRoute routeKey='employees'>
+										<Employees />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/approvals'
+								element={
+									<ProtectedRoute routeKey='approvals'>
+										<Approvals />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/warehouse'
+								element={
+									<ProtectedRoute routeKey='warehouse'>
+										<Warehouse />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/my-inventory'
+								element={
+									<ProtectedRoute routeKey='my_inventory'>
+										<MyInventory />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/inventory'
+								element={
+									<ProtectedRoute routeKey='inventory'>
+										<Inventory />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/trash'
+								element={
+									<ProtectedRoute routeKey='trash'>
+										<Trash />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/settings'
+								element={
+									<ProtectedRoute routeKey='settings'>
+										<Settings />
+									</ProtectedRoute>
+								}
+							/>
+
+							<Route
+								path='/reports'
+								element={
+									<ProtectedRoute routeKey='reports'>
+										<Reports />
+									</ProtectedRoute>
+								}
+							/>
 
 							<Route path='*' element={<Navigate to='/requests' replace />} />
 						</Routes>

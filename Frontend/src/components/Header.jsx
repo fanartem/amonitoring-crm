@@ -4,14 +4,81 @@ import { NavLink, useNavigate } from 'react-router'
 import logoImg from '../assets/logo.png'
 import '../styles/Header.css'
 import { getWorkTypeLabel } from '../utils/workTypes'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 
 export default function Header() {
-	const userDataStr = localStorage.getItem('user_data')
-	const user = userDataStr ? JSON.parse(userDataStr) : null
-	const userRole = user?.role
-	const canSearchWarehouse = ['ADMIN', 'ROP', 'WAREHOUSE_MANAGER'].includes(
-		userRole,
-	)
+	const user = getStoredUser()
+	const userRole = String(user?.role || '').toUpperCase()
+
+	const isAdmin = userRole === 'ADMIN'
+	const isRop = userRole === 'ROP'
+	const isManager = userRole === 'MANAGER'
+	const isTechSupport = userRole === 'TECH_SUPPORT'
+	const isAccountant = userRole === 'ACCOUNTANT'
+	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
+	const isTechnician = userRole === 'TECHNICIAN'
+	const isSeniorTechnician = userRole === 'SENIOR_TECHNICIAN'
+
+	const canSearchClients =
+		hasAnyPermission(user, [
+			'clients.view',
+			'clients.manage',
+			'clients.read',
+		]) ||
+		isAdmin ||
+		isRop ||
+		isManager ||
+		isTechSupport ||
+		isAccountant
+
+	const canSearchRequests =
+		hasAnyPermission(user, [
+			'requests.view',
+			'requests.view_all',
+			'requests.manage',
+			'requests.calendar.view',
+			'requests.calendar.view_all',
+		]) ||
+		isAdmin ||
+		isRop ||
+		isManager ||
+		isTechSupport ||
+		isAccountant ||
+		isTechnician ||
+		isSeniorTechnician
+
+	const canSearchWarehouse =
+		hasAnyPermission(user, [
+			'warehouse.view',
+			'warehouse.manage',
+			'warehouse.items.view',
+			'warehouse.items.manage',
+		]) ||
+		isAdmin ||
+		isRop ||
+		isWarehouseManager
+
+	const canSearchVehicles =
+		hasAnyPermission(user, [
+			'vehicles.view',
+			'vehicles.manage',
+			'clients.vehicles.view',
+			'clients.view',
+			'requests.view',
+			'requests.view_all',
+			'requests.manage',
+		]) ||
+		canSearchClients ||
+		canSearchRequests
+
+	const logoTo = canSearchRequests
+		? '/requests'
+		: canSearchClients
+			? '/clients'
+			: canSearchWarehouse
+				? '/warehouse'
+				: '/settings'
+
 	const [query, setQuery] = useState('')
 	const [isOpen, setIsOpen] = useState(false)
 	const searchRef = useRef(null)
@@ -190,13 +257,17 @@ export default function Header() {
 				const headers = getJsonAuthHeaders()
 
 				const [resClients, resRequests, resWarehouse] = await Promise.all([
-					fetch(`${API_BASE_URL}/clients`, { headers })
-						.then(res => (res.ok ? res.json() : []))
-						.catch(() => []),
+					canSearchClients
+						? fetch(`${API_BASE_URL}/clients`, { headers })
+								.then(res => (res.ok ? res.json() : []))
+								.catch(() => [])
+						: Promise.resolve([]),
 
-					fetch(`${API_BASE_URL}/requests`, { headers })
-						.then(res => (res.ok ? res.json() : []))
-						.catch(() => []),
+					canSearchRequests
+						? fetch(`${API_BASE_URL}/requests`, { headers })
+								.then(res => (res.ok ? res.json() : []))
+								.catch(() => [])
+						: Promise.resolve([]),
 
 					canSearchWarehouse
 						? fetch(`${API_BASE_URL}/warehouse/items`, { headers })
@@ -245,12 +316,12 @@ export default function Header() {
 			clearInterval(intervalId)
 			window.removeEventListener('focus', handleFocus)
 		}
-	}, [canSearchWarehouse])
+	}, [canSearchClients, canSearchRequests, canSearchWarehouse])
 
 	useEffect(() => {
 		const q = query.trim()
 
-		if (q.length < 2) {
+		if (!canSearchVehicles || q.length < 2) {
 			setVehicleSearchResults([])
 			return
 		}
@@ -289,7 +360,7 @@ export default function Header() {
 			cancelled = true
 			clearTimeout(timeoutId)
 		}
-	}, [query])
+	}, [query, canSearchVehicles])
 
 	useEffect(() => {
 		fetchNotifications()
@@ -371,148 +442,155 @@ export default function Header() {
 		const results = []
 
 		// 1. Поиск по КЛИЕНТАМ
-		const matchedClients = clients.filter(
-			c =>
-				c.name?.toLowerCase().includes(q) ||
-				c.company_name?.toLowerCase().includes(q) ||
-				c.phone?.includes(q) ||
-				c.email?.toLowerCase().includes(q),
-		)
+		if (canSearchClients) {
+			const matchedClients = clients.filter(
+				c =>
+					c.name?.toLowerCase().includes(q) ||
+					c.company_name?.toLowerCase().includes(q) ||
+					c.phone?.includes(q) ||
+					c.email?.toLowerCase().includes(q),
+			)
 
-		matchedClients.forEach(c => {
-			results.push({
-				id: c.id,
-				title: c.company_name || c.name,
-				subtitle: `Клиент • ${c.name}`,
-				type: 'client',
+			matchedClients.forEach(c => {
+				results.push({
+					id: c.id,
+					title: c.company_name || c.name,
+					subtitle: `Клиент • ${c.name}`,
+					type: 'client',
+				})
 			})
-		})
+		}
 
 		// 2. Поиск по АВТОМОБИЛЯМ
 		const vehicleResultsMap = new Map()
 
-		const qVin = normalizeSearchVin(q)
+		if (canSearchVehicles) {
+			const qVin = normalizeSearchVin(q)
 
-		const sortedVehicleSearchResults = [...vehicleSearchResults].sort(
-			(a, b) => {
-				const aDeleted = isDeletedVehicle(a)
-				const bDeleted = isDeletedVehicle(b)
+			const sortedVehicleSearchResults = [...vehicleSearchResults].sort(
+				(a, b) => {
+					const aDeleted = isDeletedVehicle(a)
+					const bDeleted = isDeletedVehicle(b)
 
-				if (aDeleted !== bDeleted) {
-					return aDeleted ? 1 : -1
-				}
+					if (aDeleted !== bDeleted) {
+						return aDeleted ? 1 : -1
+					}
 
-				const aVinExact = normalizeSearchVin(a.vin) === qVin ? 0 : 1
-				const bVinExact = normalizeSearchVin(b.vin) === qVin ? 0 : 1
+					const aVinExact = normalizeSearchVin(a.vin) === qVin ? 0 : 1
+					const bVinExact = normalizeSearchVin(b.vin) === qVin ? 0 : 1
 
-				if (aVinExact !== bVinExact) {
-					return aVinExact - bVinExact
-				}
+					if (aVinExact !== bVinExact) {
+						return aVinExact - bVinExact
+					}
 
-				return (
-					Number(b.id || b.vehicle_id || 0) - Number(a.id || a.vehicle_id || 0)
-				)
-			},
-		)
+					return (
+						Number(b.id || b.vehicle_id || 0) -
+						Number(a.id || a.vehicle_id || 0)
+					)
+				},
+			)
 
-		sortedVehicleSearchResults.forEach(v => {
-			const vehicleId = v.id || v.vehicle_id
+			sortedVehicleSearchResults.forEach(v => {
+				const vehicleId = v.id || v.vehicle_id
 
-			if (!vehicleId || vehicleResultsMap.has(vehicleId)) return
-
-			vehicleResultsMap.set(vehicleId, {
-				id: vehicleId,
-				clientId: v.client_id,
-				vehicleId,
-				title: getVehicleSearchTitle(v),
-				subtitle: getVehicleSearchSubtitle(v),
-				type: 'vehicle',
-				isDeleted: isDeletedVehicle(v),
-			})
-		})
-
-		// Старый fallback через заявки оставляем, но только если /vehicles/search ещё не вернул эту машину.
-		requests.forEach(r => {
-			if (!Array.isArray(r.vehicles)) return
-
-			r.vehicles.forEach(v => {
-				const matches =
-					v.plate_number?.toLowerCase().includes(q) ||
-					v.vin?.toLowerCase().includes(q) ||
-					v.brand?.toLowerCase().includes(q) ||
-					v.model?.toLowerCase().includes(q)
-
-				if (!matches) return
-
-				const vehicleId = v.vehicle_id || v.id
 				if (!vehicleId || vehicleResultsMap.has(vehicleId)) return
-
-				const client = clients.find(c => c.id === r.client_id)
-				const clientName = client
-					? client.company_name || client.name
-					: r.company_name || r.client_name || 'Клиент'
-
-				const vehicleTitle =
-					`${v.brand || ''} ${v.model || ''}`.trim() || 'Авто'
-				const plate = v.plate_number ? ` · ${v.plate_number}` : ''
-				const vin = v.vin ? ` · VIN: ${v.vin}` : ''
 
 				vehicleResultsMap.set(vehicleId, {
 					id: vehicleId,
-					clientId: r.client_id,
+					clientId: v.client_id,
 					vehicleId,
-					title: `${vehicleTitle}${plate}`,
-					subtitle: `Автомобиль клиента: ${clientName}${vin}`,
+					title: getVehicleSearchTitle(v),
+					subtitle: getVehicleSearchSubtitle(v),
 					type: 'vehicle',
-					isDeleted: false,
+					isDeleted: isDeletedVehicle(v),
 				})
 			})
-		})
+
+			// Старый fallback через заявки оставляем, но только если /vehicles/search ещё не вернул эту машину.
+			requests.forEach(r => {
+				if (!Array.isArray(r.vehicles)) return
+
+				r.vehicles.forEach(v => {
+					const matches =
+						v.plate_number?.toLowerCase().includes(q) ||
+						v.vin?.toLowerCase().includes(q) ||
+						v.brand?.toLowerCase().includes(q) ||
+						v.model?.toLowerCase().includes(q)
+
+					if (!matches) return
+
+					const vehicleId = v.vehicle_id || v.id
+					if (!vehicleId || vehicleResultsMap.has(vehicleId)) return
+
+					const client = clients.find(c => c.id === r.client_id)
+					const clientName = client
+						? client.company_name || client.name
+						: r.company_name || r.client_name || 'Клиент'
+
+					const vehicleTitle =
+						`${v.brand || ''} ${v.model || ''}`.trim() || 'Авто'
+					const plate = v.plate_number ? ` · ${v.plate_number}` : ''
+					const vin = v.vin ? ` · VIN: ${v.vin}` : ''
+
+					vehicleResultsMap.set(vehicleId, {
+						id: vehicleId,
+						clientId: r.client_id,
+						vehicleId,
+						title: `${vehicleTitle}${plate}`,
+						subtitle: `Автомобиль клиента: ${clientName}${vin}`,
+						type: 'vehicle',
+						isDeleted: false,
+					})
+				})
+			})
+		}
 
 		vehicleResultsMap.forEach(item => results.push(item))
 
 		// 3. Поиск по ЗАЯВКАМ:
 		// номер заявки, клиент, телефон, компания, авто внутри заявки
-		const requestResultsMap = new Map()
+		if (canSearchRequests) {
+			const requestResultsMap = new Map()
 
-		requests.forEach(r => {
-			const clientName = r.company_name || r.client_name || 'Не указано'
+			requests.forEach(r => {
+				const clientName = r.company_name || r.client_name || 'Не указано'
 
-			const clientMatch =
-				r.id?.toString().includes(q) ||
-				r.client_name?.toLowerCase().includes(q) ||
-				r.company_name?.toLowerCase().includes(q) ||
-				r.phone?.toLowerCase().includes(q)
+				const clientMatch =
+					r.id?.toString().includes(q) ||
+					r.client_name?.toLowerCase().includes(q) ||
+					r.company_name?.toLowerCase().includes(q) ||
+					r.phone?.toLowerCase().includes(q)
 
-			const matchedVehicle =
-				Array.isArray(r.vehicles) &&
-				r.vehicles.find(
-					v =>
-						v.plate_number?.toLowerCase().includes(q) ||
-						v.vin?.toLowerCase().includes(q) ||
-						v.brand?.toLowerCase().includes(q) ||
-						v.model?.toLowerCase().includes(q),
-				)
+				const matchedVehicle =
+					Array.isArray(r.vehicles) &&
+					r.vehicles.find(
+						v =>
+							v.plate_number?.toLowerCase().includes(q) ||
+							v.vin?.toLowerCase().includes(q) ||
+							v.brand?.toLowerCase().includes(q) ||
+							v.model?.toLowerCase().includes(q),
+					)
 
-			if (!clientMatch && !matchedVehicle) return
-			if (requestResultsMap.has(r.id)) return
+				if (!clientMatch && !matchedVehicle) return
+				if (requestResultsMap.has(r.id)) return
 
-			const workTypeRu = getWorkTypeLabel(r.work_type)
+				const workTypeRu = getWorkTypeLabel(r.work_type)
 
-			const vehicleText = matchedVehicle
-				? ` • Авто: ${`${matchedVehicle.brand || ''} ${matchedVehicle.model || ''}`.trim()} ${matchedVehicle.plate_number ? `(${matchedVehicle.plate_number})` : ''}`
-				: ''
+				const vehicleText = matchedVehicle
+					? ` • Авто: ${`${matchedVehicle.brand || ''} ${matchedVehicle.model || ''}`.trim()} ${matchedVehicle.plate_number ? `(${matchedVehicle.plate_number})` : ''}`
+					: ''
 
-			requestResultsMap.set(r.id, {
-				id: r.id,
-				clientId: r.client_id,
-				title: `Заявка №${r.id} — ${workTypeRu}`,
-				subtitle: `Клиент: ${clientName}${vehicleText}`,
-				type: 'request',
+				requestResultsMap.set(r.id, {
+					id: r.id,
+					clientId: r.client_id,
+					title: `Заявка №${r.id} — ${workTypeRu}`,
+					subtitle: `Клиент: ${clientName}${vehicleText}`,
+					type: 'request',
+				})
 			})
-		})
 
-		requestResultsMap.forEach(item => results.push(item))
+			requestResultsMap.forEach(item => results.push(item))
+		}
 
 		// 4. Поиск по ОБОРУДОВАНИЮ СКЛАДА:
 		// Только для ролей, которым доступен склад.
@@ -565,6 +643,9 @@ export default function Header() {
 		requests,
 		vehicleSearchResults,
 		warehouseItems,
+		canSearchClients,
+		canSearchRequests,
+		canSearchVehicles,
 		canSearchWarehouse,
 	])
 
@@ -636,7 +717,7 @@ export default function Header() {
 
 	return (
 		<header className='header'>
-			<NavLink className='logo' to='/requests'>
+			<NavLink className='logo' to={logoTo}>
 				<img src={logoImg} alt='Amonitoring' />
 			</NavLink>
 

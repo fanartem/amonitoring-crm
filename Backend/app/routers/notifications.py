@@ -5,6 +5,7 @@ from app.schemas import (
     NotificationSettingsBulkUpdate,
     NotificationIgnoredCitiesUpdate,
 )
+from app.permissions import has_any_permission
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -346,12 +347,29 @@ def update_notification_settings(
 
 REQUEST_TIME_CONFLICT = "REQUEST_TIME_CONFLICT"
 
+REQUEST_TIME_CONFLICT_SETTINGS_PERMISSION_CODES = [
+    "notifications.settings.manage",
+    "notifications.request_time_conflict.manage",
+    "settings.notifications.manage",
+    "settings.manage",
+]
 
-def require_admin(current_user: dict):
-    if current_user.get("role") != "ADMIN":
+
+def can_manage_request_time_conflict_settings(current_user: dict) -> bool:
+    return (
+        has_any_permission(
+            current_user,
+            REQUEST_TIME_CONFLICT_SETTINGS_PERMISSION_CODES,
+        )
+        or current_user.get("role") == "ADMIN"
+    )
+
+
+def require_request_time_conflict_settings_manage(current_user: dict):
+    if not can_manage_request_time_conflict_settings(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Настройка доступна только администраторам"
+            detail="Недостаточно прав для настройки уведомлений о пересечении заявок",
         )
 
 
@@ -363,7 +381,7 @@ def get_request_time_conflict_ignored_cities(
     Список городов для настройки:
     какие города игнорировать для уведомлений о пересечении заявок.
     """
-    require_admin(current_user)
+    require_request_time_conflict_settings_manage(current_user)
 
     connection = get_connection()
 
@@ -412,7 +430,7 @@ def update_request_time_conflict_ignored_cities(
     Сохраняет города, по которым админ не хочет получать
     уведомления о пересечении заявок.
     """
-    require_admin(current_user)
+    require_request_time_conflict_settings_manage(current_user)
 
     unique_city_ids = []
 

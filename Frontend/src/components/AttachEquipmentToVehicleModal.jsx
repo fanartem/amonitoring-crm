@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 import '../styles/Warehouse.css'
 
 const CATEGORIES = {
@@ -136,6 +137,18 @@ export default function AttachEquipmentToVehicleModal({
 	const equipmentLocked = mode === 'equipment-first'
 	const vehicleLocked = mode === 'vehicle-first'
 
+	const currentUser = getStoredUser()
+
+	const canAttachDirectVehicleEquipment =
+		hasAnyPermission(currentUser, [
+			'warehouse.vehicle_equipment.manage',
+			'vehicles.equipment.manage',
+			'vehicles.equipment.attach',
+			'vehicles.manage',
+			'warehouse.manage',
+			'warehouse.items.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
 	const maxQuantity = useMemo(() => {
 		return getAvailableQuantity(selectedWarehouseItem)
 	}, [selectedWarehouseItem])
@@ -210,6 +223,10 @@ export default function AttachEquipmentToVehicleModal({
 
 	useEffect(() => {
 		if (!isOpen) return
+		if (!canAttachDirectVehicleEquipment) {
+			setEquipmentResults([])
+			return
+		}
 		if (equipmentLocked) return
 
 		const search = equipmentSearch.trim()
@@ -253,10 +270,19 @@ export default function AttachEquipmentToVehicleModal({
 		}, 300)
 
 		return () => clearTimeout(timeout)
-	}, [isOpen, equipmentSearch, equipmentLocked])
+	}, [
+		isOpen,
+		equipmentSearch,
+		equipmentLocked,
+		canAttachDirectVehicleEquipment,
+	])
 
 	useEffect(() => {
 		if (!isOpen) return
+		if (!canAttachDirectVehicleEquipment) {
+			setVehicleResults([])
+			return
+		}
 		if (vehicleLocked) return
 
 		const search = vehicleSearch.trim()
@@ -297,7 +323,7 @@ export default function AttachEquipmentToVehicleModal({
 		}, 300)
 
 		return () => clearTimeout(timeout)
-	}, [isOpen, vehicleSearch, vehicleLocked])
+	}, [isOpen, vehicleSearch, vehicleLocked, canAttachDirectVehicleEquipment])
 
 	const handleSelectWarehouseItem = item => {
 		setSelectedWarehouseItem(item)
@@ -341,6 +367,11 @@ export default function AttachEquipmentToVehicleModal({
 
 	const handleSubmit = async e => {
 		e.preventDefault()
+
+		if (!canAttachDirectVehicleEquipment) {
+			alert('Недостаточно прав для прямой привязки оборудования к автомобилю')
+			return
+		}
 
 		if (!selectedVehicle?.id) {
 			alert('Выберите автомобиль')
@@ -403,6 +434,43 @@ export default function AttachEquipmentToVehicleModal({
 	}
 
 	if (!isOpen) return null
+
+	if (!canAttachDirectVehicleEquipment) {
+		return (
+			<div className='modal-overlay open' onClick={onClose}>
+				<div
+					className='modal-window attach-equipment-modal'
+					onClick={e => e.stopPropagation()}
+				>
+					<div className='modal-header'>
+						<span className='modal-title'>Привязать оборудование к авто</span>
+
+						<button className='modal-close' type='button' onClick={onClose}>
+							&times;
+						</button>
+					</div>
+
+					<div className='attach-equipment-body'>
+						<div className='attach-warning-box'>
+							Недостаточно прав для прямой привязки оборудования к автомобилю.
+							Нужен доступ “Управление оборудованием авто” или управление
+							складом.
+						</div>
+					</div>
+
+					<div className='modal-footer warehouse-modal-footer'>
+						<button
+							className='modal-cancel-btn'
+							type='button'
+							onClick={onClose}
+						>
+							Закрыть
+						</button>
+					</div>
+				</div>
+			</div>
+		)
+	}
 
 	return (
 		<div className='modal-overlay open' onClick={onClose}>
@@ -670,8 +738,9 @@ export default function AttachEquipmentToVehicleModal({
 							type='submit'
 							disabled={
 								submitLoading ||
+								!canAttachDirectVehicleEquipment ||
 								!selectedVehicle?.id ||
-								!selectedWarehouseItem?.id
+								!(selectedWarehouseItem?.id || initialWarehouseItemId)
 							}
 						>
 							{submitLoading ? 'Привязка...' : 'Привязать к авто'}

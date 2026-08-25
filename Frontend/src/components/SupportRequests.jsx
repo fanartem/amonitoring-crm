@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 import '../styles/Requests.css'
 
 const getTokenPayload = () => {
@@ -22,13 +23,30 @@ const getTokenPayload = () => {
 	}
 }
 
-const getUserRole = () => {
-	return String(getTokenPayload()?.role || '').toUpperCase()
+const normalizeUserId = value => {
+	const parsed = Number(value)
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+const getCurrentUserSnapshot = () => {
+	const tokenPayload = getTokenPayload()
+	const storedUser = getStoredUser()
+
+	return {
+		...tokenPayload,
+		...storedUser,
+		role: storedUser?.role || tokenPayload?.role,
+		id:
+			storedUser?.id ??
+			storedUser?.user_id ??
+			tokenPayload?.id ??
+			tokenPayload?.sub,
+	}
 }
 
 const getCurrentUserId = () => {
-	const payload = getTokenPayload()
-	return Number(payload.id || payload.sub || null)
+	const user = getCurrentUserSnapshot()
+	return normalizeUserId(user?.id)
 }
 
 const SUPPORT_VISIBLE_ROLES = [
@@ -42,6 +60,45 @@ const SUPPORT_VISIBLE_ROLES = [
 
 const SUPPORT_EDIT_ROLES = ['ADMIN', 'ROP', 'TECH_SUPPORT']
 const SUPPORT_DELETE_ROLES = ['ADMIN', 'ROP']
+
+const SUPPORT_VIEW_PERMISSION_CODES = [
+	'support_requests.view',
+	'support_requests.manage',
+]
+
+const SUPPORT_CREATE_PERMISSION_CODES = [
+	'support_requests.create',
+	'support_requests.manage',
+]
+
+const SUPPORT_EDIT_PERMISSION_CODES = [
+	'support_requests.edit',
+	'support_requests.manage',
+]
+
+const SUPPORT_ASSIGN_PERMISSION_CODES = [
+	'support_requests.assign',
+	'support_requests.manage',
+]
+
+const SUPPORT_STATUS_PERMISSION_CODES = [
+	'support_requests.status.manage',
+	'support_requests.change_status',
+	'support_requests.manage',
+]
+
+const SUPPORT_COMMENT_PERMISSION_CODES = [
+	'support_requests.comment',
+	'support_requests.manage',
+]
+
+const SUPPORT_DELETE_PERMISSION_CODES = [
+	'support_requests.delete',
+	'support_requests.manage',
+]
+
+const canUseSupportPermission = (user, permissionCodes, legacyRoles = []) =>
+	hasAnyPermission(user, permissionCodes) || hasLegacyRole(user, legacyRoles)
 
 const statusLabels = {
 	NEW: 'Новая',
@@ -318,6 +375,7 @@ function SupportRequestCreateModal({
 	onCreated,
 	clients,
 	assignees,
+	canAssign = false,
 }) {
 	const [clientVehicles, setClientVehicles] = useState([])
 	const [formData, setFormData] = useState({
@@ -460,7 +518,10 @@ function SupportRequestCreateModal({
 				contact_phone: formData.contact_phone.trim(),
 				problem_description: formData.problem_description.trim(),
 				priority: formData.priority,
-				assigned_to: formData.assigned_to ? Number(formData.assigned_to) : null,
+				assigned_to:
+					canAssign && formData.assigned_to
+						? Number(formData.assigned_to)
+						: null,
 			}
 
 			const res = await fetch(`${API_BASE_URL}/support-requests`, {
@@ -623,28 +684,30 @@ function SupportRequestCreateModal({
 								</select>
 							</label>
 
-							<label className='support-field support-field-full'>
-								<span className='support-label'>Исполнитель</span>
+							{canAssign && (
+								<label className='support-field support-field-full'>
+									<span className='support-label'>Исполнитель</span>
 
-								<select
-									className='support-input'
-									value={formData.assigned_to}
-									onChange={e =>
-										setFormData(prev => ({
-											...prev,
-											assigned_to: e.target.value,
-										}))
-									}
-								>
-									<option value=''>Не назначен</option>
+									<select
+										className='support-input'
+										value={formData.assigned_to}
+										onChange={e =>
+											setFormData(prev => ({
+												...prev,
+												assigned_to: e.target.value,
+											}))
+										}
+									>
+										<option value=''>Не назначен</option>
 
-									{assignees.map(user => (
-										<option key={user.id} value={user.id}>
-											{user.name} · {roleLabels[user.role] || user.role}
-										</option>
-									))}
-								</select>
-							</label>
+										{assignees.map(user => (
+											<option key={user.id} value={user.id}>
+												{user.name} · {roleLabels[user.role] || user.role}
+											</option>
+										))}
+									</select>
+								</label>
+							)}
 
 							<label className='support-field support-field-full'>
 								<span className='support-label required'>
@@ -693,6 +756,12 @@ function SupportRequestDetailModal({
 	supportRequestId,
 	onUpdated,
 	assignees,
+	canEditSupportRequest = false,
+	canAssignSupportRequest = false,
+	canDeleteSupportRequest = false,
+	canCommentSupportRequest = false,
+	canChangeStatusSupportRequest = false,
+	currentUserId = null,
 }) {
 	const [activeTab, setActiveTab] = useState('info')
 	const [item, setItem] = useState(null)
@@ -707,13 +776,12 @@ function SupportRequestDetailModal({
 		priority: 'NORMAL',
 	})
 
-	const userRole = getUserRole()
-	const currentUserId = getCurrentUserId()
-
-	const canEdit = SUPPORT_EDIT_ROLES.includes(userRole)
-	const canDelete = SUPPORT_DELETE_ROLES.includes(userRole)
+	const canEdit = Boolean(canEditSupportRequest)
+	const canAssign = Boolean(canAssignSupportRequest)
+	const canDelete = Boolean(canDeleteSupportRequest)
+	const canComment = Boolean(canCommentSupportRequest)
 	const canChangeStatus =
-		SUPPORT_EDIT_ROLES.includes(userRole) ||
+		Boolean(canChangeStatusSupportRequest) ||
 		Number(item?.assigned_to) === Number(currentUserId)
 
 	useEffect(() => {
@@ -803,6 +871,8 @@ function SupportRequestDetailModal({
 	}
 
 	const handleAssignedChange = async e => {
+		if (!canAssign) return
+
 		const assignedTo = e.target.value ? Number(e.target.value) : null
 
 		try {
@@ -836,6 +906,7 @@ function SupportRequestDetailModal({
 	}
 
 	const handleAddComment = async () => {
+		if (!canComment) return
 		if (!newComment.trim()) return
 
 		setCommentLoading(true)
@@ -1194,22 +1265,28 @@ function SupportRequestDetailModal({
 										)}
 									</div>
 
-									<div className='comment-input-area'>
-										<textarea
-											value={newComment}
-											onChange={e => setNewComment(e.target.value)}
-											placeholder='Напишите комментарий...'
-										/>
+									{canComment ? (
+										<div className='comment-input-area'>
+											<textarea
+												value={newComment}
+												onChange={e => setNewComment(e.target.value)}
+												placeholder='Напишите комментарий...'
+											/>
 
-										<button
-											type='button'
-											className='btn-green'
-											onClick={handleAddComment}
-											disabled={commentLoading}
-										>
-											{commentLoading ? 'Отправка...' : 'Отправить'}
-										</button>
-									</div>
+											<button
+												type='button'
+												className='btn-green'
+												onClick={handleAddComment}
+												disabled={commentLoading}
+											>
+												{commentLoading ? 'Отправка...' : 'Отправить'}
+											</button>
+										</div>
+									) : (
+										<div className='empty-state'>
+											Недостаточно прав для комментариев
+										</div>
+									)}
 								</div>
 							)}
 
@@ -1261,7 +1338,7 @@ function SupportRequestDetailModal({
 							</select>
 						</div>
 
-						{canEdit && (
+						{canAssign && (
 							<div className='footer-group'>
 								<span>Исполнитель:</span>
 
@@ -1307,20 +1384,52 @@ export default function SupportRequests() {
 		only_my: false,
 	})
 
-	const userRole = getUserRole()
-	const currentUserId = getCurrentUserId()
+	const currentUser = getCurrentUserSnapshot()
+	const currentUserId = normalizeUserId(currentUser?.id) ?? getCurrentUserId()
 
-	const canView = SUPPORT_VISIBLE_ROLES.includes(userRole)
-	const canCreate = canView
-	const canDelete = SUPPORT_DELETE_ROLES.includes(userRole)
+	const canView = canUseSupportPermission(
+		currentUser,
+		SUPPORT_VIEW_PERMISSION_CODES,
+		SUPPORT_VISIBLE_ROLES,
+	)
+	const canCreate = canUseSupportPermission(
+		currentUser,
+		SUPPORT_CREATE_PERMISSION_CODES,
+		SUPPORT_VISIBLE_ROLES,
+	)
+	const canEdit = canUseSupportPermission(
+		currentUser,
+		SUPPORT_EDIT_PERMISSION_CODES,
+		SUPPORT_EDIT_ROLES,
+	)
+	const canAssign = canUseSupportPermission(
+		currentUser,
+		SUPPORT_ASSIGN_PERMISSION_CODES,
+		SUPPORT_EDIT_ROLES,
+	)
+	const canChangeStatus = canUseSupportPermission(
+		currentUser,
+		SUPPORT_STATUS_PERMISSION_CODES,
+		SUPPORT_EDIT_ROLES,
+	)
+	const canComment = canUseSupportPermission(
+		currentUser,
+		SUPPORT_COMMENT_PERMISSION_CODES,
+		SUPPORT_VISIBLE_ROLES,
+	)
+	const canDelete = canUseSupportPermission(
+		currentUser,
+		SUPPORT_DELETE_PERMISSION_CODES,
+		SUPPORT_DELETE_ROLES,
+	)
 
 	useEffect(() => {
 		if (!canView) return
 
 		fetchSupportRequests()
-		fetchClients()
-		fetchAssignees()
-	}, [canView])
+		if (canCreate) fetchClients()
+		if (canAssign) fetchAssignees()
+	}, [canView, canCreate, canAssign])
 
 	useEffect(() => {
 		if (!canView) return
@@ -1520,7 +1629,7 @@ export default function SupportRequests() {
 		return (
 			<div className='requests-page-container'>
 				<div className='validation-banner visible'>
-					Раздел техподдержки недоступен для монтажников.
+					Недостаточно прав для просмотра раздела техподдержки.
 				</div>
 			</div>
 		)
@@ -1812,6 +1921,7 @@ export default function SupportRequests() {
 				}}
 				clients={clients}
 				assignees={assignees}
+				canAssign={canAssign}
 			/>
 
 			<SupportRequestDetailModal
@@ -1820,6 +1930,12 @@ export default function SupportRequests() {
 				onClose={() => setSelectedSupportRequestId(null)}
 				onUpdated={() => fetchSupportRequests()}
 				assignees={assignees}
+				canEditSupportRequest={canEdit}
+				canAssignSupportRequest={canAssign}
+				canDeleteSupportRequest={canDelete}
+				canCommentSupportRequest={canComment}
+				canChangeStatusSupportRequest={canChangeStatus}
+				currentUserId={currentUserId}
 			/>
 		</div>
 	)

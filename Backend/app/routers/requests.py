@@ -19,6 +19,9 @@ from app.permissions import (
     SENIOR_TECHNICIAN,
     TECHNICIAN,
     WAREHOUSE_MANAGER,
+    has_any_permission,
+    is_super_admin,
+    can_view_all_requests,
     can_create_request,
     can_edit_all_requests,
     can_edit_payment_info,
@@ -81,6 +84,198 @@ VISIT_MINIMUM_LEAD_MINUTES = {
     VISIT_PRICE_CODE_OUTSIDE_CITY: 120,
     VISIT_PRICE_CODE_BUSINESS_TRIP: 300,
 }
+
+REQUEST_VIEW_ALL_PERMISSION_CODES = [
+    "requests.view_all",
+    "requests.manage",
+]
+
+REQUEST_VIEW_OWN_PERMISSION_CODES = [
+    "requests.view_own",
+    "requests.view_responsible",
+]
+
+REQUEST_VIEW_ASSIGNED_PERMISSION_CODES = [
+    "requests.view_assigned",
+    "requests.view_city_assigned",
+]
+
+REQUEST_EDIT_OWN_PERMISSION_CODES = [
+    "requests.edit_own",
+    "requests.edit_responsible",
+]
+
+REQUEST_SCHEDULE_BYPASS_PERMISSION_CODES = [
+    "requests.schedule.bypass",
+    "requests.schedule.bypass_limits",
+    "requests.manage",
+]
+
+REQUEST_SCHEDULE_APPROVAL_DECIDE_PERMISSION_CODES = [
+    "requests.schedule_approval.decide",
+    "requests.schedule.approve",
+    "requests.manage",
+]
+
+REQUEST_STATUS_OVERRIDE_PERMISSION_CODES = [
+    "requests.status.override",
+    "requests.status.override_transitions",
+    "requests.manage",
+]
+
+REQUEST_RESTORE_PERMISSION_CODES = [
+    "requests.restore",
+    "trash.manage",
+    "requests.manage",
+]
+
+REQUEST_TRASH_VIEW_PERMISSION_CODES = [
+    "trash.view",
+    "trash.manage",
+    "requests.restore",
+    "requests.delete_any",
+    "requests.manage",
+]
+
+REQUEST_SELF_ACCEPT_PERMISSION_CODES = [
+    "requests.self_accept",
+    "requests.accept_assigned",
+]
+
+REQUEST_COMPLETE_ANY_PERMISSION_CODES = [
+    "requests.complete_any",
+    "requests.manage",
+    "requests.status.manage",
+]
+
+REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES = [
+    "requests.complete_assigned",
+    "requests.self_complete",
+    "requests.status.manage",
+]
+
+
+def to_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+
+    if value is None:
+        return False
+
+    if isinstance(value, (int, float)):
+        return value != 0
+
+    return str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
+
+
+def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
+    if not current_user:
+        return False
+
+    return current_user.get("role") in roles
+
+
+def user_has_any_permission(current_user: dict | None, permission_codes: list[str]) -> bool:
+    return is_super_admin(current_user) or has_any_permission(current_user, permission_codes)
+
+
+def user_can_bypass_schedule_rules(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, REQUEST_SCHEDULE_BYPASS_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        [ADMIN],
+    )
+
+
+def user_can_decide_schedule_approval(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, REQUEST_SCHEDULE_APPROVAL_DECIDE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        [ADMIN, ROP],
+    )
+
+
+def user_can_override_request_status_transitions(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, REQUEST_STATUS_OVERRIDE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        [ADMIN, ROP],
+    )
+
+
+def user_can_view_deleted_requests(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, REQUEST_TRASH_VIEW_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        [ADMIN, ROP],
+    )
+
+
+def user_can_restore_deleted_requests(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, REQUEST_RESTORE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        [ADMIN, ROP],
+    )
+
+
+def user_can_view_all_request_rows(current_user: dict) -> bool:
+    return (
+        can_view_all_requests(current_user)
+        or user_has_any_permission(current_user, REQUEST_VIEW_ALL_PERMISSION_CODES)
+        or has_legacy_role(current_user, [ADMIN, ROP, ACCOUNTANT, WAREHOUSE_MANAGER, SENIOR_TECHNICIAN, TECH_SUPPORT])
+    )
+
+
+def user_can_view_own_or_responsible_requests(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, REQUEST_VIEW_OWN_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        [MANAGER],
+    )
+
+
+def user_can_view_assigned_requests(current_user: dict) -> bool:
+    return (
+        to_bool(current_user.get("can_be_request_executor"))
+        or user_has_any_permission(current_user, REQUEST_VIEW_ASSIGNED_PERMISSION_CODES)
+        or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
+    )
+
+
+def user_can_edit_own_or_responsible_request(current_user: dict, request: dict) -> bool:
+    if not user_has_any_permission(current_user, REQUEST_EDIT_OWN_PERMISSION_CODES) and not has_legacy_role(current_user, [MANAGER]):
+        return False
+
+    return is_client_owned_by_user(
+        {
+            "created_by": request.get("created_by"),
+            "responsible_manager_id": request.get("responsible_manager_id"),
+        },
+        current_user,
+    )
+
+
+def user_can_self_accept_requests(current_user: dict) -> bool:
+    return (
+        to_bool(current_user.get("can_be_request_executor"))
+        or user_has_any_permission(current_user, REQUEST_SELF_ACCEPT_PERMISSION_CODES)
+        or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
+    )
+
+
+def user_can_complete_any_request(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, REQUEST_COMPLETE_ANY_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        [ADMIN, ROP, SENIOR_TECHNICIAN],
+    )
+
+
+def user_can_complete_assigned_request(current_user: dict) -> bool:
+    return (
+        to_bool(current_user.get("can_be_request_executor"))
+        or user_has_any_permission(current_user, REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES)
+        or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
+    )
+
+
+def user_is_limited_executor(current_user: dict) -> bool:
+    return user_can_view_assigned_requests(current_user) and not user_can_view_all_request_rows(current_user)
+
 
 def almaty_now():
     return datetime.now(ALMATY_TZ).replace(tzinfo=None)
@@ -216,9 +411,10 @@ def validate_request_schedule(
 
     normalized_code = resolve_visit_price_code(visit_type, visit_price_code)
 
-    # ADMIN может назначать заявки в прошлом и обходить минимальный запас.
-    # Получасовой шаг и диапазон 08:00–20:00 обязательны и для ADMIN.
-    if current_user.get("role") == ADMIN:
+    # Пользователь с правом обхода может назначать заявки в прошлом
+    # и обходить минимальный запас. Получасовой шаг и диапазон
+    # 08:00–20:00 обязательны для всех.
+    if user_can_bypass_schedule_rules(current_user):
         return
 
     now = almaty_now().replace(second=0, microsecond=0)
@@ -297,8 +493,8 @@ def build_schedule_approval_data(
             "comment": None,
         }
 
-    # Админ могут сразу создавать/изменять на нерабочее время
-    if role in [ADMIN, ROP]:
+    # Пользователь с правом согласования может сразу создавать/изменять на нерабочее время
+    if user_can_decide_schedule_approval(current_user):
         return {
             "status": SCHEDULE_APPROVAL_APPROVED,
             "reason": reason,
@@ -385,10 +581,12 @@ def attach_request_permissions(request: dict, current_user: dict) -> dict:
 
     request["can_edit"] = (
         can_edit_all_requests(current_user)
-        or (role == MANAGER and (is_creator or is_responsible_manager))
+        or user_can_edit_own_or_responsible_request(current_user, request)
     )
 
     request["can_change_status"] = can_change_request_status(current_user)
+    request["can_manage_executors"] = can_manage_request_executors(current_user)
+    request["can_decide_schedule_approval"] = user_can_decide_schedule_approval(current_user)
 
     request["can_delete"] = can_delete_any_request(current_user)
 
@@ -398,6 +596,7 @@ def attach_request_permissions(request: dict, current_user: dict) -> dict:
         request["can_delete_own_with_time_limit"] = False
 
     request["can_view_prices"] = can_view_price_fields(current_user)
+    request["can_edit_payment"] = can_edit_payment_info(current_user)
 
     return request
 
@@ -414,48 +613,51 @@ def user_can_access_request(
     current_user: dict,
     user_city: str | None = None
 ) -> bool:
-        role = current_user.get("role")
-        user_id = int(current_user["id"])
+    role = current_user.get("role")
+    user_id = int(current_user["id"])
 
-        if role in [ADMIN, ROP, ACCOUNTANT, WAREHOUSE_MANAGER]:
+    if user_can_view_all_request_rows(current_user):
+        return True
+
+    if user_can_view_own_or_responsible_requests(current_user):
+        created_by = request.get("created_by")
+        responsible_manager_id = request.get("responsible_manager_id")
+
+        if (
+            created_by is not None
+            and int(created_by) == user_id
+        ) or (
+            responsible_manager_id is not None
+            and int(responsible_manager_id) == user_id
+        ):
             return True
 
-        if role == SENIOR_TECHNICIAN:
+    if user_can_view_assigned_requests(current_user):
+        assigned_to = request.get("assigned_to")
+        current_user_is_executor = bool(request.get("current_user_is_executor"))
+
+        is_assigned_to_user = (
+            assigned_to is not None
+            and int(assigned_to) == user_id
+        ) or current_user_is_executor
+
+        # Для ограниченных исполнителей сохраняем старую бизнес-логику:
+        # обычный исполнитель видит свободные заявки только при оплате/постоплате
+        # и только в своём городе. Назначенные ему заявки доступны всегда.
+        if is_assigned_to_user:
             return True
 
-        if role == TECH_SUPPORT:
-            return True
+        if not request_is_visible_to_technician_by_payment(request):
+            return False
 
-        if role == MANAGER:
-            created_by = request.get("created_by")
-            responsible_manager_id = request.get("responsible_manager_id")
+        executor_city = user_city or current_user.get("city")
 
-            return (
-                created_by is not None and int(created_by) == user_id
-            ) or (
-                responsible_manager_id is not None
-                and int(responsible_manager_id) == user_id
-            )
+        if normalize_city(request.get("city")) != normalize_city(executor_city):
+            return False
 
-        if role == TECHNICIAN:
-            if not request_is_visible_to_technician_by_payment(request):
-                return False
+        return assigned_to is None
 
-            technician_city = user_city or current_user.get("city")
-
-            if normalize_city(request.get("city")) != normalize_city(technician_city):
-                return False
-
-            assigned_to = request.get("assigned_to")
-            current_user_is_executor = bool(request.get("current_user_is_executor"))
-
-            return (
-                assigned_to is None
-                or int(assigned_to) == user_id
-                or current_user_is_executor
-            )
-
-        return False
+    return False
 
 def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
     """
@@ -661,15 +863,17 @@ def validate_request_executor_ids(cursor, executor_ids: list[int]) -> list[dict]
     cursor.execute(
         f"""
         SELECT
-            id,
-            name,
-            role,
-            city,
-            is_approved,
-            is_active,
-            deleted_at
-        FROM users
-        WHERE id IN ({placeholders})
+            u.id,
+            u.name,
+            u.role,
+            u.city,
+            u.is_approved,
+            u.is_active,
+            u.deleted_at,
+            COALESCE(r.can_be_request_executor, 0) AS can_be_request_executor
+        FROM users u
+        LEFT JOIN roles r ON r.code = u.role
+        WHERE u.id IN ({placeholders})
         """,
         tuple(unique_executor_ids)
     )
@@ -686,10 +890,10 @@ def validate_request_executor_ids(cursor, executor_ids: list[int]) -> list[dict]
                 detail=f"Пользователь {executor_id} не найден"
             )
 
-        if user["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN]:
+        if user["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN] and not to_bool(user.get("can_be_request_executor")):
             raise HTTPException(
                 status_code=400,
-                detail=f"Пользователь {user['name']} не является монтажником"
+                detail=f"Пользователь {user['name']} не является исполнителем заявки"
             )
 
         if not user["is_approved"]:
@@ -1248,7 +1452,10 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
 
             role = current_user["role"]
 
-            if role == MANAGER:
+            if user_can_view_all_request_rows(current_user):
+                pass
+
+            elif user_can_view_own_or_responsible_requests(current_user):
                 conditions.append(
                     """
                     (
@@ -1259,10 +1466,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 )
                 values.extend([current_user["id"], current_user["id"]])
 
-            elif role in [TECH_SUPPORT, WAREHOUSE_MANAGER]:
-                pass
-
-            elif role == TECHNICIAN:
+            elif user_can_view_assigned_requests(current_user):
                 user_city = get_current_user_city(cursor, current_user)
 
                 if not user_city:
@@ -1273,9 +1477,17 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     (
                         r.is_paid = 1
                         OR c.payment_type = 'POSTPAYMENT'
+                        OR r.assigned_to = %s
+                        OR EXISTS (
+                            SELECT 1
+                            FROM request_executors re_paid_scope
+                            WHERE re_paid_scope.request_id = r.id
+                              AND re_paid_scope.user_id = %s
+                        )
                     )
                     """
                 )
+                values.extend([current_user["id"], current_user["id"]])
                 conditions.append("r.city = %s")
                 values.append(user_city)
                 conditions.append(
@@ -1293,9 +1505,6 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     """
                 )
                 values.extend([current_user["id"], current_user["id"]])
-
-            elif role in [SENIOR_TECHNICIAN, ADMIN, ROP, ACCOUNTANT]:
-                pass
 
             else:
                 return []
@@ -1367,11 +1576,11 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
 
 @router.get("/deleted")
 def get_deleted_requests(current_user: dict = Depends(get_current_user)):
-    """Список удалённых заявок. Только ADMIN."""
-    if current_user["role"] not in [ADMIN, ROP]:
+    """Список удалённых заявок."""
+    if not user_can_view_deleted_requests(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Только Админ или РОП может просматривать корзину заявок"
+            detail="Недостаточно прав для просмотра корзины заявок"
         )
 
     connection = get_connection()
@@ -1475,7 +1684,7 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
             
             user_city = None
 
-            if current_user["role"] == TECHNICIAN:
+            if user_is_limited_executor(current_user):
                 user_city = get_current_user_city(cursor, current_user)
 
             if not user_can_access_request(request, current_user, user_city):
@@ -1712,7 +1921,7 @@ def get_request_executors_endpoint(
 
             user_city = None
 
-            if current_user["role"] == TECHNICIAN:
+            if user_is_limited_executor(current_user):
                 user_city = get_current_user_city(cursor, current_user)
 
             if not user_can_access_request(request, current_user, user_city):
@@ -1792,16 +2001,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
             can_edit_this_request = (
                 can_edit_all_requests(current_user)
-                or (
-                    current_user["role"] == MANAGER
-                    and (
-                        (req.get("created_by") is not None and int(req["created_by"]) == int(current_user["id"]))
-                        or (
-                            req.get("responsible_manager_id") is not None
-                            and int(req["responsible_manager_id"]) == int(current_user["id"])
-                        )
-                    )
-                )
+                or user_can_edit_own_or_responsible_request(current_user, req)
                 or can_edit_payment_info(current_user)
             )
 
@@ -2005,7 +2205,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
             # payment
             if data.is_paid is not None:
-                if current_user["role"] not in [ADMIN, ROP, ACCOUNTANT]:
+                if not can_edit_payment_info(current_user):
                     raise HTTPException(
                         status_code=403,
                         detail="Недостаточно прав на изменение оплаты заявки"
@@ -2049,7 +2249,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         detail="Завершение заявки выполняется только через /requests/{id}/complete"
                     )
 
-                if current_user["role"] not in [ADMIN, ROP]:
+                if not user_can_override_request_status_transitions(current_user):
                     allowed = ALLOWED_TRANSITIONS.get(req["status"], [])
 
                     if data.status not in allowed:
@@ -2103,10 +2303,10 @@ def decide_request_schedule_approval(
     data: RequestScheduleApproval,
     current_user: dict = Depends(get_current_user)
 ):
-    if current_user["role"] not in [ADMIN, ROP]:
+    if not user_can_decide_schedule_approval(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Только Админ или РОП может согласовывать нерабочее время"
+            detail="Недостаточно прав для согласования нерабочего времени"
         )
 
     if data.status not in [SCHEDULE_APPROVAL_APPROVED, SCHEDULE_APPROVAL_REJECTED]:
@@ -2356,9 +2556,9 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
 
 @router.patch("/{request_id}/restore")
 def restore_request(request_id: int, current_user: dict = Depends(get_current_user)):
-    """Восстановление заявки из корзины. Только ADMIN или ROP."""
-    if current_user["role"] not in [ADMIN, ROP]:
-        raise HTTPException(status_code=403, detail="Только Админ или РОП может восстанавливать заявки")
+    """Восстановление заявки из корзины."""
+    if not user_can_restore_deleted_requests(current_user):
+        raise HTTPException(status_code=403, detail="Недостаточно прав для восстановления заявок")
 
     connection = get_connection()
     try:
@@ -2422,9 +2622,8 @@ def restore_request(request_id: int, current_user: dict = Depends(get_current_us
 
 @router.post("/{request_id}/assign")
 def assign_request(request_id: int, data: AssignRequest, current_user: dict = Depends(get_current_user)):
-    # Только Админ и Старший монтажник могут назначать/снимать монтажника
-    if current_user["role"] not in [ADMIN, ROP, SENIOR_TECHNICIAN]:
-        raise HTTPException(status_code=403, detail="Только Старший монтажник, РОП или Админ могут назначать заявки")
+    if not can_manage_request_executors(current_user):
+        raise HTTPException(status_code=403, detail="Недостаточно прав для назначения исполнителей")
     
     connection = get_connection()
     try:
@@ -2509,18 +2708,21 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
             # Если technician_id НЕ None — назначаем монтажника
             cursor.execute(
                 """
-                SELECT role
-                FROM users
-                WHERE id = %s
+                SELECT
+                    u.role,
+                    COALESCE(r.can_be_request_executor, 0) AS can_be_request_executor
+                FROM users u
+                LEFT JOIN roles r ON r.code = u.role
+                WHERE u.id = %s
                 """,
                 (data.technician_id,)
             )
             tech = cursor.fetchone()
 
-            if not tech or tech["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN]:
+            if not tech or (tech["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN] and not to_bool(tech.get("can_be_request_executor"))):
                 raise HTTPException(
                     status_code=400,
-                    detail="Назначить можно только монтажника или старшего монтажника"
+                    detail="Назначить можно только пользователя, который может быть исполнителем заявки"
                 )
 
             # Назначать нового монтажника можно только на NEW
@@ -2649,21 +2851,20 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                     detail="Нельзя завершить заявку без назначенного исполнителя"
                 )
 
-            role = current_user["role"]
+            is_main_executor = (
+                req["assigned_to"] is not None
+                and int(req["assigned_to"]) == int(current_user["id"])
+            )
 
-            if role == "TECHNICIAN":
-                is_main_executor = (
-                    req["assigned_to"] is not None
-                    and int(req["assigned_to"]) == int(current_user["id"])
-                )
-
+            if user_can_complete_any_request(current_user):
+                pass
+            elif user_can_complete_assigned_request(current_user):
                 if not is_main_executor and not current_user_is_executor:
                     raise HTTPException(
                         status_code=403,
-                        detail="Обычный монтажник может завершить только свою заявку"
+                        detail="Исполнитель может завершить только свою заявку"
                     )
-
-            elif role not in [ADMIN, ROP, SENIOR_TECHNICIAN]:
+            else:
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для завершения заявки"
@@ -3190,7 +3391,7 @@ def get_requests_calendar(
         with connection.cursor() as cursor:
             user_city = None
 
-            if current_user["role"] == TECHNICIAN:
+            if user_is_limited_executor(current_user):
                 user_city = get_current_user_city(cursor, current_user)
 
             cursor.execute(
@@ -3314,11 +3515,9 @@ def get_requests_calendar(
                     user_city,
                 )
 
-                # Обычный монтажник в календаре видит только заявки,
+                # Ограниченный исполнитель в календаре видит только заявки,
                 # детали которых ему доступны.
-                # Старшие монтажники не попадают сюда, потому что роль другая:
-                # SENIOR_TECHNICIAN.
-                if current_user["role"] == TECHNICIAN and not can_open_details:
+                if user_is_limited_executor(current_user) and not can_open_details:
                     continue
 
                 duration_minutes = int(row.get("scheduled_duration_minutes") or 60)
@@ -3448,7 +3647,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
             
             user_city = None
 
-            if current_user["role"] == TECHNICIAN:
+            if user_is_limited_executor(current_user):
                 user_city = get_current_user_city(cursor, current_user)
 
             if not user_can_access_request(request_data, current_user, user_city):
@@ -3572,7 +3771,7 @@ def get_comments(request_id: int, current_user: dict = Depends(get_current_user)
 
             user_city = None
 
-            if current_user["role"] == TECHNICIAN:
+            if user_is_limited_executor(current_user):
                 user_city = get_current_user_city(cursor, current_user)
 
             if not user_can_access_request(request, current_user, user_city):
@@ -3603,10 +3802,10 @@ def accept_request(
     TECHNICIAN может принять только оплаченную свободную заявку своего города.
     SENIOR_TECHNICIAN может принять свободную заявку без ограничения по городу.
     """
-    if current_user["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN]:
+    if not user_can_self_accept_requests(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Самостоятельно принять заявку могут только монтажники"
+            detail="Недостаточно прав для самостоятельного принятия заявки"
         )
 
     connection = get_connection()
@@ -3625,7 +3824,7 @@ def accept_request(
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
 
-            if current_user["role"] == TECHNICIAN and not user["city"]:
+            if user_is_limited_executor(current_user) and not user["city"]:
                 raise HTTPException(
                     status_code=400,
                     detail="У пользователя не указан город"
@@ -3672,7 +3871,7 @@ def accept_request(
                 )
 
             if (
-                current_user["role"] == TECHNICIAN
+                user_is_limited_executor(current_user)
                 and not request_is_visible_to_technician_by_payment(request)
             ):
                 raise HTTPException(
@@ -3680,7 +3879,7 @@ def accept_request(
                     detail="Обычный монтажник может принять только оплаченную заявку или заявку клиента с постоплатой"
                 )
 
-            if current_user["role"] == TECHNICIAN and request["city"] != user["city"]:
+            if user_is_limited_executor(current_user) and request["city"] != user["city"]:
                 raise HTTPException(
                     status_code=403,
                     detail="Нельзя принять заявку другого города"

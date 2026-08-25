@@ -5,26 +5,7 @@ import '../styles/Requests.css'
 import RequestEquipmentPanel from './RequestEquipmentPanel'
 import AttachmentsPanel from './AttachmentsPanel'
 import { getWorkTypeLabel } from '../utils/workTypes'
-
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(function (c) {
-					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-				})
-				.join(''),
-		)
-		return JSON.parse(jsonPayload).role
-	} catch (error) {
-		return null
-	}
-}
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 
 const mapTypeToUI = dbType => {
 	if (!dbType) return 'Физ. лицо'
@@ -122,16 +103,49 @@ export default function RequestDetailModal({
 	const [scheduleApprovalComment, setScheduleApprovalComment] = useState('')
 	const [scheduleApprovalLoading, setScheduleApprovalLoading] = useState(false)
 
-	const userRole = getUserRole()
+	const currentUser = getStoredUser()
+	const userRole = currentUser.role || null
+
+	/*
+		Новая логика:
+		- основной источник — permissions из localStorage.user_data.permissions;
+		- Супер-Админ получает true внутри hasAnyPermission;
+		- legacy role fallback временно оставляем для старых ролей.
+	*/
 
 	const canViewRequestPrice =
-		userRole !== 'TECHNICIAN' && userRole !== 'SENIOR_TECHNICIAN'
+		hasAnyPermission(currentUser, [
+			'prices.view',
+			'prices.manage',
+			'requests.price.view',
+			'requests.prices.view',
+			'requests.view_price',
+			'requests.view_prices',
+		]) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'ROP',
+			'MANAGER',
+			'TECH_SUPPORT',
+			'ACCOUNTANT',
+			'WAREHOUSE_MANAGER',
+		])
 
-	const canPayRequest = ['ADMIN', 'ROP', 'ACCOUNTANT'].includes(userRole)
+	const canPayRequest =
+		hasAnyPermission(currentUser, [
+			'requests.payment.manage',
+			'requests.pay',
+			'finance.manage',
+			'prices.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'ACCOUNTANT'])
 
-	const canAssignTechnician = ['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'].includes(
-		userRole,
-	)
+	const canAssignTechnician =
+		hasAnyPermission(currentUser, [
+			'requests.assign',
+			'requests.assign_executor',
+			'requests.executors.manage',
+			'requests.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'])
 
 	const canDeleteRequest =
 		Boolean(request?.can_delete) ||
@@ -141,11 +155,35 @@ export default function RequestDetailModal({
 
 	const canChangeRequestStatus = Boolean(request?.can_change_status)
 
-	const canManageEquipment = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
-
 	const isRemovalRequest = request?.work_type === 'REMOVAL'
 
-	const canDecideScheduleApproval = ['ADMIN'].includes(userRole)
+	const canViewEquipmentTab =
+		hasAnyPermission(currentUser, [
+			'requests.equipment.view',
+			'requests.equipment.manage',
+			'warehouse.view',
+			'warehouse.manage',
+			'warehouse.items.view',
+			'warehouse.items.manage',
+		]) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'ROP',
+			'MANAGER',
+			'ACCOUNTANT',
+			'WAREHOUSE_MANAGER',
+			'TECHNICIAN',
+			'SENIOR_TECHNICIAN',
+		])
+
+	const canUseEquipmentTab = canViewEquipmentTab && !isRemovalRequest
+
+	const canDecideScheduleApproval =
+		hasAnyPermission(currentUser, [
+			'requests.schedule_approval.decide',
+			'requests.schedule.approve',
+			'requests.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN'])
 
 	const isScheduleApprovalPending =
 		request?.schedule_approval_status === 'PENDING'
@@ -172,7 +210,7 @@ export default function RequestDetailModal({
 			fetchTechnicians()
 			fetchTechniciansLookup()
 		}
-	}, [isOpen, requestId, initialTab, userRole])
+	}, [isOpen, requestId, initialTab])
 
 	useEffect(() => {
 		if (request) {
@@ -200,13 +238,10 @@ export default function RequestDetailModal({
 	}, [])
 
 	useEffect(() => {
-		if (
-			activeTab === 'equipment' &&
-			(userRole === 'TECH_SUPPORT' || isRemovalRequest)
-		) {
+		if (activeTab === 'equipment' && !canUseEquipmentTab) {
 			setActiveTab('info')
 		}
-	}, [userRole, activeTab, isRemovalRequest])
+	}, [activeTab, canUseEquipmentTab])
 
 	const fetchRequestDetails = async () => {
 		setLoading(true)
@@ -589,46 +624,46 @@ export default function RequestDetailModal({
 			return `Отвязано оборудование: ${eq}`
 		}
 
-				if (h.action === 'REMOVAL_EQUIPMENT_DETACHED') {
-					const oldValue = String(h.old_value || '').trim()
-					const newValue = String(h.new_value || '').trim()
+		if (h.action === 'REMOVAL_EQUIPMENT_DETACHED') {
+			const oldValue = String(h.old_value || '').trim()
+			const newValue = String(h.new_value || '').trim()
 
-					let equipmentText = oldValue
-					let resultText = newValue
+			let equipmentText = oldValue
+			let resultText = newValue
 
-					// old_value сейчас приходит примерно так:
-					// "Teltonika FMC920 (IMEI: 123...), status=INSTALLED, condition=NEW"
-					equipmentText = equipmentText
-						.replace(/,\s*status=[^,]+/i, '')
-						.replace(/,\s*condition=[^,]+/i, '')
-						.trim()
+			// old_value сейчас приходит примерно так:
+			// "Teltonika FMC920 (IMEI: 123...), status=INSTALLED, condition=NEW"
+			equipmentText = equipmentText
+				.replace(/,\s*status=[^,]+/i, '')
+				.replace(/,\s*condition=[^,]+/i, '')
+				.trim()
 
-					// new_value сейчас приходит примерно так:
-					// "Снято с авто и возвращено на склад как БУ. Авто: Toyota Camry VIN: ..."
-					if (resultText.startsWith('Снято с авто')) {
-						resultText = resultText.replace(
-							'Снято с авто и возвращено на склад как БУ.',
-							'возвращено на склад как БУ.',
-						)
-					}
+			// new_value сейчас приходит примерно так:
+			// "Снято с авто и возвращено на склад как БУ. Авто: Toyota Camry VIN: ..."
+			if (resultText.startsWith('Снято с авто')) {
+				resultText = resultText.replace(
+					'Снято с авто и возвращено на склад как БУ.',
+					'возвращено на склад как БУ.',
+				)
+			}
 
-					if (equipmentText && resultText) {
-						return `Снято оборудование: ${equipmentText} — ${resultText}`
-					}
+			if (equipmentText && resultText) {
+				return `Снято оборудование: ${equipmentText} — ${resultText}`
+			}
 
-					return 'Оборудование снято с авто и возвращено на склад как БУ'
-				}
+			return 'Оборудование снято с авто и возвращено на склад как БУ'
+		}
 
-				if (h.action === 'REMOVAL_COMPLETED_EQUIPMENT_RESULT') {
-					return (
-						h.new_value ||
-						'Снятие завершено: оборудование возвращено на склад как БУ'
-					)
-				}
+		if (h.action === 'REMOVAL_COMPLETED_EQUIPMENT_RESULT') {
+			return (
+				h.new_value ||
+				'Снятие завершено: оборудование возвращено на склад как БУ'
+			)
+		}
 
-				if (h.action === 'REMOVAL_COMPLETED_MARKED_USED') {
-					return h.new_value || 'Оборудование помечено как БУ после снятия'
-				}
+		if (h.action === 'REMOVAL_COMPLETED_MARKED_USED') {
+			return h.new_value || 'Оборудование помечено как БУ после снятия'
+		}
 
 		if (h.action === 'CLIENT_CHANGED') return 'Изменен клиент заявки'
 		if (h.action === 'VEHICLE_CHANGED') return 'Изменен автомобиль заявки'
@@ -702,7 +737,7 @@ export default function RequestDetailModal({
 					>
 						История
 					</button>
-					{userRole !== 'TECH_SUPPORT' && !isRemovalRequest && (
+					{canUseEquipmentTab && (
 						<button
 							className={`custom-tab ${activeTab === 'equipment' ? 'active' : ''}`}
 							onClick={() => setActiveTab('equipment')}
@@ -1267,29 +1302,27 @@ export default function RequestDetailModal({
 									</div>
 								)}
 
-								{activeTab === 'equipment' &&
-									userRole !== 'TECH_SUPPORT' &&
-									!isRemovalRequest && (
-										<div className='tab-content'>
-											<RequestEquipmentPanel
-												requestId={requestId}
-												vehicles={request.vehicles || []}
-												requestCity={request.city || ''}
-												initialTechnicianId={
-													request.executors?.length
-														? request.executors[0].user_id
-														: request.assigned_to || ''
-												}
-												initialTechnicianName={
-													request.executors?.length
-														? request.executors[0].user_name || ''
-														: request.assigned_to
-															? getTechName(request.assigned_to)
-															: ''
-												}
-											/>
-										</div>
-									)}
+								{activeTab === 'equipment' && canUseEquipmentTab && (
+									<div className='tab-content'>
+										<RequestEquipmentPanel
+											requestId={requestId}
+											vehicles={request.vehicles || []}
+											requestCity={request.city || ''}
+											initialTechnicianId={
+												request.executors?.length
+													? request.executors[0].user_id
+													: request.assigned_to || ''
+											}
+											initialTechnicianName={
+												request.executors?.length
+													? request.executors[0].user_name || ''
+													: request.assigned_to
+														? getTechName(request.assigned_to)
+														: ''
+											}
+										/>
+									</div>
+								)}
 							</>
 						)
 					)}

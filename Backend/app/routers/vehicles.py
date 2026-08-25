@@ -3,7 +3,11 @@ from fastapi.responses import StreamingResponse
 from app.database import get_connection
 from app.schemas import VehicleCreate, VehicleUpdate, VehicleClientTransfer, VehicleDeleteRequest
 from app.security import get_current_user
-from app.permissions import can_create_request_for_client
+from app.permissions import (
+    can_create_request_for_client,
+    can_open_client_details,
+    has_any_permission,
+)
 
 import re
 from io import BytesIO
@@ -180,12 +184,255 @@ def get_client_display_name(client: dict) -> str:
         or f"ID клиента {client.get('id')}"
     )
 
-@router.post("")
-def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current_user)):
-    if current_user["role"] not in ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]:
+
+# ============================================================================
+# Permission-aware access helpers
+# ----------------------------------------------------------------------------
+# Старые роли оставляем как fallback, чтобы текущие сотрудники не потеряли доступ
+# после перехода на новую систему permissions.
+# ============================================================================
+
+VEHICLE_CREATE_PERMISSION_CODES = [
+    "vehicles.create",
+    "vehicles.manage",
+]
+
+VEHICLE_IMPORT_PERMISSION_CODES = [
+    "vehicles.import",
+    "vehicles.create",
+    "vehicles.manage",
+]
+
+VEHICLE_VIEW_PERMISSION_CODES = [
+    "vehicles.view",
+    "vehicles.view_all",
+    "vehicles.view_own",
+    "vehicles.manage",
+    "clients.view",
+    "clients.view_all",
+    "clients.view_own",
+    "clients.manage",
+]
+
+VEHICLE_VIEW_ALL_PERMISSION_CODES = [
+    "vehicles.view_all",
+    "vehicles.manage",
+    "clients.view_all",
+    "clients.manage",
+]
+
+VEHICLE_EDIT_PERMISSION_CODES = [
+    "vehicles.edit",
+    "vehicles.edit_all",
+    "vehicles.manage",
+]
+
+VEHICLE_EDIT_OWN_PERMISSION_CODES = [
+    "vehicles.edit_own",
+    "vehicles.manage_own",
+]
+
+VEHICLE_TRANSFER_PERMISSION_CODES = [
+    "vehicles.transfer",
+    "vehicles.transfer_client",
+    "vehicles.manage",
+]
+
+VEHICLE_TRANSFER_HISTORY_PERMISSION_CODES = [
+    "vehicles.transfer_history.view",
+    "vehicles.transfer.view_history",
+    "vehicles.transfer",
+    "vehicles.transfer_client",
+    "vehicles.manage",
+]
+
+VEHICLE_TRASH_VIEW_PERMISSION_CODES = [
+    "vehicles.trash.view",
+    "vehicles.deleted.view",
+    "vehicles.restore",
+    "vehicles.delete",
+    "vehicles.manage",
+    "trash.view",
+    "trash.manage",
+]
+
+VEHICLE_DELETE_PERMISSION_CODES = [
+    "vehicles.delete",
+    "vehicles.manage",
+]
+
+VEHICLE_RESTORE_PERMISSION_CODES = [
+    "vehicles.restore",
+    "vehicles.manage",
+]
+
+VEHICLE_VIN_HISTORY_PERMISSION_CODES = [
+    "vehicles.vin_history.view",
+    "vehicles.history.view",
+    "vehicles.view",
+    "vehicles.view_all",
+    "vehicles.manage",
+]
+
+VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
+    "vehicles.equipment.manage",
+    "warehouse.vehicle_equipment.manage",
+    "warehouse.manage",
+    "warehouse.items.manage",
+]
+
+VEHICLE_CREATE_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]
+VEHICLE_IMPORT_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]
+VEHICLE_VIEW_LEGACY_ROLES = [
+    "ADMIN",
+    "ROP",
+    "MANAGER",
+    "TECH_SUPPORT",
+    "ACCOUNTANT",
+    "WAREHOUSE_MANAGER",
+    "SENIOR_TECHNICIAN",
+    "TECHNICIAN",
+]
+VEHICLE_EDIT_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER"]
+VEHICLE_TRANSFER_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER"]
+VEHICLE_TRANSFER_HISTORY_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER"]
+
+
+def has_legacy_role(current_user: dict, roles: list[str]) -> bool:
+    return current_user.get("role") in roles
+
+
+def can_create_vehicle(current_user: dict) -> bool:
+    return has_any_permission(current_user, VEHICLE_CREATE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        VEHICLE_CREATE_LEGACY_ROLES,
+    )
+
+
+def can_import_vehicles(current_user: dict) -> bool:
+    return has_any_permission(current_user, VEHICLE_IMPORT_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        VEHICLE_IMPORT_LEGACY_ROLES,
+    )
+
+
+def can_search_vehicles(current_user: dict) -> bool:
+    return has_any_permission(current_user, VEHICLE_VIEW_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        VEHICLE_VIEW_LEGACY_ROLES,
+    )
+
+
+def can_view_vehicle_trash(current_user: dict) -> bool:
+    return has_any_permission(current_user, VEHICLE_TRASH_VIEW_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        VEHICLE_TRASH_VIEW_ROLES,
+    )
+
+
+def can_delete_vehicle(current_user: dict) -> bool:
+    return has_any_permission(current_user, VEHICLE_DELETE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        VEHICLE_DELETE_ROLES,
+    )
+
+
+def can_restore_vehicle(current_user: dict) -> bool:
+    return has_any_permission(current_user, VEHICLE_RESTORE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        VEHICLE_RESTORE_ROLES,
+    )
+
+
+def can_manage_direct_vehicle_equipment(current_user: dict) -> bool:
+    return has_any_permission(current_user, VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        ["ADMIN", "WAREHOUSE_MANAGER"],
+    )
+
+
+def build_client_from_vehicle_row(row: dict) -> dict:
+    return {
+        "id": row.get("client_id") or row.get("current_client_id"),
+        "type": row.get("client_type") or row.get("current_client_type"),
+        "name": row.get("client_name") or row.get("current_client_name"),
+        "company_name": row.get("client_company_name") or row.get("current_client_company_name"),
+        "status": row.get("client_status") or row.get("current_client_status"),
+        "created_by": row.get("client_created_by") or row.get("created_by"),
+        "responsible_manager_id": row.get("client_responsible_manager_id") or row.get("responsible_manager_id"),
+        "is_deleted": row.get("client_is_deleted") or row.get("current_client_is_deleted"),
+    }
+
+
+def can_access_client_vehicles(client: dict, current_user: dict) -> bool:
+    if has_any_permission(current_user, VEHICLE_VIEW_ALL_PERMISSION_CODES):
+        return True
+
+    if can_open_client_details(client, current_user):
+        return True
+
+    return False
+
+
+def ensure_can_access_client_vehicles(client: dict, current_user: dict):
+    if not can_access_client_vehicles(client, current_user):
         raise HTTPException(
             status_code=403,
-            detail="Только Админ, РОП, Менеджер и Тех. поддержка могут создавать машины"
+            detail="Недостаточно прав для просмотра машин этого клиента",
+        )
+
+
+def can_edit_vehicle_for_client(client: dict, current_user: dict) -> bool:
+    if has_any_permission(current_user, VEHICLE_EDIT_PERMISSION_CODES):
+        return True
+
+    if has_legacy_role(current_user, ["ADMIN", "ROP"]):
+        return True
+
+    if has_any_permission(current_user, VEHICLE_EDIT_OWN_PERMISSION_CODES) or has_legacy_role(
+        current_user,
+        ["MANAGER"],
+    ):
+        return can_open_client_details(client, current_user)
+
+    return False
+
+
+def can_transfer_vehicle_for_client(client: dict, current_user: dict) -> bool:
+    if has_any_permission(current_user, VEHICLE_TRANSFER_PERMISSION_CODES):
+        return True
+
+    if has_legacy_role(current_user, ["ADMIN", "ROP"]):
+        return True
+
+    if has_legacy_role(current_user, ["MANAGER"]):
+        return can_create_request_for_client(client, current_user)
+
+    return False
+
+
+def can_view_vehicle_transfer_history_for_client(client: dict, current_user: dict) -> bool:
+    if has_any_permission(current_user, VEHICLE_TRANSFER_HISTORY_PERMISSION_CODES):
+        return True
+
+    if has_legacy_role(current_user, VEHICLE_TRANSFER_HISTORY_LEGACY_ROLES):
+        return can_open_client_details(client, current_user)
+
+    return False
+
+
+def can_view_vehicle_vin_history_for_client(client: dict, current_user: dict) -> bool:
+    if has_any_permission(current_user, VEHICLE_VIN_HISTORY_PERMISSION_CODES):
+        return True
+
+    return can_open_client_details(client, current_user)
+
+@router.post("")
+def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current_user)):
+    if not can_create_vehicle(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для создания машины"
         )
 
     connection = get_connection()
@@ -363,6 +610,31 @@ def get_vehicles(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
+                SELECT
+                    id,
+                    type,
+                    name,
+                    company_name,
+                    status,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
+                FROM clients
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (client_id,)
+            )
+
+            client = cursor.fetchone()
+
+            if not client or client["is_deleted"]:
+                raise HTTPException(status_code=404, detail="Клиент не найден")
+
+            ensure_can_access_client_vehicles(client, current_user)
+
+            cursor.execute(
+                """
                 SELECT COUNT(*) AS total
                 FROM vehicles
                 WHERE client_id = %s
@@ -427,6 +699,12 @@ def search_vehicles(
     if len(search) < 2:
         return []
 
+    if not can_search_vehicles(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для поиска машин"
+        )
+
     like_value = f"%{search}%"
     vin_search = normalize_vin(search)
 
@@ -457,7 +735,7 @@ def search_vehicles(
         like_value,
     ]
 
-    if current_user["role"] not in VEHICLE_TRASH_VIEW_ROLES:
+    if not can_view_vehicle_trash(current_user):
         conditions.append("v.is_deleted = 0")
 
     if current_user.get("client_access_scope") == "RESPONSIBLE_ONLY":
@@ -548,6 +826,12 @@ def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
     Проверка VIN перед созданием автомобиля.
     Нужна, чтобы фронт мог проверить VIN до создания нового клиента.
     """
+    if not can_create_vehicle(current_user) and not can_import_vehicles(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для проверки VIN"
+        )
+
     normalized_vin = normalize_vin(vin)
 
     if not normalized_vin:
@@ -624,6 +908,11 @@ def get_vehicle_vin_history(
 
                     c.name AS client_name,
                     c.company_name AS client_company_name,
+                    c.type AS client_type,
+                    c.status AS client_status,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id AS client_responsible_manager_id,
+                    c.is_deleted AS client_is_deleted,
 
                     deleted_by_user.name AS deleted_by_name
                 FROM vehicles v
@@ -641,6 +930,14 @@ def get_vehicle_vin_history(
                 raise HTTPException(
                     status_code=404,
                     detail="Машина не найдена"
+                )
+
+            current_client = build_client_from_vehicle_row(current_vehicle)
+
+            if not can_view_vehicle_vin_history_for_client(current_client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра истории VIN этой машины"
                 )
 
             vin = normalize_vin(current_vehicle.get("vin"))
@@ -821,7 +1118,7 @@ def get_vehicle_vin_history(
 def download_vehicle_import_template(
     current_user: dict = Depends(get_current_user),
 ):
-    if current_user["role"] not in ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]:
+    if not can_import_vehicles(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для скачивания шаблона импорта машин"
@@ -894,10 +1191,10 @@ def import_vehicles_preview(
     - new: VIN не найден в CRM
     - warnings: строка пропущена
     """
-    if current_user["role"] not in ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]:
+    if not can_import_vehicles(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Только Админ, РОП, Менеджер и Тех. поддержка могут импортировать машины"
+            detail="Недостаточно прав для импорта машин"
         )
 
     filename = file.filename or ""
@@ -1227,8 +1524,8 @@ def get_deleted_vehicles(
     client_id: int | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ):
-    """Список удалённых машин. Просмотр: ADMIN, ROP, ACCOUNTANT, MANAGER, WAREHOUSE_MANAGER."""
-    if current_user["role"] not in VEHICLE_TRASH_VIEW_ROLES:
+    """Список удалённых машин."""
+    if not can_view_vehicle_trash(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра корзины машин"
@@ -1240,6 +1537,10 @@ def get_deleted_vehicles(
     if client_id:
         conditions.append("v.client_id = %s")
         values.append(client_id)
+
+    if current_user.get("client_access_scope") == "RESPONSIBLE_ONLY":
+        conditions.append("c.responsible_manager_id = %s")
+        values.append(current_user["id"])
 
     where_clause = " AND ".join(conditions)
 
@@ -1316,15 +1617,23 @@ def get_vehicle_page(
             cursor.execute(
                 """
                 SELECT
-                    id,
-                    client_id,
-                    brand,
-                    model,
-                    plate_number,
-                    vin
-                FROM vehicles
-                WHERE id = %s
-                  AND is_deleted = 0
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    c.type AS client_type,
+                    c.name AS client_name,
+                    c.company_name AS client_company_name,
+                    c.status AS client_status,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id AS client_responsible_manager_id,
+                    c.is_deleted AS client_is_deleted
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.id = %s
+                  AND v.is_deleted = 0
                 LIMIT 1
                 """,
                 (vehicle_id,)
@@ -1337,6 +1646,9 @@ def get_vehicle_page(
                     status_code=404,
                     detail="Машина не найдена"
                 )
+
+            client = build_client_from_vehicle_row(vehicle)
+            ensure_can_access_client_vehicles(client, current_user)
 
             client_id = vehicle["client_id"]
 
@@ -1389,10 +1701,7 @@ def update_vehicle(
     data: VehicleUpdate,
     current_user: dict = Depends(get_current_user)
 ):
-    """Редактирование машины. Только ADMIN и MANAGER."""
-    if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(status_code=403, detail="Только Менеджер или Админ могут редактировать машины")
-
+    """Редактирование машины."""
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -1402,6 +1711,12 @@ def update_vehicle(
                     v.id,
                     v.client_id,
                     v.is_deleted,
+                    c.type AS client_type,
+                    c.name AS client_name,
+                    c.company_name AS client_company_name,
+                    c.status AS client_status,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id AS client_responsible_manager_id,
                     c.is_deleted AS client_is_deleted
                 FROM vehicles v
                 LEFT JOIN clients c ON v.client_id = c.id
@@ -1421,6 +1736,14 @@ def update_vehicle(
                 raise HTTPException(
                     status_code=400,
                     detail="Нельзя редактировать машину: клиент не найден или находится в корзине"
+                )
+
+            client = build_client_from_vehicle_row(vehicle)
+
+            if not can_edit_vehicle_for_client(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для редактирования этой машины"
                 )
 
             update_data = data.dict(exclude_unset=True)
@@ -1514,10 +1837,13 @@ def transfer_vehicle_to_client(
     Старые заявки, request_vehicles и request_equipment не переносим,
     потому что они являются историей работ старого клиента.
     """
-    if current_user["role"] not in ["ADMIN", "MANAGER"]:
+    if not has_any_permission(current_user, VEHICLE_TRANSFER_PERMISSION_CODES) and not has_legacy_role(
+        current_user,
+        VEHICLE_TRANSFER_LEGACY_ROLES,
+    ):
         raise HTTPException(
             status_code=403,
-            detail="Только Менеджер или Админ могут переносить машины между клиентами"
+            detail="Недостаточно прав для переноса машины между клиентами"
         )
 
     reason = (data.reason or "").strip()
@@ -1590,7 +1916,7 @@ def transfer_vehicle_to_client(
                 "is_deleted": vehicle["old_client_is_deleted"],
             }
 
-            if not can_create_request_for_client(old_client, current_user):
+            if not can_transfer_vehicle_for_client(old_client, current_user):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для переноса машины от текущего клиента"
@@ -1628,7 +1954,7 @@ def transfer_vehicle_to_client(
                     detail="Новый клиент не найден"
                 )
 
-            if not can_create_request_for_client(new_client, current_user):
+            if not can_transfer_vehicle_for_client(new_client, current_user):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для переноса машины к выбранному клиенту"
@@ -1734,12 +2060,6 @@ def get_vehicle_transfer_history(
     vehicle_id: int,
     current_user: dict = Depends(get_current_user)
 ):
-    if current_user["role"] not in ["ADMIN", "MANAGER"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Только Менеджер или Админ могут просматривать историю переноса машины"
-        )
-
     connection = get_connection()
 
     try:
@@ -1755,6 +2075,7 @@ def get_vehicle_transfer_history(
                     c.type AS current_client_type,
                     c.name AS current_client_name,
                     c.company_name AS current_client_company_name,
+                    c.status AS current_client_status,
                     c.created_by,
                     c.responsible_manager_id,
                     c.is_deleted AS current_client_is_deleted
@@ -1785,12 +2106,13 @@ def get_vehicle_transfer_history(
                 "type": vehicle["current_client_type"],
                 "name": vehicle["current_client_name"],
                 "company_name": vehicle["current_client_company_name"],
+                "status": vehicle.get("current_client_status"),
                 "created_by": vehicle["created_by"],
                 "responsible_manager_id": vehicle["responsible_manager_id"],
                 "is_deleted": vehicle["current_client_is_deleted"],
             }
 
-            if not can_create_request_for_client(current_client, current_user):
+            if not can_view_vehicle_transfer_history_for_client(current_client, current_user):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для просмотра истории переноса этой машины"
@@ -1851,11 +2173,11 @@ def delete_vehicle(
     data: VehicleDeleteRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Soft delete машины. Только ADMIN."""
-    if current_user["role"] not in VEHICLE_DELETE_ROLES:
+    """Soft delete машины."""
+    if not can_delete_vehicle(current_user):
         raise HTTPException(
             status_code=403,
-            detail="Только Админ может удалять машины"
+            detail="Недостаточно прав для удаления машины"
         )
 
     delete_reason_type = (data.delete_reason_type or "").strip()
@@ -1950,9 +2272,9 @@ def delete_vehicle(
 
 @router.patch("/{vehicle_id}/restore")
 def restore_vehicle(vehicle_id: int, current_user: dict = Depends(get_current_user)):
-    """Восстановление машины из корзины. Только ADMIN и MANAGER."""
-    if current_user["role"] not in VEHICLE_RESTORE_ROLES:
-        raise HTTPException(status_code=403, detail="Только Админы могут восстанавливать машины")
+    """Восстановление машины из корзины."""
+    if not can_restore_vehicle(current_user):
+        raise HTTPException(status_code=403, detail="Недостаточно прав для восстановления машины")
 
     connection = get_connection()
     try:

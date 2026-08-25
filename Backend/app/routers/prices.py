@@ -13,10 +13,8 @@ from app.permissions import (
     MANAGER,
     TECH_SUPPORT,
     ACCOUNTANT,
-    can_view_prices,
-    can_manage_base_prices,
-    can_manage_any_client_prices,
-    can_manage_own_client_prices,
+    has_any_permission,
+    is_super_admin,
     is_client_owned_by_user,
 )
 
@@ -28,16 +26,169 @@ ALLOWED_VISIT_PRICE_CODES = {
     "BUSINESS_TRIP_KM",
 }
 
+PRICE_READ_PERMISSION_CODES = [
+    "prices.view",
+    "prices.manage",
+    "base_prices.view",
+    "base_prices.manage",
+    "client_prices.view",
+    "client_prices.manage",
+    "reports.view",
+    "reports.manage",
+]
+
+BASE_PRICE_MANAGE_PERMISSION_CODES = [
+    "prices.manage",
+    "base_prices.manage",
+    "base_prices.create",
+    "base_prices.edit",
+    "base_prices.delete",
+    "base_prices.restore",
+]
+
+CLIENT_PRICE_VIEW_ALL_PERMISSION_CODES = [
+    "prices.manage",
+    "client_prices.view",
+    "client_prices.view_all",
+    "client_prices.manage",
+    "client_prices.manage_all",
+]
+
+CLIENT_PRICE_VIEW_OWN_PERMISSION_CODES = [
+    "client_prices.view_own",
+    "client_prices.manage_own",
+]
+
+CLIENT_PRICE_MANAGE_ALL_PERMISSION_CODES = [
+    "prices.manage",
+    "client_prices.manage",
+    "client_prices.manage_all",
+]
+
+CLIENT_PRICE_MANAGE_OWN_PERMISSION_CODES = [
+    "client_prices.manage_own",
+]
+
+PRICE_CALCULATE_PERMISSION_CODES = [
+    "prices.calculate",
+    "prices.view",
+    "prices.manage",
+    "requests.price.calculate",
+    "requests.prices.calculate",
+    "requests.price.view",
+    "requests.prices.view",
+]
+
+PRICE_READ_LEGACY_ROLES = [
+    ADMIN,
+    ROP,
+    MANAGER,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+]
+
+BASE_PRICE_MANAGE_LEGACY_ROLES = [
+    ADMIN,
+    ROP,
+    MANAGER,
+]
+
+CLIENT_PRICE_VIEW_ALL_LEGACY_ROLES = [
+    ADMIN,
+    ROP,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+]
+
+CLIENT_PRICE_MANAGE_ALL_LEGACY_ROLES = [
+    ADMIN,
+    ROP,
+]
+
+CLIENT_PRICE_VIEW_OWN_LEGACY_ROLES = [
+    MANAGER,
+]
+
+CLIENT_PRICE_MANAGE_OWN_LEGACY_ROLES = [
+    MANAGER,
+]
+
+
+def has_legacy_role(current_user: dict, roles: list[str]) -> bool:
+    return current_user.get("role") in roles
+
+
+def user_has_any_permission(current_user: dict, permission_codes: list[str]) -> bool:
+    return is_super_admin(current_user) or has_any_permission(current_user, permission_codes)
+
+
+def can_read_prices(current_user: dict) -> bool:
+    return (
+        user_has_any_permission(current_user, PRICE_READ_PERMISSION_CODES)
+        or has_legacy_role(current_user, PRICE_READ_LEGACY_ROLES)
+    )
+
+
+def can_manage_base_prices_for_user(current_user: dict) -> bool:
+    return (
+        user_has_any_permission(current_user, BASE_PRICE_MANAGE_PERMISSION_CODES)
+        or has_legacy_role(current_user, BASE_PRICE_MANAGE_LEGACY_ROLES)
+    )
+
+
+def can_calculate_prices(current_user: dict) -> bool:
+    return (
+        user_has_any_permission(current_user, PRICE_CALCULATE_PERMISSION_CODES)
+        or has_legacy_role(current_user, PRICE_READ_LEGACY_ROLES)
+    )
+
+
+def can_view_all_client_prices(current_user: dict) -> bool:
+    return (
+        user_has_any_permission(current_user, CLIENT_PRICE_VIEW_ALL_PERMISSION_CODES)
+        or has_legacy_role(current_user, CLIENT_PRICE_VIEW_ALL_LEGACY_ROLES)
+    )
+
+
+def can_view_own_client_prices(current_user: dict) -> bool:
+    return (
+        user_has_any_permission(current_user, CLIENT_PRICE_VIEW_OWN_PERMISSION_CODES)
+        or has_legacy_role(current_user, CLIENT_PRICE_VIEW_OWN_LEGACY_ROLES)
+    )
+
+
+def can_manage_all_client_prices(current_user: dict) -> bool:
+    return (
+        user_has_any_permission(current_user, CLIENT_PRICE_MANAGE_ALL_PERMISSION_CODES)
+        or has_legacy_role(current_user, CLIENT_PRICE_MANAGE_ALL_LEGACY_ROLES)
+    )
+
+
+def can_manage_own_client_prices_for_user(current_user: dict) -> bool:
+    return (
+        user_has_any_permission(current_user, CLIENT_PRICE_MANAGE_OWN_PERMISSION_CODES)
+        or has_legacy_role(current_user, CLIENT_PRICE_MANAGE_OWN_LEGACY_ROLES)
+    )
+
+
 def require_price_read(current_user: dict):
-    if not can_view_prices(current_user):
+    if not can_read_prices(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра цен"
         )
 
 
+def require_price_calculate(current_user: dict):
+    if not can_calculate_prices(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для расчёта цен"
+        )
+
+
 def require_base_price_manage(current_user: dict):
-    if not can_manage_base_prices(current_user):
+    if not can_manage_base_prices_for_user(current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для управления базовыми ценами"
@@ -45,26 +196,32 @@ def require_base_price_manage(current_user: dict):
 
 
 def can_access_client_prices(client: dict, current_user: dict) -> bool:
-    if can_manage_any_client_prices(current_user):
+    if can_view_all_client_prices(current_user):
         return True
 
-    if current_user["role"] in [TECH_SUPPORT, ACCOUNTANT]:
-        return True
-
-    if can_manage_own_client_prices(current_user):
+    if can_view_own_client_prices(current_user):
         return is_client_owned_by_user(client, current_user)
 
     return False
 
 
 def can_update_client_prices(client: dict, current_user: dict) -> bool:
-    if can_manage_any_client_prices(current_user):
+    if can_manage_all_client_prices(current_user):
         return True
 
-    if can_manage_own_client_prices(current_user):
+    if can_manage_own_client_prices_for_user(current_user):
         return is_client_owned_by_user(client, current_user)
 
     return False
+
+
+def require_client_price_update(client: dict, current_user: dict):
+    if not can_update_client_prices(client, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для изменения индивидуальных цен этого клиента"
+        )
+
 
 def money(value) -> float:
     if value is None:
@@ -656,8 +813,6 @@ def update_client_prices(
     Если нет — создаст.
     Доступ: ADMIN, MANAGER.
     """
-    require_base_price_manage(current_user)
-
     connection = get_connection()
 
     try:
@@ -685,11 +840,7 @@ def update_client_prices(
                     detail="Нельзя менять цены клиента из корзины"
                 )
             
-            if not can_update_client_prices(client, current_user):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Недостаточно прав для изменения индивидуальных цен этого клиента"
-                )
+            require_client_price_update(client, current_user)
 
             for item in data.prices:
                 if item.price < 0:
@@ -761,8 +912,6 @@ def delete_client_price_override(
     После удаления будет использоваться базовая цена.
     Доступ: ADMIN, MANAGER.
     """
-    require_base_price_manage(current_user)
-
     connection = get_connection()
 
     try:
@@ -790,11 +939,7 @@ def delete_client_price_override(
                     detail="Клиент находится в корзине"
                 )
 
-            if not can_update_client_prices(client, current_user):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Недостаточно прав для сброса индивидуальной цены этого клиента"
-                )
+            require_client_price_update(client, current_user)
 
             cursor.execute(
                 """
@@ -813,6 +958,9 @@ def delete_client_price_override(
                 "price_item_id": price_item_id
             }
 
+    except HTTPException:
+        connection.rollback()
+        raise
     except Exception as e:
         connection.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -829,7 +977,7 @@ def calculate_request_price(
     Ничего не сохраняет в БД.
     Доступ: ADMIN, MANAGER, ACCOUNTANT.
     """
-    require_price_read(current_user)
+    require_price_calculate(current_user)
 
     work_type = data.work_type.upper()
     visit_type = data.visit_type.upper()

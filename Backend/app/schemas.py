@@ -463,3 +463,54 @@ class AttachmentOut(BaseModel):
 
 class AttachmentUpdate(BaseModel):
     display_name: str
+
+class RoleCreate(BaseModel):
+    code: str
+    name: str
+    description: str | None = None
+    badge_color: str = "#64748B"
+    data_scope: str = "NONE"
+    is_active: bool = True
+    can_be_request_executor: bool = False
+    can_be_responsible_manager: bool = False
+    sort_order: int = 100
+    permission_codes: list[str] = []
+    reason: str | None = None
+
+
+class RoleUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    badge_color: str | None = None
+    data_scope: str | None = None
+    is_active: bool | None = None
+    can_be_request_executor: bool | None = None
+    can_be_responsible_manager: bool | None = None
+    sort_order: int | None = None
+    reason: str | None = None
+
+
+class RolePermissionsUpdate(BaseModel):
+    permission_codes: list[str]
+    reason: str | None = None
+
+
+class UserPermissionOverrideInput(BaseModel):
+    permission_code: str
+    effect: str
+
+
+class UserPermissionOverridesUpdate(BaseModel):
+    overrides: list[UserPermissionOverrideInput] = []
+    reason: str | None = None
+
+
+class UserSecurityFlagsUpdate(BaseModel):
+    is_super_admin: bool | None = None
+    reason: str | None = None
+
+
+class UserRoleUpdate(BaseModel):
+    role: str
+    city: str | None = None
+    reason: str | None = None

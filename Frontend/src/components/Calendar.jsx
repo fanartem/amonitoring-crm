@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
 import { API_BASE_URL, getAuthHeaders } from '../api'
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 import RequestDetailModal from './RequestDetailModal'
 import { getWorkTypeLabel } from '../utils/workTypes'
 import '../styles/Calendar.css'
@@ -57,6 +58,44 @@ const statusLabels = {
 	COMPLETED: 'Завершено',
 	CANCELLED: 'Отменено',
 }
+
+const CALENDAR_VIEW_PERMISSION_CODES = [
+	'calendar.view',
+	'calendar.view_all',
+	'requests.calendar.view',
+	'requests.calendar.view_all',
+	'requests.view',
+	'requests.view_all',
+	'requests.manage',
+]
+
+const CALENDAR_VIEW_ALL_PERMISSION_CODES = [
+	'calendar.view_all',
+	'requests.calendar.view_all',
+	'requests.view_all',
+	'requests.manage',
+]
+
+const CALENDAR_LEGACY_VIEW_ROLES = [
+	'ADMIN',
+	'ROP',
+	'MANAGER',
+	'TECH_SUPPORT',
+	'ACCOUNTANT',
+	'WAREHOUSE_MANAGER',
+	'SENIOR_TECHNICIAN',
+	'TECHNICIAN',
+]
+
+const CALENDAR_LEGACY_VIEW_ALL_ROLES = [
+	'ADMIN',
+	'ROP',
+	'MANAGER',
+	'TECH_SUPPORT',
+	'ACCOUNTANT',
+	'WAREHOUSE_MANAGER',
+	'SENIOR_TECHNICIAN',
+]
 
 const getStartOfDay = date => {
 	return new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -316,16 +355,15 @@ export default function Calendar() {
 	const highlightTimerRef = useRef(null)
 	const highlightFadeTimerRef = useRef(null)
 
-	const userData = useMemo(() => {
-		try {
-			return JSON.parse(localStorage.getItem('user_data') || '{}')
-		} catch {
-			return {}
-		}
-	}, [])
+	const userData = useMemo(() => getStoredUser(), [])
 
-	const userRole = String(userData?.role || '').toUpperCase()
-	const isTechnician = userRole === 'TECHNICIAN'
+	const canViewCalendar =
+		hasAnyPermission(userData, CALENDAR_VIEW_PERMISSION_CODES) ||
+		hasLegacyRole(userData, CALENDAR_LEGACY_VIEW_ROLES)
+
+	const canFilterCalendarByCity =
+		hasAnyPermission(userData, CALENDAR_VIEW_ALL_PERMISSION_CODES) ||
+		hasLegacyRole(userData, CALENDAR_LEGACY_VIEW_ALL_ROLES)
 
 	const [workTypeFilter, setWorkTypeFilter] = useState('ALL')
 
@@ -430,7 +468,7 @@ export default function Calendar() {
 				return false
 			}
 
-			if (!isTechnician) {
+			if (canFilterCalendarByCity) {
 				const itemCity = String(item.city || '').trim()
 
 				if (selectedCity) {
@@ -461,12 +499,13 @@ export default function Calendar() {
 		selectedCity,
 		clientSearch,
 		selectedClientId,
-		isTechnician,
+		canFilterCalendarByCity,
 	])
 
 	const hasActiveFilters =
 		workTypeFilter !== 'ALL' ||
-		(!isTechnician && (Boolean(citySearch.trim()) || Boolean(selectedCity))) ||
+		(canFilterCalendarByCity &&
+			(Boolean(citySearch.trim()) || Boolean(selectedCity))) ||
 		Boolean(clientSearch.trim()) ||
 		Boolean(selectedClientId)
 
@@ -651,6 +690,12 @@ export default function Calendar() {
 	const monthTitle = `${monthNames[anchorDate.getMonth()]} ${anchorDate.getFullYear()}`
 
 	const fetchCalendar = async () => {
+		if (!canViewCalendar) {
+			setItems([])
+			setLoading(false)
+			return
+		}
+
 		setLoading(true)
 		setError('')
 
@@ -680,8 +725,9 @@ export default function Calendar() {
 	}
 
 	useEffect(() => {
+		if (!canViewCalendar) return
 		fetchCalendar()
-	}, [weekStart.getTime()])
+	}, [weekStart.getTime(), canViewCalendar])
 
 	const goToday = () => {
 		setAnchorDate(new Date())
@@ -778,9 +824,7 @@ export default function Calendar() {
 					</span>
 
 					{item.status === 'COMPLETED' && (
-						<span className='crm-calendar-event-completed-badge'>
-							✓
-						</span>
+						<span className='crm-calendar-event-completed-badge'>✓</span>
 					)}
 				</div>
 
@@ -911,9 +955,7 @@ export default function Calendar() {
 							</div>
 
 							{item.status === 'NEW' && (
-								<div className='crm-calendar-group-menu-new'>
-									В ожидании
-								</div>
+								<div className='crm-calendar-group-menu-new'>В ожидании</div>
 							)}
 
 							{item.status === 'IN_PROGRESS' && (
@@ -941,6 +983,16 @@ export default function Calendar() {
 							)}
 						</button>
 					))}
+				</div>
+			</div>
+		)
+	}
+
+	if (!canViewCalendar) {
+		return (
+			<div className='crm-calendar-page'>
+				<div className='crm-calendar-error'>
+					Недостаточно прав для просмотра календаря заявок.
 				</div>
 			</div>
 		)
@@ -993,7 +1045,7 @@ export default function Calendar() {
 							</select>
 						</div>
 
-						{!isTechnician && (
+						{canFilterCalendarByCity && (
 							<div className='crm-calendar-filter-field picker'>
 								<label>Город</label>
 								<input

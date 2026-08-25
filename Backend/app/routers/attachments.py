@@ -14,8 +14,13 @@ from app.permissions import (
     ADMIN,
     ROP,
     MANAGER,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+    WAREHOUSE_MANAGER,
     TECHNICIAN,
     SENIOR_TECHNICIAN,
+    has_any_permission,
+    is_super_admin,
     can_view_attachment,
     can_delete_attachment,
 )
@@ -36,6 +41,93 @@ ALLOWED_EXTENSIONS = {
     ".txt"
 }
 
+ATTACHMENT_VIEW_PERMISSION_CODES = [
+    "attachments.view",
+    "attachments.manage",
+]
+
+ATTACHMENT_UPLOAD_PERMISSION_CODES = [
+    "attachments.upload",
+    "attachments.manage",
+]
+
+ATTACHMENT_UPDATE_PERMISSION_CODES = [
+    "attachments.rename",
+    "attachments.edit",
+    "attachments.manage",
+]
+
+ATTACHMENT_DELETE_PERMISSION_CODES = [
+    "attachments.delete",
+    "attachments.manage",
+]
+
+ENTITY_ATTACHMENT_PERMISSION_CODES = {
+    "CLIENT": {
+        "view": [
+            "clients.attachments.view",
+            "clients.attachments.manage",
+            "clients.manage",
+        ],
+        "upload": [
+            "clients.attachments.upload",
+            "clients.attachments.manage",
+            "clients.manage",
+        ],
+        "update": [
+            "clients.attachments.rename",
+            "clients.attachments.edit",
+            "clients.attachments.manage",
+            "clients.manage",
+        ],
+        "delete": [
+            "clients.attachments.delete",
+            "clients.attachments.manage",
+            "clients.manage",
+        ],
+    },
+    "REQUEST": {
+        "view": [
+            "requests.attachments.view",
+            "requests.attachments.manage",
+            "requests.manage",
+        ],
+        "upload": [
+            "requests.attachments.upload",
+            "requests.attachments.manage",
+            "requests.manage",
+        ],
+        "update": [
+            "requests.attachments.rename",
+            "requests.attachments.edit",
+            "requests.attachments.manage",
+            "requests.manage",
+        ],
+        "delete": [
+            "requests.attachments.delete",
+            "requests.attachments.manage",
+            "requests.manage",
+        ],
+    },
+}
+
+# Старое поведение upload endpoint было очень мягким: любой авторизованный
+# пользователь мог загрузить файл к существующему клиенту/заявке. Чтобы после
+# перехода на permissions не отвалились текущие роли, оставляем legacy fallback.
+LEGACY_ATTACHMENT_UPLOAD_ROLES = [
+    ADMIN,
+    ROP,
+    MANAGER,
+    TECH_SUPPORT,
+    ACCOUNTANT,
+    WAREHOUSE_MANAGER,
+    TECHNICIAN,
+    SENIOR_TECHNICIAN,
+]
+
+LEGACY_ATTACHMENT_MANAGE_ROLES = [ADMIN, ROP, MANAGER]
+
+
 def normalize_entity_type(entity_type: str) -> str:
     value = str(entity_type or "").strip().upper()
 
@@ -46,6 +138,137 @@ def normalize_entity_type(entity_type: str) -> str:
         )
 
     return value
+
+
+def to_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+
+    if value is None:
+        return False
+
+    if isinstance(value, (int, float)):
+        return value != 0
+
+    return str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
+
+
+def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
+    if not current_user:
+        return False
+
+    return current_user.get("role") in roles
+
+
+def user_has_any_permission(current_user: dict | None, permission_codes: list[str]) -> bool:
+    return is_super_admin(current_user) or has_any_permission(current_user, permission_codes)
+
+
+def get_entity_permission_codes(entity_type: str, action: str) -> list[str]:
+    return ENTITY_ATTACHMENT_PERMISSION_CODES.get(entity_type, {}).get(action, [])
+
+
+def attachment_is_owner(attachment: dict, current_user: dict) -> bool:
+    return (
+        attachment.get("uploaded_by") is not None
+        and int(attachment["uploaded_by"]) == int(current_user["id"])
+    )
+
+
+def get_attachment_age_seconds(attachment: dict) -> int:
+    return int(attachment.get("age_seconds") or 0)
+
+
+def attachment_is_within_time_limit(attachment: dict) -> bool:
+    return get_attachment_age_seconds(attachment) <= ATTACHMENT_DELETE_TIME_LIMIT_SECONDS
+
+
+def can_manage_attachment_by_permission(attachment: dict, current_user: dict) -> bool:
+    entity_type = normalize_entity_type(attachment.get("entity_type"))
+
+    return user_has_any_permission(
+        current_user,
+        [
+            "attachments.manage",
+            *get_entity_permission_codes(entity_type, "update"),
+            *get_entity_permission_codes(entity_type, "delete"),
+        ],
+    ) or has_legacy_role(current_user, LEGACY_ATTACHMENT_MANAGE_ROLES)
+
+
+def user_can_view_attachment(attachment: dict, current_user: dict) -> bool:
+    entity_type = normalize_entity_type(attachment.get("entity_type"))
+
+    if user_has_any_permission(
+        current_user,
+        [
+            *ATTACHMENT_VIEW_PERMISSION_CODES,
+            *get_entity_permission_codes(entity_type, "view"),
+        ],
+    ):
+        return True
+
+    # Совместимость со старой permission-функцией.
+    return can_view_attachment(attachment, current_user)
+
+
+def user_can_upload_attachment(entity_type: str, current_user: dict) -> bool:
+    entity_type = normalize_entity_type(entity_type)
+
+    return (
+        user_has_any_permission(
+            current_user,
+            [
+                *ATTACHMENT_UPLOAD_PERMISSION_CODES,
+                *get_entity_permission_codes(entity_type, "upload"),
+            ],
+        )
+        or has_legacy_role(current_user, LEGACY_ATTACHMENT_UPLOAD_ROLES)
+    )
+
+
+def user_can_update_attachment(attachment: dict, current_user: dict) -> bool:
+    entity_type = normalize_entity_type(attachment.get("entity_type"))
+
+    if user_has_any_permission(
+        current_user,
+        [
+            *ATTACHMENT_UPDATE_PERMISSION_CODES,
+            *get_entity_permission_codes(entity_type, "update"),
+        ],
+    ) or has_legacy_role(current_user, LEGACY_ATTACHMENT_MANAGE_ROLES):
+        return True
+
+    # Старое поведение: владелец может переименовать свой файл только 2 минуты.
+    return attachment_is_owner(attachment, current_user) and attachment_is_within_time_limit(attachment)
+
+
+def user_can_delete_attachment(attachment: dict, current_user: dict) -> bool:
+    entity_type = normalize_entity_type(attachment.get("entity_type"))
+    within_time_limit = attachment_is_within_time_limit(attachment)
+
+    if user_has_any_permission(
+        current_user,
+        [
+            *ATTACHMENT_DELETE_PERMISSION_CODES,
+            *get_entity_permission_codes(entity_type, "delete"),
+        ],
+    ):
+        return True
+
+    # Совместимость со старой permission-функцией: админы/РОП/менеджеры и/или
+    # владелец в пределах 2 минут — в зависимости от текущей реализации
+    # permissions.py.
+    return can_delete_attachment(attachment, current_user, within_time_limit)
+
+
+def attach_attachment_permissions(attachment: dict, current_user: dict) -> dict:
+    attachment["is_deleted"] = to_bool(attachment.get("is_deleted"))
+    attachment["can_download"] = user_can_view_attachment(attachment, current_user)
+    attachment["can_rename"] = user_can_update_attachment(attachment, current_user)
+    attachment["can_delete"] = user_can_delete_attachment(attachment, current_user)
+
+    return attachment
 
 
 def validate_file(file: UploadFile):
@@ -94,6 +317,7 @@ def check_entity_exists(cursor, entity_type: str, entity_id: int):
         if not entity:
             raise HTTPException(status_code=404, detail="Заявка не найдена")
 
+
 @router.get("/entity/{entity_type}/{entity_id}")
 def get_attachments(
     entity_type: str,
@@ -134,6 +358,7 @@ def get_attachments(
                     u.name AS uploaded_by_name,
                     u.role AS uploaded_by_role,
                     a.uploaded_at,
+                    TIMESTAMPDIFF(SECOND, a.uploaded_at, NOW()) AS age_seconds,
                     a.is_deleted,
                     a.deleted_at,
                     a.deleted_by
@@ -150,15 +375,16 @@ def get_attachments(
             visible_rows = []
 
             for row in rows:
-                row["is_deleted"] = bool(row["is_deleted"])
+                row = attach_attachment_permissions(row, current_user)
 
-                if can_view_attachment(row, current_user):
+                if row["can_download"]:
                     visible_rows.append(row)
 
             return visible_rows
 
     finally:
         connection.close()
+
 
 @router.post("/entity/{entity_type}/{entity_id}")
 def upload_attachment(
@@ -169,6 +395,12 @@ def upload_attachment(
 ):
     entity_type = normalize_entity_type(entity_type)
     validate_file(file)
+
+    if not user_can_upload_attachment(entity_type, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для загрузки файла"
+        )
 
     connection = get_connection()
 
@@ -232,7 +464,9 @@ def upload_attachment(
             return {
                 "message": "Файл загружен",
                 "attachment_id": attachment_id,
-                "display_name": original_filename
+                "display_name": original_filename,
+                "can_rename": True,
+                "can_delete": True,
             }
 
     except HTTPException:
@@ -251,6 +485,7 @@ def upload_attachment(
     finally:
         connection.close()
 
+
 @router.get("/{attachment_id}/download")
 def download_attachment(
     attachment_id: int,
@@ -264,12 +499,15 @@ def download_attachment(
                 """
                 SELECT
                     a.id,
+                    a.entity_type,
+                    a.entity_id,
                     a.original_filename,
                     a.display_name,
                     a.file_path,
                     a.content_type,
                     a.uploaded_by,
                     u.role AS uploaded_by_role,
+                    TIMESTAMPDIFF(SECOND, a.uploaded_at, NOW()) AS age_seconds,
                     a.is_deleted
                 FROM attachments a
                 LEFT JOIN users u ON a.uploaded_by = u.id
@@ -282,8 +520,8 @@ def download_attachment(
 
             if not attachment or attachment["is_deleted"]:
                 raise HTTPException(status_code=404, detail="Файл не найден")
-            
-            if not can_view_attachment(attachment, current_user):
+
+            if not user_can_view_attachment(attachment, current_user):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для просмотра файла"
@@ -306,6 +544,7 @@ def download_attachment(
     finally:
         connection.close()
 
+
 @router.patch("/{attachment_id}")
 def update_attachment(
     attachment_id: int,
@@ -325,8 +564,11 @@ def update_attachment(
                 """
                 SELECT
                     id,
+                    entity_type,
+                    entity_id,
                     uploaded_by,
                     uploaded_at,
+                    TIMESTAMPDIFF(SECOND, uploaded_at, NOW()) AS age_seconds,
                     is_deleted
                 FROM attachments
                 WHERE id = %s
@@ -339,34 +581,11 @@ def update_attachment(
             if not attachment or attachment["is_deleted"]:
                 raise HTTPException(status_code=404, detail="Файл не найден")
 
-            can_manage = current_user["role"] in [ADMIN, ROP, MANAGER]
-
-            if not can_manage:
-                is_owner = (
-                    attachment.get("uploaded_by") is not None
-                    and int(attachment["uploaded_by"]) == int(current_user["id"])
+            if not user_can_update_attachment(attachment, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Переименовать файл может пользователь с правом управления файлами либо автор файла в течение 2 минут после загрузки"
                 )
-
-                if not is_owner:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Можно переименовывать только свои файлы"
-                    )
-
-                cursor.execute(
-                    """
-                    SELECT TIMESTAMPDIFF(SECOND, %s, NOW()) AS age_seconds
-                    """,
-                    (attachment["uploaded_at"],)
-                )
-                age = cursor.fetchone()
-                age_seconds = int(age.get("age_seconds") or 0)
-
-                if age_seconds > ATTACHMENT_DELETE_TIME_LIMIT_SECONDS:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Переименовать свой файл можно только в течение 2 минут после загрузки"
-                    )
 
             cursor.execute(
                 """
@@ -394,6 +613,7 @@ def update_attachment(
     finally:
         connection.close()
 
+
 @router.delete("/{attachment_id}")
 def delete_attachment(
     attachment_id: int,
@@ -407,8 +627,11 @@ def delete_attachment(
                 """
                 SELECT
                     id,
+                    entity_type,
+                    entity_id,
                     uploaded_by,
                     uploaded_at,
+                    TIMESTAMPDIFF(SECOND, uploaded_at, NOW()) AS age_seconds,
                     is_deleted
                 FROM attachments
                 WHERE id = %s
@@ -421,21 +644,10 @@ def delete_attachment(
             if not attachment or attachment["is_deleted"]:
                 raise HTTPException(status_code=404, detail="Файл не найден")
 
-            cursor.execute(
-                """
-                SELECT TIMESTAMPDIFF(SECOND, %s, NOW()) AS age_seconds
-                """,
-                (attachment["uploaded_at"],)
-            )
-            age = cursor.fetchone()
-            age_seconds = int(age.get("age_seconds") or 0)
-
-            within_time_limit = age_seconds <= ATTACHMENT_DELETE_TIME_LIMIT_SECONDS
-
-            if not can_delete_attachment(attachment, current_user, within_time_limit):
+            if not user_can_delete_attachment(attachment, current_user):
                 raise HTTPException(
                     status_code=403,
-                    detail="Удалить файл можно только если он ваш и загружен менее 2 минут назад"
+                    detail="Удалить файл может пользователь с правом удаления файлов либо автор файла в течение 2 минут после загрузки"
                 )
 
             cursor.execute(

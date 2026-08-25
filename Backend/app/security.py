@@ -9,6 +9,13 @@ from dotenv import load_dotenv
 
 from app.database import get_connection
 
+from app.permissions import (
+    ADMIN,
+    attach_effective_permissions,
+    get_user_base_access,
+    is_super_admin,
+)
+
 load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -44,58 +51,67 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
-    """Проверяет токен и возвращает данные текущего пользователя"""
+    """
+    Проверяет токен и возвращает актуальные данные текущего пользователя.
+
+    Важно:
+    - JWT используется только для user_id/sub.
+    - role/city/permissions не берём из JWT как источник истины.
+    - На каждом запросе подтягиваем актуальные данные из БД.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
     try:
-        # Декодируем токен
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        user_role: str = payload.get("role")
+        user_id = payload.get("sub")
+
         if user_id is None:
             raise credentials_exception
+
     except JWTError:
         raise credentials_exception
 
-    # Проверяем в базе, не заблокирован ли он и существует ли
     connection = get_connection()
+
     try:
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    id,
-                    email,
-                    name,
-                    role,
-                    city,
-                    is_approved,
-                    is_active,
-                    deleted_at,
-                    client_access_scope
-                FROM users
-                WHERE id = %s
-                """,
-                (user_id,)
-            )
-            user = cursor.fetchone()
-            
+            user = get_user_base_access(cursor, int(user_id))
+
             if user is None:
                 raise credentials_exception
+
             if not user["is_approved"]:
                 raise HTTPException(status_code=403, detail="User not approved")
+
             if user.get("is_active") == 0 or user.get("deleted_at") is not None:
                 raise credentials_exception
-            
-            return user # Возвращаем инфо о юзере (id, role и т.д.)
+
+            if not user.get("role_code"):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Роль пользователя не найдена в системе доступов"
+                )
+
+            if user.get("role_is_active") == 0:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Роль пользователя отключена"
+                )
+
+            attach_effective_permissions(cursor, user)
+
+            return user
+
     finally:
         connection.close()
 
 # Специальная проверка для Админов
 def get_current_admin(current_user: dict = Depends(get_current_user)):
-    if current_user["role"] != "ADMIN":
+    if not (is_super_admin(current_user) or current_user["role"] == ADMIN):
         raise HTTPException(status_code=403, detail="Only admins can do this")
+
     return current_user

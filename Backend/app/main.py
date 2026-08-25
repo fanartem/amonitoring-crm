@@ -18,6 +18,8 @@ from app.routers import (
     notifications,
     attachments,
     support_requests,
+    access_control,
+    reports,
 )
 
 load_dotenv()
@@ -55,6 +57,8 @@ app.include_router(cities.router)
 app.include_router(prices.router)
 app.include_router(notifications.router)
 app.include_router(attachments.router)
+app.include_router(access_control.router)
+app.include_router(reports.router)
 
 
 @app.get("/", include_in_schema=False)

@@ -1,5 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE_URL, getJsonAuthHeaders } from '../api'
+import {
+	getStoredUser,
+	hasAnyPermission,
+	hasLegacyRole,
+	toBool,
+} from '../utils/access'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 
@@ -39,6 +45,29 @@ export default function WarehouseItemModal({
 	cities = [],
 }) {
 	const isEditMode = !!editItem
+	const currentUser = getStoredUser()
+
+	const canCreateWarehouseItem =
+		hasAnyPermission(currentUser, [
+			'warehouse.items.create',
+			'warehouse.create',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canEditWarehouseItem =
+		hasAnyPermission(currentUser, [
+			'warehouse.items.edit',
+			'warehouse.edit',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canSaveWarehouseItem = isEditMode
+		? canEditWarehouseItem
+		: canCreateWarehouseItem
+
+	const formLocked = loading => loading || !canSaveWarehouseItem
 
 	const [formData, setFormData] = useState({
 		category: 'GPS_TRACKER',
@@ -72,7 +101,7 @@ export default function WarehouseItemModal({
 		if (!isOpen) return
 
 		if (isEditMode) {
-			const serialized = Boolean(editItem.is_serialized)
+			const serialized = toBool(editItem.is_serialized)
 
 			setFormData({
 				category: editItem.category || 'GPS_TRACKER',
@@ -113,6 +142,8 @@ export default function WarehouseItemModal({
 	}, [isOpen, editItem, isEditMode, cities])
 
 	const handleChange = e => {
+		if (!canSaveWarehouseItem) return
+
 		const { name, value, type, checked } = e.target
 
 		if (name === 'status' && isLinkedToRequest) {
@@ -147,6 +178,15 @@ export default function WarehouseItemModal({
 	const handleSubmit = async e => {
 		e.preventDefault()
 		setError('')
+
+		if (!canSaveWarehouseItem) {
+			setError(
+				isEditMode
+					? 'Недостаточно прав для редактирования оборудования'
+					: 'Недостаточно прав для добавления оборудования на склад',
+			)
+			return
+		}
 
 		if (!formData.name.trim()) {
 			setError('Наименование оборудования обязательно')
@@ -208,8 +248,8 @@ export default function WarehouseItemModal({
 			})
 
 			if (!res.ok) {
-				const err = await res.json()
-				throw new Error(err.detail || 'Ошибка сохранения')
+				const err = await res.json().catch(() => null)
+				throw new Error(err?.detail || 'Ошибка сохранения')
 			}
 
 			onSaved()
@@ -222,6 +262,8 @@ export default function WarehouseItemModal({
 
 	if (!isOpen) return null
 
+	const isFormDisabled = formLocked(loading)
+
 	return (
 		<div className='modal-overlay open'>
 			<div className='modal-window warehouse-modal-window'>
@@ -229,10 +271,23 @@ export default function WarehouseItemModal({
 					<span className='modal-title'>
 						{isEditMode ? 'Редактировать оборудование' : 'Добавить на склад'}
 					</span>
-					<button className='modal-close' onClick={onClose} type='button'>
+					<button
+						className='modal-close'
+						onClick={onClose}
+						type='button'
+						disabled={loading}
+					>
 						&times;
 					</button>
 				</div>
+
+				{!canSaveWarehouseItem && (
+					<div className='warehouse-error-banner'>
+						{isEditMode
+							? 'Недостаточно прав для редактирования оборудования'
+							: 'Недостаточно прав для добавления оборудования на склад'}
+					</div>
+				)}
 
 				{error && <div className='warehouse-error-banner'>{error}</div>}
 
@@ -251,6 +306,7 @@ export default function WarehouseItemModal({
 										name='category'
 										value={formData.category}
 										onChange={handleChange}
+										disabled={isFormDisabled}
 									>
 										{Object.entries(CATEGORIES).map(([key, label]) => (
 											<option key={key} value={key}>
@@ -269,6 +325,7 @@ export default function WarehouseItemModal({
 										value={formData.name}
 										onChange={handleChange}
 										placeholder='Например: Teltonika FMC920'
+										disabled={isFormDisabled}
 									/>
 								</label>
 
@@ -281,6 +338,7 @@ export default function WarehouseItemModal({
 										value={formData.manufacturer}
 										onChange={handleChange}
 										placeholder='Например: Teltonika'
+										disabled={isFormDisabled}
 									/>
 								</label>
 
@@ -293,6 +351,7 @@ export default function WarehouseItemModal({
 										value={formData.model}
 										onChange={handleChange}
 										placeholder='Например: FMC920'
+										disabled={isFormDisabled}
 									/>
 								</label>
 							</div>
@@ -307,6 +366,7 @@ export default function WarehouseItemModal({
 									name='is_serialized'
 									checked={formData.is_serialized}
 									onChange={handleChange}
+									disabled={isFormDisabled}
 								/>
 
 								<div>
@@ -333,7 +393,9 @@ export default function WarehouseItemModal({
 										name='city_id'
 										value={formData.city_id}
 										onChange={handleChange}
-										disabled={isEditMode && !formData.is_serialized}
+										disabled={
+											isFormDisabled || (isEditMode && !formData.is_serialized)
+										}
 									>
 										<option value=''>Выберите город</option>
 
@@ -362,6 +424,7 @@ export default function WarehouseItemModal({
 										name='condition_status'
 										value={formData.condition_status}
 										onChange={handleChange}
+										disabled={isFormDisabled}
 									>
 										{Object.entries(CONDITION_STATUSES).map(([key, label]) => (
 											<option key={key} value={key}>
@@ -387,6 +450,7 @@ export default function WarehouseItemModal({
 											name='identifier_type'
 											value={formData.identifier_type}
 											onChange={handleChange}
+											disabled={isFormDisabled}
 										>
 											{IDENTIFIER_TYPES.map(type => (
 												<option key={type} value={type}>
@@ -407,6 +471,7 @@ export default function WarehouseItemModal({
 											value={formData.identifier_value}
 											onChange={handleChange}
 											placeholder='IMEI / MAC / SERIAL'
+											disabled={isFormDisabled}
 										/>
 									</label>
 
@@ -431,6 +496,7 @@ export default function WarehouseItemModal({
 											value={formData.quantity}
 											onChange={handleChange}
 											min='1'
+											disabled={isFormDisabled}
 										/>
 									</label>
 								</div>
@@ -448,7 +514,7 @@ export default function WarehouseItemModal({
 											name='status'
 											value={formData.status}
 											onChange={handleChange}
-											disabled={isLinkedToRequest}
+											disabled={isFormDisabled || isLinkedToRequest}
 										>
 											{Object.entries(STATUSES).map(([key, label]) => (
 												<option key={key} value={key}>
@@ -487,6 +553,7 @@ export default function WarehouseItemModal({
 									value={formData.note}
 									onChange={handleChange}
 									placeholder='Дополнительная информация...'
+									disabled={isFormDisabled}
 								/>
 							</label>
 						</div>
@@ -494,7 +561,12 @@ export default function WarehouseItemModal({
 				</div>
 
 				<div className='modal-footer warehouse-modal-footer'>
-					<button className='modal-cancel-btn' type='button' onClick={onClose}>
+					<button
+						className='modal-cancel-btn'
+						type='button'
+						onClick={onClose}
+						disabled={loading}
+					>
 						Отмена
 					</button>
 
@@ -502,7 +574,7 @@ export default function WarehouseItemModal({
 						className='warehouse-submit-btn'
 						type='submit'
 						form='warehouse-form'
-						disabled={loading}
+						disabled={isFormDisabled}
 					>
 						{loading
 							? 'Сохранение...'

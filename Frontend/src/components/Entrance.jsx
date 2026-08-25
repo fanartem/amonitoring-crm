@@ -10,6 +10,8 @@ export default function Entrance() {
 	const [role, setRole] = useState('')
 	const [city, setCity] = useState('')
 	const [cities, setCities] = useState([])
+	const [registrationRoles, setRegistrationRoles] = useState([])
+	const [rolesLoading, setRolesLoading] = useState(false)
 
 	const [error, setError] = useState('')
 	const [success, setSuccess] = useState('')
@@ -17,6 +19,7 @@ export default function Entrance() {
 
 	useEffect(() => {
 		fetchCities()
+		fetchRegistrationRoles()
 	}, [])
 
 	useEffect(() => {
@@ -44,6 +47,32 @@ export default function Entrance() {
 			}
 		} catch (err) {
 			console.error('Ошибка загрузки городов:', err)
+		}
+	}
+
+	const fetchRegistrationRoles = async () => {
+		setRolesLoading(true)
+
+		try {
+			const response = await fetch(`${API_BASE_URL}/auth/registration-roles`)
+
+			if (!response.ok) {
+				throw new Error('Не удалось загрузить список ролей')
+			}
+
+			const data = await response.json()
+			const roles = Array.isArray(data) ? data : []
+
+			setRegistrationRoles(roles)
+
+			if (roles.length > 0) {
+				setRole(prevRole => prevRole || roles[0].code)
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки ролей для регистрации:', err)
+			setRegistrationRoles([])
+		} finally {
+			setRolesLoading(false)
 		}
 	}
 
@@ -86,6 +115,14 @@ export default function Entrance() {
 		}
 	}
 
+	const selectedRegistrationRole = registrationRoles.find(
+		item => item.code === role,
+	)
+
+	const isCityRequiredForRegistration = Boolean(
+		selectedRegistrationRole?.can_be_request_executor,
+	)
+
 	// === ЛОГИКА РЕГИСТРАЦИИ ===
 	const handleRegister = async e => {
 		e.preventDefault()
@@ -97,8 +134,8 @@ export default function Entrance() {
 			return
 		}
 
-		if (role === 'TECHNICIAN' && !city) {
-			setError('Для обычного монтажника необходимо обязательно указать город!')
+		if (isCityRequiredForRegistration && !city) {
+			setError('Для выбранной роли необходимо выбрать город')
 			return
 		}
 
@@ -111,7 +148,7 @@ export default function Entrance() {
 					email,
 					password,
 					role,
-					city: city || null,
+					city: isCityRequiredForRegistration ? city : null,
 				}),
 			})
 
@@ -136,6 +173,17 @@ export default function Entrance() {
 		setIsLoginMode(!isLoginMode)
 		setError('')
 		setSuccess('')
+	}
+
+	const handleRegistrationRoleChange = e => {
+		const nextRoleCode = e.target.value
+		const nextRole = registrationRoles.find(item => item.code === nextRoleCode)
+
+		setRole(nextRoleCode)
+
+		if (!nextRole?.can_be_request_executor) {
+			setCity('')
+		}
 	}
 
 	return (
@@ -298,54 +346,53 @@ export default function Entrance() {
 
 					<div className='login-field'>
 						<label className='login-label'>
-							Город{' '}
-							{role === 'TECHNICIAN' && (
-								<span style={{ color: '#e53e3e' }}>*</span>
-							)}
-						</label>
-						<select
-							className='login-input'
-							style={{ cursor: 'pointer' }}
-							value={city}
-							onChange={e => setCity(e.target.value)}
-						>
-							<option value=''>— выберите город —</option>
-
-							{cities.map(cityItem => (
-								<option key={cityItem.id} value={cityItem.name}>
-									{cityItem.name}
-								</option>
-							))}
-						</select>
-					</div>
-
-					<div className='login-field'>
-						<label className='login-label'>
 							Роль <span style={{ color: '#e53e3e' }}>*</span>
 						</label>
+
 						<select
 							className='login-input'
-							style={{ cursor: 'pointer' }}
+							style={{ cursor: rolesLoading ? 'not-allowed' : 'pointer' }}
 							value={role}
-							onChange={e => {
-								const nextRole = e.target.value
-								setRole(nextRole)
-
-								if (nextRole !== 'TECHNICIAN') {
-									setCity('')
-								}
-							}}
+							onChange={handleRegistrationRoleChange}
+							disabled={rolesLoading || registrationRoles.length === 0}
 						>
-							<option value=''>— выберите роль —</option>
-							<option value='MANAGER'>Менеджер</option>
-							<option value='ROP'>РОП</option>
-							<option value='TECH_SUPPORT'>Тех. поддержка</option>
-							<option value='ACCOUNTANT'>Бухгалтер</option>
-							<option value='SENIOR_TECHNICIAN'>Старший монтажник</option>
-							<option value='TECHNICIAN'>Монтажник</option>
-							<option value='WAREHOUSE_MANAGER'>Заведующий складом</option>
+							{rolesLoading ? (
+								<option value=''>Загрузка ролей...</option>
+							) : registrationRoles.length === 0 ? (
+								<option value=''>Роли недоступны</option>
+							) : (
+								registrationRoles.map(roleItem => (
+									<option key={roleItem.code} value={roleItem.code}>
+										{roleItem.name}
+									</option>
+								))
+							)}
 						</select>
 					</div>
+
+					{isCityRequiredForRegistration && (
+						<div className='login-field'>
+							<label className='login-label'>
+								Город <span style={{ color: '#e53e3e' }}>*</span>
+							</label>
+
+							<select
+								className='login-input'
+								style={{ cursor: 'pointer' }}
+								value={city}
+								onChange={e => setCity(e.target.value)}
+								required
+							>
+								<option value=''>— выберите город —</option>
+
+								{cities.map(cityItem => (
+									<option key={cityItem.id} value={cityItem.name}>
+										{cityItem.name}
+									</option>
+								))}
+							</select>
+						</div>
+					)}
 
 					<button type='submit' className='login-btn'>
 						Зарегистрироваться

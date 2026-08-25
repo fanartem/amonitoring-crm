@@ -5,6 +5,7 @@ import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 import WarehouseItemModal from './WarehouseItemModal'
 import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
+import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
 
 const CATEGORIES = {
 	GPS_TRACKER: 'Трекер',
@@ -104,26 +105,6 @@ const HISTORY_ACTIONS = {
 		'Расходник принят на склад из инвентаря',
 }
 
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
-
-		return JSON.parse(jsonPayload).role
-	} catch {
-		return null
-	}
-}
-
 export default function Warehouse() {
 	const [items, setItems] = useState([])
 	const [groupedItems, setGroupedItems] = useState([])
@@ -175,8 +156,120 @@ export default function Warehouse() {
 	const fileInputRef = useRef(null)
 
 	const location = useLocation()
-	const userRole = getUserRole()
-	const canManageWarehouse = ['ADMIN', 'WAREHOUSE_MANAGER'].includes(userRole)
+	const currentUser = getStoredUser()
+
+	const canViewWarehouse =
+		hasAnyPermission(currentUser, [
+			'warehouse.view',
+			'warehouse.manage',
+			'warehouse.items.view',
+			'warehouse.items.manage',
+		]) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'ROP',
+			'MANAGER',
+			'WAREHOUSE_MANAGER',
+			'TECHNICIAN',
+			'SENIOR_TECHNICIAN',
+		])
+
+	const canManageWarehouse =
+		hasAnyPermission(currentUser, [
+			'warehouse.manage',
+			'warehouse.items.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canCreateWarehouseItem =
+		hasAnyPermission(currentUser, [
+			'warehouse.items.create',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canEditWarehouseItem =
+		hasAnyPermission(currentUser, [
+			'warehouse.items.edit',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canDeleteWarehouseItem =
+		hasAnyPermission(currentUser, [
+			'warehouse.items.delete',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canRestoreWarehouseItem =
+		hasAnyPermission(currentUser, [
+			'warehouse.items.restore',
+			'warehouse.trash.manage',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canViewWarehouseTrash =
+		hasAnyPermission(currentUser, [
+			'warehouse.trash.view',
+			'warehouse.deleted.view',
+			'warehouse.items.restore',
+			'warehouse.items.delete',
+			'warehouse.items.manage',
+			'warehouse.manage',
+			'trash.view',
+			'trash.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'WAREHOUSE_MANAGER'])
+
+	const canImportWarehouse =
+		hasAnyPermission(currentUser, [
+			'warehouse.import',
+			'warehouse.items.import',
+			'warehouse.items.create',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canTransferWarehouse =
+		hasAnyPermission(currentUser, [
+			'warehouse.transfer',
+			'warehouse.items.transfer',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canAssignWarehouseToEmployee =
+		hasAnyPermission(currentUser, [
+			'warehouse.employee_equipment.manage',
+			'warehouse.employee_inventory.manage',
+			'warehouse.technician_inventory.manage',
+			'warehouse.inventory.manage_all',
+			'warehouse.items.assign',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canAttachWarehouseItemToVehicle =
+		hasAnyPermission(currentUser, [
+			'warehouse.vehicle_equipment.manage',
+			'vehicles.equipment.manage',
+			'vehicles.equipment.attach',
+			'vehicles.manage',
+			'warehouse.items.manage',
+			'warehouse.manage',
+		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+
+	const canViewWarehouseHistory =
+		hasAnyPermission(currentUser, [
+			'warehouse.history.view',
+			'warehouse.items.history.view',
+			'warehouse.items.view',
+			'warehouse.view',
+			'warehouse.manage',
+		]) ||
+		canViewWarehouse ||
+		canManageWarehouse
+
 	const itemRefs = useRef({})
 	const [highlightedItemId, setHighlightedItemId] = useState(null)
 	const [pendingHighlightItemId, setPendingHighlightItemId] = useState(null)
@@ -190,12 +283,18 @@ export default function Warehouse() {
 	}, [filters, viewMode])
 
 	useEffect(() => {
+		if (!canViewWarehouseTrash && viewMode === 'trash') {
+			setViewMode('active')
+		}
+	}, [canViewWarehouseTrash, viewMode])
+
+	useEffect(() => {
 		fetchCities()
 
-		if (canManageWarehouse) {
+		if (canAssignWarehouseToEmployee) {
 			fetchTechnicians()
 		}
-	}, [])
+	}, [canAssignWarehouseToEmployee])
 
 	useEffect(() => {
 		const highlightWarehouseItemId = location.state?.highlightWarehouseItemId
@@ -326,6 +425,12 @@ export default function Warehouse() {
 	}
 
 	const fetchDeletedItems = async () => {
+		if (!canViewWarehouseTrash) {
+			setItems([])
+			setLoading(false)
+			return
+		}
+
 		setLoading(true)
 
 		try {
@@ -380,6 +485,11 @@ export default function Warehouse() {
 		setFilters({ search: '', category: '', status: '', city_id: '' })
 
 	const handleDelete = async id => {
+		if (!canDeleteWarehouseItem) {
+			alert('Недостаточно прав для удаления оборудования')
+			return
+		}
+
 		if (!window.confirm('Переместить оборудование в корзину?')) return
 
 		try {
@@ -402,6 +512,11 @@ export default function Warehouse() {
 	}
 
 	const handleRestore = async id => {
+		if (!canRestoreWarehouseItem) {
+			alert('Недостаточно прав для восстановления оборудования')
+			return
+		}
+
 		if (!window.confirm('Восстановить оборудование из корзины?')) return
 
 		try {
@@ -426,6 +541,12 @@ export default function Warehouse() {
 		const file = e.target.files[0]
 
 		if (!file) return
+
+		if (!canImportWarehouse) {
+			alert('Недостаточно прав для импорта оборудования')
+			e.target.value = ''
+			return
+		}
 
 		try {
 			const defaultFromCityId = getDefaultAlmatyCityId()
@@ -452,6 +573,11 @@ export default function Warehouse() {
 
 	const handleConfirmImport = async () => {
 		if (!pendingImportFile) return
+
+		if (!canImportWarehouse) {
+			alert('Недостаточно прав для импорта оборудования')
+			return
+		}
 
 		if (!importFromCityId) {
 			alert('Выберите город отправления')
@@ -1050,6 +1176,11 @@ export default function Warehouse() {
 
 	// СКАЧАТЬ ШАБЛОН CSV
 	const downloadTemplate = async () => {
+		if (!canImportWarehouse) {
+			alert('Недостаточно прав для скачивания шаблона импорта')
+			return
+		}
+
 		const res = await fetch(`${API_BASE_URL}/warehouse/template`, {
 			headers: getAuthHeaders(),
 		})
@@ -1066,6 +1197,11 @@ export default function Warehouse() {
 	}
 
 	const openEdit = item => {
+		if (!canEditWarehouseItem) {
+			alert('Недостаточно прав для редактирования оборудования')
+			return
+		}
+
 		setEditItem(item)
 		setIsModalOpen(true)
 	}
@@ -1151,6 +1287,11 @@ export default function Warehouse() {
 	}
 
 	const openTransferModal = item => {
+		if (!canTransferWarehouse) {
+			alert('Недостаточно прав для переноса оборудования')
+			return
+		}
+
 		setTransferItem(item)
 		setTransferForm({
 			from_city_id: item.city_id || '',
@@ -1171,6 +1312,11 @@ export default function Warehouse() {
 	}
 
 	const openAssignModal = item => {
+		if (!canAssignWarehouseToEmployee) {
+			alert('Недостаточно прав для выдачи оборудования сотруднику')
+			return
+		}
+
 		setAssignItem(item)
 		setAssignForm({
 			target_user_id: '',
@@ -1189,7 +1335,7 @@ export default function Warehouse() {
 	}
 
 	const canAttachItemToVehicle = item => {
-		if (!canManageWarehouse) return false
+		if (!canAttachWarehouseItemToVehicle) return false
 		if (viewMode !== 'active') return false
 		if (!item) return false
 		if (item.status !== 'IN_STOCK') return false
@@ -1199,6 +1345,11 @@ export default function Warehouse() {
 	}
 
 	const openAttachVehicleModal = item => {
+		if (!canAttachWarehouseItemToVehicle) {
+			alert('Недостаточно прав для прямой привязки оборудования к авто')
+			return
+		}
+
 		setAttachVehicleItem(item)
 	}
 
@@ -1222,6 +1373,11 @@ export default function Warehouse() {
 
 	const handleAssignSubmit = async e => {
 		e.preventDefault()
+
+		if (!canAssignWarehouseToEmployee) {
+			alert('Недостаточно прав для выдачи оборудования сотруднику')
+			return
+		}
 
 		if (!assignItem) return
 
@@ -1289,6 +1445,11 @@ export default function Warehouse() {
 
 	const handleTransferSubmit = async e => {
 		e.preventDefault()
+
+		if (!canTransferWarehouse) {
+			alert('Недостаточно прав для переноса оборудования')
+			return
+		}
 
 		if (!transferItem) return
 
@@ -1562,13 +1723,15 @@ export default function Warehouse() {
 					<div className='cell-value warehouse-cell-actions'>
 						{viewMode === 'active' ? (
 							<div className='warehouse-actions'>
-								<button
-									className='warehouse-action-btn warehouse-history-btn'
-									onClick={() => openHistoryModal(item)}
-									title='История оборудования'
-								>
-									🕘
-								</button>
+								{canViewWarehouseHistory && (
+									<button
+										className='warehouse-action-btn warehouse-history-btn'
+										onClick={() => openHistoryModal(item)}
+										title='История оборудования'
+									>
+										🕘
+									</button>
+								)}
 
 								{canAttachItemToVehicle(item) && (
 									<button
@@ -1580,7 +1743,7 @@ export default function Warehouse() {
 									</button>
 								)}
 
-								{canManageWarehouse && item.status === 'IN_STOCK' && (
+								{canAssignWarehouseToEmployee && item.status === 'IN_STOCK' && (
 									<button
 										className='warehouse-action-btn warehouse-assign-btn'
 										onClick={() => openAssignModal(item)}
@@ -1590,50 +1753,56 @@ export default function Warehouse() {
 									</button>
 								)}
 
-								{canManageWarehouse && (
-									<>
-										<button
-											className='warehouse-action-btn warehouse-transfer-btn'
-											onClick={() => openTransferModal(item)}
-											title='Перенести в другой город'
-										>
-											↔
-										</button>
+								{canTransferWarehouse && (
+									<button
+										className='warehouse-action-btn warehouse-transfer-btn'
+										onClick={() => openTransferModal(item)}
+										title='Перенести в другой город'
+									>
+										↔
+									</button>
+								)}
 
-										<button
-											className='warehouse-action-btn warehouse-edit-btn'
-											onClick={() => openEdit(item)}
-											title='Редактировать'
-										>
-											✎
-										</button>
+								{canEditWarehouseItem && (
+									<button
+										className='warehouse-action-btn warehouse-edit-btn'
+										onClick={() => openEdit(item)}
+										title='Редактировать'
+									>
+										✎
+									</button>
+								)}
 
-										<button
-											className='warehouse-action-btn warehouse-delete-btn'
-											onClick={() => handleDelete(item.id)}
-											title='Переместить в корзину'
-										>
-											🗑
-										</button>
-									</>
+								{canDeleteWarehouseItem && (
+									<button
+										className='warehouse-action-btn warehouse-delete-btn'
+										onClick={() => handleDelete(item.id)}
+										title='Переместить в корзину'
+									>
+										🗑
+									</button>
 								)}
 							</div>
 						) : (
 							<div className='warehouse-actions'>
-								<button
-									className='warehouse-action-btn warehouse-history-btn'
-									onClick={() => openHistoryModal(item)}
-									title='История оборудования'
-								>
-									🕘
-								</button>
+								{canViewWarehouseHistory && (
+									<button
+										className='warehouse-action-btn warehouse-history-btn'
+										onClick={() => openHistoryModal(item)}
+										title='История оборудования'
+									>
+										🕘
+									</button>
+								)}
 
-								<button
-									className='warehouse-restore-btn'
-									onClick={() => handleRestore(item.id)}
-								>
-									Восстановить
-								</button>
+								{canRestoreWarehouseItem && (
+									<button
+										className='warehouse-restore-btn'
+										onClick={() => handleRestore(item.id)}
+									>
+										Восстановить
+									</button>
+								)}
 							</div>
 						)}
 					</div>
@@ -1670,39 +1839,45 @@ export default function Warehouse() {
 			>
 				<h2>Склад оборудования</h2>
 				<div className='warehouse-header-actions'>
-					{viewMode === 'active' && canManageWarehouse && (
+					{viewMode === 'active' && (
 						<>
-							<button
-								onClick={downloadTemplate}
-								className='warehouse-top-btn btn-template'
-							>
-								📥 Шаблон CSV
-							</button>
+							{canImportWarehouse && (
+								<>
+									<button
+										onClick={downloadTemplate}
+										className='warehouse-top-btn btn-template'
+									>
+										📥 Шаблон CSV
+									</button>
 
-							<input
-								type='file'
-								accept='.csv'
-								ref={fileInputRef}
-								style={{ display: 'none' }}
-								onChange={handleFileUpload}
-							/>
+									<input
+										type='file'
+										accept='.csv'
+										ref={fileInputRef}
+										style={{ display: 'none' }}
+										onChange={handleFileUpload}
+									/>
 
-							<button
-								onClick={() => fileInputRef.current.click()}
-								className='warehouse-top-btn btn-import'
-							>
-								⬆️ Импорт CSV
-							</button>
+									<button
+										onClick={() => fileInputRef.current?.click()}
+										className='warehouse-top-btn btn-import'
+									>
+										⬆️ Импорт CSV
+									</button>
+								</>
+							)}
 
-							<button
-								className='btn-green warehouse-top-btn btn-add'
-								onClick={() => {
-									setEditItem(null)
-									setIsModalOpen(true)
-								}}
-							>
-								+ Добавить
-							</button>
+							{canCreateWarehouseItem && (
+								<button
+									className='btn-green warehouse-top-btn btn-add'
+									onClick={() => {
+										setEditItem(null)
+										setIsModalOpen(true)
+									}}
+								>
+									+ Добавить
+								</button>
+							)}
 						</>
 					)}
 					<div className='warehouse-view-toggle'>
@@ -1714,13 +1889,15 @@ export default function Warehouse() {
 							Активные
 						</button>
 
-						<button
-							type='button'
-							className={`warehouse-toggle-btn ${viewMode === 'trash' ? 'active' : ''}`}
-							onClick={() => setViewMode('trash')}
-						>
-							Корзина
-						</button>
+						{canViewWarehouseTrash && (
+							<button
+								type='button'
+								className={`warehouse-toggle-btn ${viewMode === 'trash' ? 'active' : ''}`}
+								onClick={() => setViewMode('trash')}
+							>
+								Корзина
+							</button>
+						)}
 					</div>
 				</div>
 			</div>

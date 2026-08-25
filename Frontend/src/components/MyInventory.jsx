@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders } from '../api'
+import {
+	getStoredUser,
+	hasAnyPermission,
+	hasLegacyRole,
+	toBool,
+} from '../utils/access'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 
@@ -44,7 +50,7 @@ const CATEGORY_ICONS = {
 	OTHER: 'fa-cube',
 }
 
-const getStatusClassName = (status) => {
+const getStatusClassName = status => {
 	if (status === 'ASSIGNED_TO_TECH') return 'status-progress'
 	if (status === 'INSTALLED' || status === 'USED') return 'status-done'
 	if (status === 'REPAIR' || status === 'RESERVED') return 'status-new'
@@ -53,13 +59,13 @@ const getStatusClassName = (status) => {
 	return 'status-new'
 }
 
-const getItemQuantity = (item) => {
+const getItemQuantity = item => {
 	if (Boolean(item.is_serialized)) return 1
 
 	return Number(item.quantity || 0)
 }
 
-const getItemIdentity = (item) => {
+const getItemIdentity = item => {
 	if (item.identifier_value) {
 		return `${item.identifier_type || 'ID'}: ${item.identifier_value}`
 	}
@@ -71,7 +77,7 @@ const getItemIdentity = (item) => {
 	return 'Без идентификатора'
 }
 
-const buildParams = (params) => {
+const buildParams = params => {
 	const searchParams = new URLSearchParams()
 
 	Object.entries(params).forEach(([key, value]) => {
@@ -87,16 +93,20 @@ const buildParams = (params) => {
 	return searchParams.toString()
 }
 
-function HistoryModal({ item, history, onClose }) {
+function HistoryModal({ item, history, loading, onClose }) {
 	if (!item) return null
 
 	return (
-		<div className='modal-backdrop'>
-			<div className='modal-content inventory-modal-wide'>
+		<div className='modal-overlay open' onClick={onClose}>
+			<div
+				className='modal-window inventory-modal-wide inventory-history-modal'
+				onClick={e => e.stopPropagation()}
+			>
 				<div className='modal-header'>
-					<h3>История предмета</h3>
-					<button className='modal-close' onClick={onClose}>
-						×
+					<span className='modal-title'>История предмета</span>
+
+					<button className='modal-close' type='button' onClick={onClose}>
+						&times;
 					</button>
 				</div>
 
@@ -105,11 +115,13 @@ function HistoryModal({ item, history, onClose }) {
 					<span>{getItemIdentity(item)}</span>
 				</div>
 
-				{history.length === 0 ? (
+				{loading ? (
+					<div className='empty-state'>Загрузка истории...</div>
+				) : history.length === 0 ? (
 					<div className='empty-state'>История пока пустая</div>
 				) : (
 					<div className='inventory-history-list'>
-						{history.map((row) => (
+						{history.map(row => (
 							<div key={row.id} className='inventory-history-row'>
 								<div className='inventory-history-main'>
 									<strong>{row.action}</strong>
@@ -143,12 +155,54 @@ function HistoryModal({ item, history, onClose }) {
 						))}
 					</div>
 				)}
+
+				<div className='modal-footer warehouse-modal-footer'>
+					<button className='modal-cancel-btn' type='button' onClick={onClose}>
+						Закрыть
+					</button>
+				</div>
 			</div>
 		</div>
 	)
 }
 
 export default function MyInventory() {
+	const currentUser = getStoredUser()
+
+	const canViewMyInventory =
+		hasAnyPermission(currentUser, [
+			'warehouse.my_inventory.view',
+			'warehouse.inventory.my.view',
+			'warehouse.inventory.view_own',
+			'warehouse.inventory.view',
+			'warehouse.employee_equipment.manage',
+			'my_inventory.view',
+		]) ||
+		toBool(currentUser?.can_be_request_executor) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'WAREHOUSE_MANAGER',
+			'SENIOR_TECHNICIAN',
+			'TECHNICIAN',
+		])
+
+	const canViewMyInventoryHistory =
+		hasAnyPermission(currentUser, [
+			'warehouse.my_inventory.history.view',
+			'warehouse.inventory.history.view',
+			'warehouse.items.history.view',
+			'warehouse.history.view',
+			'warehouse.my_inventory.view',
+			'warehouse.inventory.my.view',
+		]) ||
+		toBool(currentUser?.can_be_request_executor) ||
+		hasLegacyRole(currentUser, [
+			'ADMIN',
+			'WAREHOUSE_MANAGER',
+			'SENIOR_TECHNICIAN',
+			'TECHNICIAN',
+		])
+
 	const [inventory, setInventory] = useState([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState('')
@@ -177,14 +231,16 @@ export default function MyInventory() {
 	const [historyLoading, setHistoryLoading] = useState(false)
 
 	useEffect(() => {
+		if (!canViewMyInventory) return
+
 		fetchInventory()
-	}, [filters]) // eslint-disable-line react-hooks/exhaustive-deps
+	}, [filters, canViewMyInventory]) // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Debounce: применяем введённый текст поиска к filters.search
 	// через паузу в наборе, чтобы не дёргать сервер на каждую букву.
 	useEffect(() => {
 		const timeoutId = setTimeout(() => {
-			setFilters((prev) => {
+			setFilters(prev => {
 				const trimmed = searchInput.trim()
 				if (prev.search === trimmed) return prev
 				return { ...prev, search: trimmed }
@@ -222,7 +278,12 @@ export default function MyInventory() {
 		}
 	}
 
-	const fetchHistory = async (item) => {
+	const fetchHistory = async item => {
+		if (!canViewMyInventoryHistory) {
+			alert('Недостаточно прав для просмотра истории')
+			return
+		}
+
 		setHistoryItem(item)
 		setHistoryRows([])
 		setHistoryLoading(true)
@@ -248,10 +309,16 @@ export default function MyInventory() {
 		}
 	}
 
-	const handleFilterChange = (e) => {
+	const closeHistoryModal = () => {
+		setHistoryItem(null)
+		setHistoryRows([])
+		setHistoryLoading(false)
+	}
+
+	const handleFilterChange = e => {
 		const { name, value, type, checked } = e.target
 
-		setFilters((prev) => ({
+		setFilters(prev => ({
 			...prev,
 			[name]: type === 'checkbox' ? checked : value,
 		}))
@@ -267,15 +334,15 @@ export default function MyInventory() {
 		})
 	}
 
-	const toggleCategory = (category) => {
-		setExpandedCategories((prev) => ({
+	const toggleCategory = category => {
+		setExpandedCategories(prev => ({
 			...prev,
 			[category]: !prev[category],
 		}))
 	}
 
-	const toggleGroup = (groupKey) => {
-		setExpandedGroups((prev) => ({
+	const toggleGroup = groupKey => {
+		setExpandedGroups(prev => ({
 			...prev,
 			[groupKey]: !prev[groupKey],
 		}))
@@ -293,6 +360,16 @@ export default function MyInventory() {
 			([key, value]) => key !== 'search' && Boolean(value),
 		).length
 
+	if (!canViewMyInventory) {
+		return (
+			<div className='requests-page-container'>
+				<div className='empty-state'>
+					Недостаточно прав для просмотра моего инвентаря
+				</div>
+			</div>
+		)
+	}
+
 	return (
 		<div className='requests-page-container'>
 			<div className='employees-header'>
@@ -302,7 +379,7 @@ export default function MyInventory() {
 			<button
 				type='button'
 				className='mobile-filters-toggle'
-				onClick={() => setShowMobileFilters((prev) => !prev)}
+				onClick={() => setShowMobileFilters(prev => !prev)}
 			>
 				<span className='mobile-filters-toggle-label'>
 					<i className='fa-solid fa-filter'></i>
@@ -330,7 +407,7 @@ export default function MyInventory() {
 							}
 							name='search'
 							value={searchInput}
-							onChange={(e) => setSearchInput(e.target.value)}
+							onChange={e => setSearchInput(e.target.value)}
 							placeholder='Название, IMEI, серийник...'
 						/>
 					</div>
@@ -405,7 +482,7 @@ export default function MyInventory() {
 				<div className='empty-state'>Инвентарь пуст</div>
 			) : (
 				<div className='inventory-tree'>
-					{inventory.map((category) => {
+					{inventory.map(category => {
 						// У монтажника собственный инвентарь всегда развёрнут по умолчанию.
 						const isCategoryOpen = expandedCategories[category.category] ?? true
 
@@ -449,7 +526,7 @@ export default function MyInventory() {
 
 								{isCategoryOpen && (
 									<div className='inventory-category-body inventory-reveal'>
-										{category.groups.map((group) => {
+										{category.groups.map(group => {
 											const groupKey = `${category.category}-${group.group_key}`
 											const isGroupOpen = expandedGroups[groupKey] ?? true
 
@@ -485,7 +562,7 @@ export default function MyInventory() {
 
 													{isGroupOpen && (
 														<div className='inventory-items-list inventory-reveal'>
-															{group.items.map((item) => (
+															{group.items.map(item => (
 																<div
 																	key={item.id}
 																	className={`inventory-item-card ${getStatusClassName(
@@ -495,16 +572,26 @@ export default function MyInventory() {
 																	<div className='inventory-item-main'>
 																		<div>
 																			<strong>{item.name}</strong>
+
 																			<div className='inventory-item-subtitle'>
 																				{item.manufacturer || '—'}{' '}
 																				{item.model ? `· ${item.model}` : ''}
 																			</div>
+
 																			<div className='inventory-item-subtitle'>
 																				{getItemIdentity(item)}
 																			</div>
 																		</div>
 
 																		<div className='inventory-item-badges'>
+																			<span
+																				className={`status-badge ${getStatusClassName(
+																					item.status,
+																				)}`}
+																			>
+																				{STATUSES[item.status] || item.status}
+																			</span>
+
 																			<span className='inventory-qty-badge'>
 																				{getItemQuantity(item)} шт.
 																			</span>
@@ -523,6 +610,18 @@ export default function MyInventory() {
 																			{item.note}
 																		</div>
 																	)}
+
+																	{canViewMyInventoryHistory && (
+																		<div className='inventory-card-actions'>
+																			<button
+																				className='btn-details'
+																				type='button'
+																				onClick={() => fetchHistory(item)}
+																			>
+																				История
+																			</button>
+																		</div>
+																	)}
 																</div>
 															))}
 														</div>
@@ -536,6 +635,15 @@ export default function MyInventory() {
 						)
 					})}
 				</div>
+			)}
+
+			{historyItem && (
+				<HistoryModal
+					item={historyItem}
+					history={historyRows}
+					loading={historyLoading}
+					onClose={closeHistoryModal}
+				/>
 			)}
 		</div>
 	)

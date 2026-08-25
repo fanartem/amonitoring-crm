@@ -32,6 +32,13 @@ ALMATY_TZ = timezone(timedelta(hours=5))
 SUPPORT_STATUSES = ["NEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"]
 SUPPORT_PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"]
 
+SUPPORT_REQUEST_ASSIGNEE_PERMISSION_CODES = [
+    "support_requests.assign",
+    "support_requests.status.manage",
+    "support_requests.change_status",
+    "support_requests.manage",
+]
+
 
 def almaty_now():
     return datetime.now(ALMATY_TZ).replace(tzinfo=None)
@@ -81,6 +88,48 @@ def validate_support_priority(priority: str):
             status_code=400,
             detail="Некорректный приоритет заявки техподдержки"
         )
+
+
+def build_support_assignee_access_sql() -> tuple[str, list]:
+    legacy_placeholders = ", ".join(["%s"] * len(SUPPORT_REQUEST_ASSIGNEE_ROLES))
+    permission_placeholders = ", ".join(["%s"] * len(SUPPORT_REQUEST_ASSIGNEE_PERMISSION_CODES))
+
+    sql = f"""
+        (
+            u.role IN ({legacy_placeholders})
+            OR EXISTS (
+                SELECT 1
+                FROM roles assignee_role
+                JOIN role_permissions assignee_rp
+                    ON assignee_rp.role_id = assignee_role.id
+                JOIN permissions assignee_permission
+                    ON assignee_permission.id = assignee_rp.permission_id
+                WHERE assignee_role.code = u.role
+                  AND assignee_role.is_active = 1
+                  AND assignee_permission.is_active = 1
+                  AND assignee_permission.code IN ({permission_placeholders})
+            )
+        )
+    """
+
+    return sql, [*SUPPORT_REQUEST_ASSIGNEE_ROLES, *SUPPORT_REQUEST_ASSIGNEE_PERMISSION_CODES]
+
+
+def user_has_support_assignee_access(cursor, user_id: int) -> bool:
+    assignee_sql, assignee_values = build_support_assignee_access_sql()
+
+    cursor.execute(
+        f"""
+        SELECT 1
+        FROM users u
+        WHERE u.id = %s
+          AND {assignee_sql}
+        LIMIT 1
+        """,
+        (user_id, *assignee_values),
+    )
+
+    return cursor.fetchone() is not None
 
 
 def validate_client(cursor, client_id: int) -> dict:
@@ -164,14 +213,17 @@ def validate_support_assignee(cursor, user_id: int | None) -> dict | None:
     cursor.execute(
         """
         SELECT
-            id,
-            name,
-            role,
-            is_approved,
-            is_active,
-            deleted_at
-        FROM users
-        WHERE id = %s
+            u.id,
+            u.name,
+            u.role,
+            u.is_approved,
+            u.is_active,
+            u.deleted_at,
+            r.name AS role_name,
+            r.is_active AS role_is_active
+        FROM users u
+        LEFT JOIN roles r ON r.code = u.role
+        WHERE u.id = %s
         """,
         (user_id,)
     )
@@ -187,12 +239,6 @@ def validate_support_assignee(cursor, user_id: int | None) -> dict | None:
             detail="Монтажников нельзя назначать исполнителями заявок техподдержки"
         )
 
-    if user["role"] not in SUPPORT_REQUEST_ASSIGNEE_ROLES:
-        raise HTTPException(
-            status_code=400,
-            detail="Эту роль нельзя назначить исполнителем заявки техподдержки"
-        )
-
     if not user.get("is_approved"):
         raise HTTPException(
             status_code=400,
@@ -203,6 +249,18 @@ def validate_support_assignee(cursor, user_id: int | None) -> dict | None:
         raise HTTPException(
             status_code=400,
             detail="Исполнитель удалён или неактивен"
+        )
+
+    if user.get("role_is_active") is not None and not user.get("role_is_active"):
+        raise HTTPException(
+            status_code=400,
+            detail="Роль исполнителя отключена"
+        )
+
+    if not user_has_support_assignee_access(cursor, user_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Эту роль нельзя назначить исполнителем заявки техподдержки"
         )
 
     return user
@@ -359,26 +417,31 @@ def get_support_request_assignees(
 
     try:
         with connection.cursor() as cursor:
-            placeholders = ", ".join(["%s"] * len(SUPPORT_REQUEST_ASSIGNEE_ROLES))
+            assignee_sql, assignee_values = build_support_assignee_access_sql()
 
             cursor.execute(
                 f"""
                 SELECT
-                    id,
-                    name,
-                    email,
-                    role,
-                    city
-                FROM users
-                WHERE role IN ({placeholders})
-                  AND is_approved = 1
-                  AND is_active = 1
-                  AND deleted_at IS NULL
+                    u.id,
+                    u.name,
+                    u.email,
+                    u.role,
+                    u.city,
+                    r.name AS role_name,
+                    r.badge_color AS role_badge_color
+                FROM users u
+                LEFT JOIN roles r ON r.code = u.role
+                WHERE {assignee_sql}
+                  AND u.role NOT IN (%s, %s)
+                  AND u.is_approved = 1
+                  AND u.is_active = 1
+                  AND u.deleted_at IS NULL
+                  AND (r.id IS NULL OR r.is_active = 1)
                 ORDER BY
-                    FIELD(role, 'TECH_SUPPORT', 'MANAGER', 'ACCOUNTANT', 'WAREHOUSE_MANAGER', 'ROP', 'ADMIN'),
-                    name ASC
+                    FIELD(u.role, 'TECH_SUPPORT', 'MANAGER', 'ACCOUNTANT', 'WAREHOUSE_MANAGER', 'ROP', 'ADMIN'),
+                    u.name ASC
                 """,
-                tuple(SUPPORT_REQUEST_ASSIGNEE_ROLES)
+                tuple([*assignee_values, TECHNICIAN, SENIOR_TECHNICIAN])
             )
 
             return cursor.fetchall()
