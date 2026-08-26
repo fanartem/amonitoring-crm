@@ -1,150 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { NavLink } from 'react-router'
-import { getStoredUser, hasAnyPermission, toBool } from '../utils/access'
+import { canAccessRoute, getStoredUser } from '../utils/access'
 
 export default function Sidebar() {
 	const [isOpen, setIsOpen] = useState(false)
 
 	const currentUser = getStoredUser()
-	const userRole = currentUser.role || null
-
-	const isAdmin = userRole === 'ADMIN'
-	const isRop = userRole === 'ROP'
-	const isManager = userRole === 'MANAGER'
-	const isTechSupport = userRole === 'TECH_SUPPORT'
-	const isAccountant = userRole === 'ACCOUNTANT'
-	const isTechnician = userRole === 'TECHNICIAN'
-	const isSeniorTechnician = userRole === 'SENIOR_TECHNICIAN'
-	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
-
-	/*
-		Новая логика:
-		- Супер-Админ видит всё через hasPermission / hasAnyPermission.
-		- Основной источник — permissions из localStorage.user_data.permissions.
-		- Legacy fallback временно оставляем, чтобы старые роли не сломались,
-		  пока все страницы не переведены полностью на permissions.
-	*/
-
-	const canViewRequests =
-		hasAnyPermission(currentUser, [
-			'requests.view',
-			'requests.view_all',
-			'requests.view_own',
-			'requests.view_assigned',
-			'requests.create',
-		]) ||
-		isAdmin ||
-		isRop ||
-		isManager ||
-		isTechSupport ||
-		isAccountant ||
-		isWarehouseManager ||
-		isTechnician ||
-		isSeniorTechnician
-
-	const canViewCalendar =
-		hasAnyPermission(currentUser, [
-			'calendar.view',
-			'requests.view',
-			'requests.view_all',
-			'requests.view_own',
-			'requests.view_assigned',
-		]) || canViewRequests
-
-	const canViewClients =
-		hasAnyPermission(currentUser, [
-			'clients.view',
-			'clients.view_all',
-			'clients.view_own',
-			'clients.manage',
-		]) ||
-		isAdmin ||
-		isRop ||
-		isManager ||
-		isTechSupport ||
-		isAccountant ||
-		isWarehouseManager
-
-	const canViewPrices =
-		hasAnyPermission(currentUser, [
-			'prices.view',
-			'prices.manage',
-			'base_prices.view',
-			'client_prices.view',
-		]) ||
-		isAdmin ||
-		isRop ||
-		isManager ||
-		isTechSupport ||
-		isAccountant
-
-	const canViewApprovals =
-		hasAnyPermission(currentUser, ['employees.approve', 'employees.manage']) ||
-		isAdmin ||
-		isRop
-
-	const canViewEmployees = true
-
-	const canViewWarehouse =
-		hasAnyPermission(currentUser, [
-			'warehouse.view',
-			'warehouse.manage',
-			'warehouse.items.view',
-			'warehouse.items.manage',
-		]) ||
-		isAdmin ||
-		isWarehouseManager
-
-	const canViewFullInventory =
-		hasAnyPermission(currentUser, [
-			'warehouse.view',
-			'warehouse.manage',
-			'warehouse.items.view',
-			'warehouse.items.manage',
-		]) ||
-		isAdmin ||
-		isWarehouseManager ||
-		isSeniorTechnician
-
-	const canViewMyInventory =
-		toBool(currentUser.can_be_request_executor) ||
-		hasAnyPermission(currentUser, [
-			'warehouse.my_inventory.view',
-			'warehouse.inventory.view_own',
-		]) ||
-		isTechnician ||
-		isSeniorTechnician
-
-	const canViewTrash =
-		hasAnyPermission(currentUser, [
-			'trash.view',
-			'trash.manage',
-			'clients.restore',
-			'vehicles.restore',
-			'clients.delete',
-			'vehicles.delete',
-		]) ||
-		isAdmin ||
-		isRop
-
-	const canViewReports =
-		hasAnyPermission(currentUser, ['reports.view', 'reports.manage']) ||
-		canViewPrices
-
-	const canViewSupportRequests =
-		hasAnyPermission(currentUser, [
-			'support_requests.view',
-			'support_requests.create',
-			'support_requests.manage',
-		]) ||
-		isAdmin ||
-		isRop ||
-		isManager ||
-		isTechSupport ||
-		isAccountant ||
-		isWarehouseManager
-
-	const canViewSettings = true
+	const canView = routeKey => canAccessRoute(routeKey, currentUser)
 
 	useEffect(() => {
 		const handleOutsideClick = e => {
@@ -182,7 +44,7 @@ export default function Sidebar() {
 			</button>
 
 			<div className='sidebar-top'>
-				{canViewCalendar && (
+				{canView('calendar') && (
 					<NavLink
 						to='/calendar'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -193,7 +55,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewRequests && (
+				{canView('requests') && (
 					<NavLink
 						to='/requests'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -204,7 +66,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewSupportRequests && (
+				{canView('support_requests') && (
 					<NavLink
 						to='/support-requests'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -215,7 +77,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewClients && (
+				{canView('clients') && (
 					<NavLink
 						to='/clients'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -226,7 +88,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewPrices && (
+				{canView('prices') && (
 					<NavLink
 						to='/prices'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -248,7 +110,7 @@ export default function Sidebar() {
 					</NavLink>
 				)} */}
 
-				{canViewEmployees && (
+				{canView('employees') && (
 					<NavLink
 						to='/employees'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -259,7 +121,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewApprovals && (
+				{canView('approvals') && (
 					<NavLink
 						to='/approvals'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -270,7 +132,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewWarehouse && (
+				{canView('warehouse') && (
 					<NavLink
 						to='/warehouse'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -281,7 +143,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewMyInventory && (
+				{canView('my_inventory') && (
 					<NavLink
 						to='/my-inventory'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -292,7 +154,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewFullInventory && (
+				{canView('inventory') && (
 					<NavLink
 						to='/inventory'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -303,7 +165,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{canViewTrash && (
+				{canView('trash') && (
 					<NavLink
 						to='/trash'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -316,7 +178,7 @@ export default function Sidebar() {
 			</div>
 
 			<div className='sidebar-bottom'>
-				{canViewSettings && (
+				{canView('settings') && (
 					<NavLink
 						to='/settings'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}

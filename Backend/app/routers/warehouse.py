@@ -5,7 +5,13 @@ import json
 
 from app.database import get_connection
 from app.security import get_current_user
-from app.permissions import has_any_permission, is_super_admin
+from app.permissions import (
+    has_any_permission,
+    is_super_admin,
+    get_data_scope,
+    DATA_SCOPE_CITY,
+    DATA_SCOPE_CITY_ASSIGNED,
+)
 from app.schemas import (
     WarehouseItemCreate,
     WarehouseItemUpdate,
@@ -520,6 +526,109 @@ def require_inventory_full_read(current_user: dict):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра инвентаря монтажников"
+        )
+
+CITY_SCOPED_DATA_SCOPES = [DATA_SCOPE_CITY, DATA_SCOPE_CITY_ASSIGNED]
+
+
+def is_city_scoped_warehouse_user(current_user: dict) -> bool:
+    """
+    Пользователь, который работает со складом только своего города.
+
+    Право "Просмотр склада" отвечает за сам факт доступа к складу,
+    а область данных роли (data_scope) — за его широту.
+    Управление складом снимает ограничение по городу.
+    """
+    if is_super_admin(current_user):
+        return False
+
+    if can_manage_warehouse(current_user):
+        return False
+
+    return get_data_scope(current_user) in CITY_SCOPED_DATA_SCOPES
+
+
+def resolve_user_city_id(cursor, current_user: dict, strict: bool = True):
+    """
+    users.city хранится строкой, склад привязан к cities.id.
+    Сопоставляем по названию. strict=False возвращает None вместо ошибки —
+    это нужно там, где отсутствие города не должно ломать всю страницу.
+    """
+    user_city = str(current_user.get("city") or "").strip()
+
+    if not user_city:
+        if not strict:
+            return None
+
+        raise HTTPException(
+            status_code=400,
+            detail="В вашем профиле не указан город. Обратитесь к администратору.",
+        )
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM cities
+        WHERE is_active = 1
+          AND LOWER(TRIM(name)) = LOWER(TRIM(%s))
+        LIMIT 1
+        """,
+        (user_city,),
+    )
+
+    city = cursor.fetchone()
+
+    if not city:
+        if not strict:
+            return None
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Город «{user_city}» из вашего профиля не найден в справочнике городов. "
+                "Обратитесь к администратору."
+            ),
+        )
+
+    return int(city["id"])
+
+
+def apply_warehouse_city_scope(cursor, current_user: dict, requested_city_id):
+    """
+    Возвращает city_id, который реально надо применить к выборке склада.
+    Городскому пользователю не даём переопределить город параметром запроса.
+    """
+    if not is_city_scoped_warehouse_user(current_user):
+        return requested_city_id
+
+    return resolve_user_city_id(cursor, current_user)
+
+
+def ensure_can_attach_stock_item(cursor, current_user: dict, item: dict):
+    """
+    Проверка права взять позицию напрямую со склада при привязке к заявке.
+    """
+    if can_manage_warehouse(current_user):
+        return
+
+    if not can_read_warehouse_full(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Добавлять оборудование со склада можно только с правом "
+                "просмотра или управления складом"
+            ),
+        )
+
+    if not is_city_scoped_warehouse_user(current_user):
+        return
+
+    user_city_id = resolve_user_city_id(cursor, current_user)
+
+    if int(item.get("city_id") or 0) != user_city_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Оборудование можно брать только со склада своего города",
         )
 
 def validate_warehouse_item(data: dict):
@@ -2974,6 +3083,8 @@ def get_warehouse_items_grouped(
 
     try:
         with connection.cursor() as cursor:
+            city_id = apply_warehouse_city_scope(cursor, current_user, city_id)
+
             sql = """
             SELECT 
                 wi.id,
@@ -3217,6 +3328,8 @@ def get_warehouse_items(
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
+            city_id = apply_warehouse_city_scope(cursor, current_user, city_id)
+
             sql = """
             SELECT 
                 wi.id,
@@ -3336,7 +3449,7 @@ def get_warehouse_item_history(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id
+                SELECT id, city_id
                 FROM warehouse_items
                 WHERE id = %s
                 """,
@@ -3346,6 +3459,15 @@ def get_warehouse_item_history(
 
             if not item:
                 raise HTTPException(status_code=404, detail="Оборудование не найдено")
+
+            if is_city_scoped_warehouse_user(current_user):
+                user_city_id = resolve_user_city_id(cursor, current_user)
+
+                if int(item.get("city_id") or 0) != user_city_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для просмотра истории оборудования другого города",
+                    )
 
             cursor.execute(
                 """
@@ -4585,11 +4707,9 @@ def get_vehicle_equipment(
                 LEFT JOIN vehicles v ON ve.vehicle_id = v.id
                 LEFT JOIN users u ON ve.attached_by = u.id
                 LEFT JOIN cities city ON wi.city_id = city.id
-                WHERE rv.vehicle_id = %s
-                    AND r.is_deleted = 0
-                    AND wi.is_deleted = 0
-                    AND wi.status = 'INSTALLED'
-                ORDER BY re.attached_at DESC
+                WHERE ve.vehicle_id = %s
+                  AND ve.is_active = 1
+                ORDER BY ve.attached_at DESC
                 """,
                 (vehicle_id,)
             )
@@ -5403,6 +5523,23 @@ def get_request_equipment_cities(
 
     try:
         with connection.cursor() as cursor:
+            if is_city_scoped_warehouse_user(current_user):
+                city_id = resolve_user_city_id(cursor, current_user, strict=False)
+
+                if city_id is None:
+                    return []
+
+                cursor.execute(
+                    """
+                    SELECT id, name
+                    FROM cities
+                    WHERE id = %s
+                    """,
+                    (city_id,),
+                )
+
+                return cursor.fetchall()
+
             cursor.execute(
                 """
                 SELECT id, name
@@ -5413,6 +5550,53 @@ def get_request_equipment_cities(
             )
 
             return cursor.fetchall()
+    finally:
+        connection.close()
+
+@router.get("/cities")
+def get_warehouse_cities(current_user: dict = Depends(get_current_user)):
+    """
+    Города склада, доступные текущему пользователю.
+    Городскому пользователю отдаём только его город и просим фронт
+    зафиксировать фильтр.
+    """
+    require_warehouse_full_read(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            if is_city_scoped_warehouse_user(current_user):
+                city_id = resolve_user_city_id(cursor, current_user)
+
+                cursor.execute(
+                    """
+                    SELECT id, name
+                    FROM cities
+                    WHERE id = %s
+                    """,
+                    (city_id,),
+                )
+
+                return {
+                    "cities": cursor.fetchall(),
+                    "locked_city_id": city_id,
+                }
+
+            cursor.execute(
+                """
+                SELECT id, name
+                FROM cities
+                WHERE is_active = 1
+                ORDER BY name ASC
+                """
+            )
+
+            return {
+                "cities": cursor.fetchall(),
+                "locked_city_id": None,
+            }
+
     finally:
         connection.close()
 
@@ -5553,14 +5737,49 @@ def get_available_inventory_for_request_vehicle(
                 conditions.append("(" + " OR ".join(availability_clauses) + ")")
 
             else:
-                # Исполнитель заявки видит только свой инвентарь.
-                conditions.append(
+                # Исполнитель заявки всегда видит свой инвентарь.
+                availability_clauses = [
                     """
-                    wi.status = 'ASSIGNED_TO_TECH'
-                    AND wi.assigned_to_user_id = %s
+                    (
+                        wi.status = 'ASSIGNED_TO_TECH'
+                        AND wi.assigned_to_user_id = %s
+                    )
                     """
-                )
+                ]
                 values.append(current_user["id"])
+
+                # Право "Просмотр склада" добавляет складские остатки.
+                # Городскому пользователю — только его город.
+                if can_read_warehouse_full(current_user):
+                    if is_city_scoped_warehouse_user(current_user):
+                        stock_city_id = resolve_user_city_id(
+                            cursor,
+                            current_user,
+                            strict=False,
+                        )
+
+                        if stock_city_id is not None:
+                            availability_clauses.append(
+                                """
+                                (
+                                    wi.status = 'IN_STOCK'
+                                    AND wi.assigned_to_user_id IS NULL
+                                    AND wi.city_id = %s
+                                )
+                                """
+                            )
+                            values.append(stock_city_id)
+                    else:
+                        availability_clauses.append(
+                            """
+                            (
+                                wi.status = 'IN_STOCK'
+                                AND wi.assigned_to_user_id IS NULL
+                            )
+                            """
+                        )
+
+                conditions.append("(" + " OR ".join(availability_clauses) + ")")
 
             if city and city.strip():
                 conditions.append(
@@ -5819,11 +6038,8 @@ def attach_equipment_to_request_vehicle(
                         detail="Нельзя добавить оборудование из чужого инвентаря"
                     )
 
-            if item_is_from_stock and not has_warehouse_manage_access:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Добавлять оборудование напрямую со склада может только пользователь с правом управления складом"
-                )
+            if item_is_from_stock:
+                ensure_can_attach_stock_item(cursor, current_user, item)
 
             installed_by_user_id = None
 

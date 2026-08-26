@@ -119,6 +119,7 @@ export default function Warehouse() {
 	})
 	const [viewMode, setViewMode] = useState('active') // active | trash
 	const [cities, setCities] = useState([])
+	const [lockedCityId, setLockedCityId] = useState(null)
 	const [technicians, setTechnicians] = useState([])
 	const [transferItem, setTransferItem] = useState(null)
 	const [transferForm, setTransferForm] = useState({
@@ -312,9 +313,9 @@ export default function Warehouse() {
 			search: '',
 			category: '',
 			status: '',
-			city_id: '',
+			city_id: lockedCityId ? String(lockedCityId) : '',
 		})
-	}, [location.state?.searchActionId])
+	}, [location.state?.searchActionId, lockedCityId])
 
 	useEffect(() => {
 		if (!pendingHighlightItemId || items.length === 0) return
@@ -343,16 +344,24 @@ export default function Warehouse() {
 
 	const fetchCities = async () => {
 		try {
-			const res = await fetch(`${API_BASE_URL}/cities`, {
+			const res = await fetch(`${API_BASE_URL}/warehouse/cities`, {
 				headers: getAuthHeaders(),
 			})
 
-			if (res.ok) {
-				const data = await res.json()
-				setCities(
-					Array.isArray(data)
-						? data.filter(city => city.is_active !== false)
-						: [],
+			if (!res.ok) return
+
+			const data = await res.json()
+			const list = Array.isArray(data?.cities) ? data.cities : []
+			const locked = data?.locked_city_id ?? null
+
+			setCities(list)
+			setLockedCityId(locked)
+
+			if (locked) {
+				setFilters(prev =>
+					String(prev.city_id) === String(locked)
+						? prev
+						: { ...prev, city_id: String(locked) },
 				)
 			}
 		} catch (err) {
@@ -482,7 +491,12 @@ export default function Warehouse() {
 	const handleFilterChange = e =>
 		setFilters({ ...filters, [e.target.name]: e.target.value })
 	const resetFilters = () =>
-		setFilters({ search: '', category: '', status: '', city_id: '' })
+		setFilters({
+			search: '',
+			category: '',
+			status: '',
+			city_id: lockedCityId ? String(lockedCityId) : '',
+		})
 
 	const handleDelete = async id => {
 		if (!canDeleteWarehouseItem) {
@@ -1956,8 +1970,9 @@ export default function Warehouse() {
 						name='city_id'
 						value={filters.city_id}
 						onChange={handleFilterChange}
+						disabled={Boolean(lockedCityId)}
 					>
-						<option value=''>Все города</option>
+						{!lockedCityId && <option value=''>Все города</option>}
 
 						{cities.map(city => (
 							<option key={city.id} value={city.id}>

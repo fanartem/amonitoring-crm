@@ -32,6 +32,36 @@ export const hasLegacyRole = (user, roles = []) => {
 	return role ? roles.includes(role) : false
 }
 
+const MY_INVENTORY_VIEW_PERMISSIONS = [
+	'warehouse.my_inventory.view',
+	'warehouse.inventory.view_own',
+]
+
+const INVENTORY_FULL_VIEW_PERMISSIONS = [
+	'warehouse.manage',
+	'warehouse.items.manage',
+	'warehouse.inventory.view',
+	'warehouse.inventory.view_all',
+	'warehouse.inventory.manage',
+	'warehouse.inventory.manage_all',
+	'warehouse.inventory.assign',
+	'warehouse.inventory.transfer',
+	'warehouse.inventory.manage_employees',
+	'warehouse.employee_inventory.view',
+	'warehouse.employee_inventory.manage',
+	'warehouse.employees_inventory.view',
+	'warehouse.employees_inventory.manage',
+	'warehouse.employee_equipment.manage',
+	'warehouse.employees_equipment.manage',
+	'warehouse.technician_inventory.view',
+	'warehouse.technician_inventory.manage',
+	'warehouse.technicians_inventory.manage',
+	'warehouse.assigned_inventory.manage',
+	'warehouse.manage_employee_equipment',
+	'warehouse.manage_technician_inventory',
+	'warehouse.staff_inventory.manage',
+]
+
 export const canAccessRoute = (routeKey, user = getStoredUser()) => {
 	if (isSuperAdmin(user)) return true
 
@@ -151,25 +181,10 @@ export const canAccessRoute = (routeKey, user = getStoredUser()) => {
 			)
 
 		case 'my_inventory':
-			return (
-				toBool(user?.can_be_request_executor) ||
-				hasAnyPermission(user, [
-					'warehouse.my_inventory.view',
-					'warehouse.inventory.view_own',
-				]) ||
-				hasLegacyRole(user, ['TECHNICIAN', 'SENIOR_TECHNICIAN'])
-			)
+			return hasAnyPermission(user, MY_INVENTORY_VIEW_PERMISSIONS)
 
 		case 'inventory':
-			return (
-				hasAnyPermission(user, [
-					'warehouse.view',
-					'warehouse.manage',
-					'warehouse.items.view',
-					'warehouse.items.manage',
-				]) ||
-				hasLegacyRole(user, ['ADMIN', 'WAREHOUSE_MANAGER', 'SENIOR_TECHNICIAN'])
-			)
+			return hasAnyPermission(user, INVENTORY_FULL_VIEW_PERMISSIONS)
 
 		case 'trash':
 			return (
