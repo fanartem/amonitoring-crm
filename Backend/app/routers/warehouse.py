@@ -6024,19 +6024,15 @@ def attach_equipment_to_request_vehicle(
                     detail="Оборудование недоступно для добавления в заявку"
                 )
 
-            if not can_attach_foreign_inventory:
-                if not item_is_from_inventory:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Можно добавить только оборудование из своего инвентаря"
-                    )
-
+            # Инвентарь: без расширенных прав можно брать только свой.
+            if not can_attach_foreign_inventory and item_is_from_inventory:
                 if int(item_assigned_user_id) != int(current_user["id"]):
                     raise HTTPException(
                         status_code=403,
                         detail="Нельзя добавить оборудование из чужого инвентаря"
                     )
 
+            # Склад: право и город проверяются отдельно.
             if item_is_from_stock:
                 ensure_can_attach_stock_item(cursor, current_user, item)
 
