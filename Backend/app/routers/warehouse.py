@@ -251,9 +251,13 @@ def can_view_my_inventory(current_user: dict) -> bool:
 
 
 def can_read_request_equipment(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, REQUEST_EQUIPMENT_READ_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        REQUEST_EQUIPMENT_READ_ROLES,
+    return (
+        user_has_any_permission(current_user, REQUEST_EQUIPMENT_READ_PERMISSION_CODES)
+        or user_has_any_permission(
+            current_user,
+            REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES,
+        )
+        or has_legacy_role(current_user, REQUEST_EQUIPMENT_READ_ROLES)
     )
 
 
@@ -261,6 +265,13 @@ def can_attach_request_equipment(current_user: dict) -> bool:
     return (
         can_manage_employee_equipment(current_user)
         or user_has_any_permission(current_user, REQUEST_EQUIPMENT_ATTACH_PERMISSION_CODES)
+        or (
+            to_bool(current_user.get("can_be_request_executor"))
+            and user_has_any_permission(
+                current_user,
+                REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES,
+            )
+        )
         or has_legacy_role(current_user, ["ADMIN", "WAREHOUSE_MANAGER", "SENIOR_TECHNICIAN", "TECHNICIAN"])
     )
 
@@ -405,6 +416,16 @@ def normalize_city(value):
     return str(value).strip().lower()
 
 
+def is_current_user_request_executor(request: dict, current_user: dict) -> bool:
+    user_id = int(current_user["id"])
+    assigned_to = request.get("assigned_to")
+
+    return (
+        assigned_to is not None
+        and int(assigned_to) == user_id
+    ) or to_bool(request.get("current_user_is_executor"))
+
+
 def can_user_access_request_equipment(request: dict, current_user: dict) -> bool:
     user_id = int(current_user["id"])
 
@@ -444,8 +465,11 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
     if can_use_executor_scope:
         assigned_to = request.get("assigned_to")
 
+        if is_current_user_request_executor(request, current_user):
+            return True
+
         if assigned_to is not None:
-            return int(assigned_to) == user_id
+            return False
 
         if not request.get("is_paid"):
             return False
@@ -456,6 +480,34 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
         return True
 
     return False
+
+
+def can_user_attach_request_equipment(request: dict, current_user: dict) -> bool:
+    """
+    Полные/явные attach-права работают в доступной пользователю заявке.
+    Исполнитель со стандартным requests.equipment.view_assigned может
+    добавлять свой инвентарь только после назначения на заявку.
+    """
+    if not can_user_access_request_equipment(request, current_user):
+        return False
+
+    if (
+        can_manage_employee_equipment(current_user)
+        or user_has_any_permission(
+            current_user,
+            REQUEST_EQUIPMENT_ATTACH_PERMISSION_CODES,
+        )
+    ):
+        return True
+
+    return (
+        to_bool(current_user.get("can_be_request_executor"))
+        and user_has_any_permission(
+            current_user,
+            REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES,
+        )
+        and is_current_user_request_executor(request, current_user)
+    )
 
 
 def require_warehouse_manage(current_user: dict):
@@ -4214,13 +4266,20 @@ def get_request_equipment(
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
-                    c.responsible_manager_id
+                    c.responsible_manager_id,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re_current
+                        WHERE re_current.request_id = r.id
+                          AND re_current.user_id = %s
+                    ) AS current_user_is_executor
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 WHERE r.id = %s
                 AND r.is_deleted = 0
                 """,
-                (request_id,)
+                (current_user["id"], request_id)
             )
             request = cursor.fetchone()
 
@@ -5063,6 +5122,13 @@ def detach_equipment_from_request(
 
                     c.responsible_manager_id,
 
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re_current
+                        WHERE re_current.request_id = r.id
+                          AND re_current.user_id = %s
+                    ) AS current_user_is_executor,
+
                     wi.name,
                     wi.model,
                     wi.identifier_type,
@@ -5119,7 +5185,7 @@ def detach_equipment_from_request(
 
                 FOR UPDATE
                 """,
-                (link_id, request_id)
+                (current_user["id"], link_id, request_id)
             )
 
             link = cursor.fetchone()
@@ -5386,13 +5452,20 @@ def get_available_inventory_for_request_vehicle(
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
-                    c.responsible_manager_id
+                    c.responsible_manager_id,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re_current
+                        WHERE re_current.request_id = r.id
+                          AND re_current.user_id = %s
+                    ) AS current_user_is_executor
                 FROM request_vehicles rv
                 INNER JOIN requests r ON rv.request_id = r.id
                 LEFT JOIN clients c ON r.client_id = c.id
                 WHERE rv.id = %s
                 """,
-                (request_vehicle_id,)
+                (current_user["id"], request_vehicle_id)
             )
             request_vehicle = cursor.fetchone()
 
@@ -5408,10 +5481,10 @@ def get_available_inventory_for_request_vehicle(
                     detail="Заявка удалена"
                 )
 
-            if not can_user_access_request_equipment(request_vehicle, current_user):
+            if not can_user_attach_request_equipment(request_vehicle, current_user):
                 raise HTTPException(
                     status_code=403,
-                    detail="Недостаточно прав для просмотра оборудования этой заявки"
+                    detail="Добавлять оборудование можно только в назначенную вам заявку"
                 )
 
             conditions = [
@@ -5635,6 +5708,13 @@ def attach_equipment_to_request_vehicle(
 
                     c.responsible_manager_id,
 
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re_current
+                        WHERE re_current.request_id = r.id
+                          AND re_current.user_id = %s
+                    ) AS current_user_is_executor,
+
                     v.brand,
                     v.model,
                     v.plate_number
@@ -5644,7 +5724,7 @@ def attach_equipment_to_request_vehicle(
                 LEFT JOIN vehicles v ON rv.vehicle_id = v.id
                 WHERE rv.id = %s
                 """,
-                (request_vehicle_id,)
+                (current_user["id"], request_vehicle_id)
             )
             request_vehicle = cursor.fetchone()
 
@@ -5660,10 +5740,10 @@ def attach_equipment_to_request_vehicle(
                     detail="Нельзя привязать оборудование к удалённой заявке"
                 )
 
-            if not can_user_access_request_equipment(request_vehicle, current_user):
+            if not can_user_attach_request_equipment(request_vehicle, current_user):
                 raise HTTPException(
                     status_code=403,
-                    detail="Недостаточно прав для добавления оборудования в эту заявку"
+                    detail="Добавлять оборудование можно только в назначенную вам заявку"
                 )
 
             request_id = request_vehicle["request_id"]
@@ -6026,13 +6106,20 @@ def get_request_vehicle_equipment(
                     r.assigned_to,
                     r.is_paid,
                     r.created_by,
-                    c.responsible_manager_id
+                    c.responsible_manager_id,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re_current
+                        WHERE re_current.request_id = r.id
+                          AND re_current.user_id = %s
+                    ) AS current_user_is_executor
                 FROM request_vehicles rv
                 INNER JOIN requests r ON rv.request_id = r.id
                 LEFT JOIN clients c ON r.client_id = c.id
                 WHERE rv.id = %s
                 """,
-                (request_vehicle_id,)
+                (current_user["id"], request_vehicle_id)
             )
             request_vehicle = cursor.fetchone()
 
