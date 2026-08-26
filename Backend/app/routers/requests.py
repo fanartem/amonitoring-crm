@@ -19,6 +19,14 @@ from app.permissions import (
     SENIOR_TECHNICIAN,
     TECHNICIAN,
     WAREHOUSE_MANAGER,
+    DATA_SCOPE_ALL,
+    DATA_SCOPE_CITY,
+    DATA_SCOPE_RESPONSIBLE_CLIENTS,
+    DATA_SCOPE_ASSIGNED,
+    DATA_SCOPE_CITY_ASSIGNED,
+    DATA_SCOPE_OWN,
+    DATA_SCOPE_NONE,
+    get_data_scope,
     has_any_permission,
     is_super_admin,
     can_view_all_requests,
@@ -90,14 +98,9 @@ REQUEST_VIEW_ALL_PERMISSION_CODES = [
     "requests.manage",
 ]
 
-REQUEST_VIEW_OWN_PERMISSION_CODES = [
-    "requests.view_own",
-    "requests.view_responsible",
-]
-
-REQUEST_VIEW_ASSIGNED_PERMISSION_CODES = [
-    "requests.view_assigned",
-    "requests.view_city_assigned",
+REQUEST_VIEW_PERMISSION_CODES = [
+    "requests.view",
+    "requests.manage",
 ]
 
 REQUEST_EDIT_OWN_PERMISSION_CODES = [
@@ -137,11 +140,6 @@ REQUEST_TRASH_VIEW_PERMISSION_CODES = [
     "requests.manage",
 ]
 
-REQUEST_SELF_ACCEPT_PERMISSION_CODES = [
-    "requests.self_accept",
-    "requests.accept_assigned",
-]
-
 REQUEST_COMPLETE_ANY_PERMISSION_CODES = [
     "requests.complete_any",
     "requests.manage",
@@ -149,6 +147,7 @@ REQUEST_COMPLETE_ANY_PERMISSION_CODES = [
 ]
 
 REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES = [
+    "requests.complete_own",
     "requests.complete_assigned",
     "requests.self_complete",
     "requests.status.manage",
@@ -233,18 +232,39 @@ def user_can_view_all_request_rows(current_user: dict) -> bool:
     )
 
 
-def user_can_view_own_or_responsible_requests(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, REQUEST_VIEW_OWN_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [MANAGER],
-    )
+def get_effective_request_data_scope(current_user: dict) -> str:
+    """
+    Возвращает область строк заявок для пользователя.
 
+    Базовое право requests.view открывает модуль, а data_scope роли определяет,
+    какие именно заявки доступны. requests.view_all остаётся явным обходом
+    ограничения области данных.
+    """
+    if user_can_view_all_request_rows(current_user):
+        return DATA_SCOPE_ALL
 
-def user_can_view_assigned_requests(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, REQUEST_VIEW_ASSIGNED_PERMISSION_CODES)
-        or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
-    )
+    if user_has_any_permission(current_user, REQUEST_VIEW_PERMISSION_CODES):
+        scope = str(get_data_scope(current_user) or DATA_SCOPE_NONE).upper()
+
+        if scope in {
+            DATA_SCOPE_ALL,
+            DATA_SCOPE_CITY,
+            DATA_SCOPE_RESPONSIBLE_CLIENTS,
+            DATA_SCOPE_ASSIGNED,
+            DATA_SCOPE_CITY_ASSIGNED,
+            DATA_SCOPE_OWN,
+            DATA_SCOPE_NONE,
+        }:
+            return scope
+
+    # Совместимость со старыми current_user без загруженного permissions.
+    if has_legacy_role(current_user, [MANAGER]):
+        return DATA_SCOPE_RESPONSIBLE_CLIENTS
+
+    if has_legacy_role(current_user, [TECHNICIAN]):
+        return DATA_SCOPE_CITY_ASSIGNED
+
+    return DATA_SCOPE_NONE
 
 
 def user_can_edit_own_or_responsible_request(current_user: dict, request: dict) -> bool:
@@ -261,10 +281,15 @@ def user_can_edit_own_or_responsible_request(current_user: dict, request: dict) 
 
 
 def user_can_self_accept_requests(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, REQUEST_SELF_ACCEPT_PERMISSION_CODES)
-        or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
-    )
+    if has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN]):
+        return True
+
+    if not to_bool(current_user.get("can_be_request_executor")):
+        return False
+
+    scope = get_effective_request_data_scope(current_user)
+
+    return scope in [DATA_SCOPE_ALL, DATA_SCOPE_CITY_ASSIGNED]
 
 
 def user_can_complete_any_request(current_user: dict) -> bool:
@@ -292,7 +317,10 @@ def user_can_comment_requests(current_user: dict) -> bool:
 
 
 def user_is_limited_executor(current_user: dict) -> bool:
-    return user_can_view_assigned_requests(current_user) and not user_can_view_all_request_rows(current_user)
+    return get_effective_request_data_scope(current_user) in [
+        DATA_SCOPE_ASSIGNED,
+        DATA_SCOPE_CITY_ASSIGNED,
+    ]
 
 
 def almaty_now():
@@ -631,13 +659,13 @@ def user_can_access_request(
     current_user: dict,
     user_city: str | None = None
 ) -> bool:
-    role = current_user.get("role")
     user_id = int(current_user["id"])
+    data_scope = get_effective_request_data_scope(current_user)
 
-    if user_can_view_all_request_rows(current_user):
+    if data_scope == DATA_SCOPE_ALL:
         return True
 
-    if user_can_view_own_or_responsible_requests(current_user):
+    if data_scope == DATA_SCOPE_RESPONSIBLE_CLIENTS:
         created_by = request.get("created_by")
         responsible_manager_id = request.get("responsible_manager_id")
 
@@ -650,7 +678,28 @@ def user_can_access_request(
         ):
             return True
 
-    if user_can_view_assigned_requests(current_user):
+        return False
+
+    if data_scope == DATA_SCOPE_OWN:
+        created_by = request.get("created_by")
+
+        return (
+            created_by is not None
+            and int(created_by) == user_id
+        )
+
+    if data_scope == DATA_SCOPE_CITY:
+        effective_user_city = user_city or current_user.get("city")
+
+        if not effective_user_city:
+            return False
+
+        return (
+            normalize_city(request.get("city"))
+            == normalize_city(effective_user_city)
+        )
+
+    if data_scope in [DATA_SCOPE_ASSIGNED, DATA_SCOPE_CITY_ASSIGNED]:
         assigned_to = request.get("assigned_to")
         current_user_is_executor = bool(request.get("current_user_is_executor"))
 
@@ -665,10 +714,16 @@ def user_can_access_request(
         if is_assigned_to_user:
             return True
 
+        if data_scope == DATA_SCOPE_ASSIGNED:
+            return False
+
         if not request_is_visible_to_technician_by_payment(request):
             return False
 
         executor_city = user_city or current_user.get("city")
+
+        if not executor_city:
+            return False
 
         if normalize_city(request.get("city")) != normalize_city(executor_city):
             return False
@@ -1468,12 +1523,12 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 conditions.append("r.status = %s")
                 values.append(status)
 
-            role = current_user["role"]
+            data_scope = get_effective_request_data_scope(current_user)
 
-            if user_can_view_all_request_rows(current_user):
+            if data_scope == DATA_SCOPE_ALL:
                 pass
 
-            elif user_can_view_own_or_responsible_requests(current_user):
+            elif data_scope == DATA_SCOPE_RESPONSIBLE_CLIENTS:
                 conditions.append(
                     """
                     (
@@ -1484,45 +1539,64 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 )
                 values.extend([current_user["id"], current_user["id"]])
 
-            elif user_can_view_assigned_requests(current_user):
+            elif data_scope == DATA_SCOPE_OWN:
+                conditions.append("r.created_by = %s")
+                values.append(current_user["id"])
+
+            elif data_scope == DATA_SCOPE_CITY:
                 user_city = get_current_user_city(cursor, current_user)
 
                 if not user_city:
                     return []
 
+                conditions.append("r.city = %s")
+                values.append(user_city)
+
+            elif data_scope == DATA_SCOPE_ASSIGNED:
                 conditions.append(
                     """
                     (
-                        r.is_paid = 1
-                        OR c.payment_type = 'POSTPAYMENT'
-                        OR r.assigned_to = %s
+                        r.assigned_to = %s
                         OR EXISTS (
                             SELECT 1
-                            FROM request_executors re_paid_scope
-                            WHERE re_paid_scope.request_id = r.id
-                              AND re_paid_scope.user_id = %s
+                            FROM request_executors re_assigned_scope
+                            WHERE re_assigned_scope.request_id = r.id
+                              AND re_assigned_scope.user_id = %s
                         )
                     )
                     """
                 )
                 values.extend([current_user["id"], current_user["id"]])
-                conditions.append("r.city = %s")
-                values.append(user_city)
+
+            elif data_scope == DATA_SCOPE_CITY_ASSIGNED:
+                user_city = get_current_user_city(cursor, current_user)
+
                 conditions.append(
                     """
                     (
-                        r.assigned_to IS NULL
-                        OR r.assigned_to = %s
+                        r.assigned_to = %s
                         OR EXISTS (
                             SELECT 1
                             FROM request_executors re
                             WHERE re.request_id = r.id
-                            AND re.user_id = %s
+                              AND re.user_id = %s
+                        )
+                        OR (
+                            r.assigned_to IS NULL
+                            AND r.city = %s
+                            AND (
+                                r.is_paid = 1
+                                OR c.payment_type = 'POSTPAYMENT'
+                            )
                         )
                     )
                     """
                 )
-                values.extend([current_user["id"], current_user["id"]])
+                values.extend([
+                    current_user["id"],
+                    current_user["id"],
+                    user_city,
+                ])
 
             else:
                 return []

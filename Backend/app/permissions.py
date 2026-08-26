@@ -53,6 +53,11 @@ USER_PERMISSION_DENY = "DENY"
 # Unknown codes are harmless: they simply will not match until a matching row
 # exists in the permissions table. Keep these lists broader than the current UI
 # so old and new migrations can coexist safely.
+REQUEST_VIEW_PERMISSION_CODES = [
+    "requests.view",
+    "requests.manage",
+]
+
 REQUEST_VIEW_ALL_PERMISSION_CODES = [
     "requests.view_all",
     "requests.manage",
@@ -76,6 +81,7 @@ REQUEST_PAYMENT_MANAGE_PERMISSION_CODES = [
 ]
 
 REQUEST_STATUS_MANAGE_PERMISSION_CODES = [
+    "requests.status.change",
     "requests.status.manage",
     "requests.change_status",
     "requests.manage",
@@ -88,6 +94,7 @@ REQUEST_DELETE_ANY_PERMISSION_CODES = [
 ]
 
 REQUEST_DELETE_OWN_PERMISSION_CODES = [
+    "requests.delete_own_limited",
     "requests.delete_own",
 ]
 
@@ -121,6 +128,7 @@ CLIENTS_EDIT_OWN_PERMISSION_CODES = [
 ]
 
 CLIENTS_STATUS_MANAGE_PERMISSION_CODES = [
+    "clients.status.change",
     "clients.status.manage",
     "clients.change_status",
     "clients.manage",
@@ -217,6 +225,7 @@ SUPPORT_REQUEST_ASSIGN_PERMISSION_CODES = [
 ]
 
 SUPPORT_REQUEST_STATUS_PERMISSION_CODES = [
+    "support_requests.status.change",
     "support_requests.status.manage",
     "support_requests.change_status",
     "support_requests.manage",
@@ -669,7 +678,16 @@ def is_any_technician(user: dict) -> bool:
 
 
 def can_view_all_requests(user: dict) -> bool:
-    return has_any_permission(user, REQUEST_VIEW_ALL_PERMISSION_CODES) or has_legacy_role(
+    if has_any_permission(user, REQUEST_VIEW_ALL_PERMISSION_CODES):
+        return True
+
+    if (
+        has_any_permission(user, REQUEST_VIEW_PERMISSION_CODES)
+        and get_data_scope(user) == DATA_SCOPE_ALL
+    ):
+        return True
+
+    return has_legacy_role(
         user,
         [ADMIN, ROP, SENIOR_TECHNICIAN, WAREHOUSE_MANAGER],
     )
@@ -894,15 +912,24 @@ def can_create_request_for_client(client: dict, current_user: dict) -> bool:
     if client.get("status") == "BLOCKED":
         return False
 
-    role = get_role(current_user)
+    if not can_create_request(current_user):
+        return False
+
+    data_scope = get_data_scope(current_user)
+
+    if data_scope == DATA_SCOPE_ALL:
+        return True
 
     if has_any_permission(current_user, ["requests.create_all", "requests.manage"]):
         return True
 
+    if data_scope in [DATA_SCOPE_RESPONSIBLE_CLIENTS, DATA_SCOPE_OWN]:
+        return is_client_owned_by_user(client, current_user)
+
     if has_legacy_role(current_user, [ADMIN, ROP, TECH_SUPPORT]):
         return True
 
-    if has_any_permission(current_user, REQUEST_CREATE_PERMISSION_CODES) or has_legacy_role(current_user, [MANAGER]):
+    if has_legacy_role(current_user, [MANAGER]):
         return is_client_owned_by_user(client, current_user)
 
     return False

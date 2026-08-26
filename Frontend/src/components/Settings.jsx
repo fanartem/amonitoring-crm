@@ -926,8 +926,8 @@ export default function Settings() {
 									<h4>{selectedRole ? 'Редактирование роли' : 'Новая роль'}</h4>
 									<p>
 										{selectedRole
-											? 'Измените данные роли и стандартный набор permissions.'
-											: 'Создайте пользовательскую роль и выберите стартовые permissions.'}
+											? 'Измените данные роли и стандартный набор доступов.'
+											: 'Создайте пользовательскую роль и выберите стартовые доступы.'}
 									</p>
 								</div>
 
@@ -1104,10 +1104,9 @@ export default function Settings() {
 
 									<div className='settings-role-permissions-header'>
 										<div>
-											<h5>Стандартные permissions роли</h5>
+											<h5>Стандартные доступы роли</h5>
 											<p>
-												Выбрано: {rolePermissionCodes.size}. Зависимые
-												permissions backend добавит автоматически.
+												Выбрано: {rolePermissionCodes.size}. При сохранении доступы будут автоматически применены сотрудникам с этой ролью.
 											</p>
 										</div>
 
@@ -1115,14 +1114,14 @@ export default function Settings() {
 											className='settings-input settings-permission-search'
 											value={permissionSearch}
 											onChange={e => setPermissionSearch(e.target.value)}
-											placeholder='Поиск permission...'
+											placeholder='Поиск по доступам...'
 										/>
 									</div>
 
 									<div className='settings-permission-groups'>
 										{permissions.length === 0 ? (
 											<div className='settings-empty'>
-												Permissions не загружены
+												Доступы не загружены
 											</div>
 										) : Object.keys(groupedRolePermissions).length === 0 ? (
 											<div className='settings-empty'>Ничего не найдено</div>
