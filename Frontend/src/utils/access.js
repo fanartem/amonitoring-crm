@@ -38,28 +38,8 @@ const MY_INVENTORY_VIEW_PERMISSIONS = [
 ]
 
 const INVENTORY_FULL_VIEW_PERMISSIONS = [
-	'warehouse.manage',
-	'warehouse.items.manage',
-	'warehouse.inventory.view',
 	'warehouse.inventory.view_all',
-	'warehouse.inventory.manage',
 	'warehouse.inventory.manage_all',
-	'warehouse.inventory.assign',
-	'warehouse.inventory.transfer',
-	'warehouse.inventory.manage_employees',
-	'warehouse.employee_inventory.view',
-	'warehouse.employee_inventory.manage',
-	'warehouse.employees_inventory.view',
-	'warehouse.employees_inventory.manage',
-	'warehouse.employee_equipment.manage',
-	'warehouse.employees_equipment.manage',
-	'warehouse.technician_inventory.view',
-	'warehouse.technician_inventory.manage',
-	'warehouse.technicians_inventory.manage',
-	'warehouse.assigned_inventory.manage',
-	'warehouse.manage_employee_equipment',
-	'warehouse.manage_technician_inventory',
-	'warehouse.staff_inventory.manage',
 ]
 
 export const canAccessRoute = (routeKey, user = getStoredUser()) => {

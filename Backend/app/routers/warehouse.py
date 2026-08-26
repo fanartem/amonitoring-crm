@@ -107,17 +107,13 @@ WAREHOUSE_MANAGE_PERMISSION_CODES = [
     "warehouse.items.manage",
 ]
 
+# Только коды, которые реально показываются галочками в разделе ролей.
+# Скрытые алиасы (warehouse.inventory.view, warehouse.employee_inventory.*)
+# сюда не входят: снять их через интерфейс нельзя, а значит и давать
+# по ним доступ нельзя.
 INVENTORY_FULL_READ_PERMISSION_CODES = [
-    "warehouse.inventory.view",
     "warehouse.inventory.view_all",
-    "warehouse.inventory.manage",
     "warehouse.inventory.manage_all",
-    "warehouse.employee_inventory.view",
-    "warehouse.employee_inventory.manage",
-    "warehouse.employees_inventory.view",
-    "warehouse.employees_inventory.manage",
-    "warehouse.technician_inventory.view",
-    "warehouse.technician_inventory.manage",
 ]
 
 EMPLOYEE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
@@ -243,10 +239,13 @@ def can_read_warehouse_full(current_user: dict) -> bool:
 
 
 def can_read_inventory_full(current_user: dict) -> bool:
-    return can_manage_employee_equipment(current_user) or user_has_any_permission(
+    # Вкладка "Инвентарь" держится строго на праве
+    # "Просмотр всего инвентаря сотрудников". Управление складом и
+    # управление инвентарём сотрудников сами по себе её больше не открывают.
+    return user_has_any_permission(
         current_user,
         INVENTORY_FULL_READ_PERMISSION_CODES,
-    ) or has_legacy_role(current_user, INVENTORY_FULL_READ_ROLES)
+    )
 
 
 def can_view_my_inventory(current_user: dict) -> bool:
