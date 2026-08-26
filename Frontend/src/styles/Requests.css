@@ -29,11 +29,11 @@
 }
 
 .filters-bar-always-visible {
-  margin-bottom: 12px;
+	margin-bottom: 12px;
 }
 
 .filters-bar-extra {
-  margin-bottom: 20px;
+	margin-bottom: 20px;
 }
 
 /* Кнопка "Фильтры" — видна только на мобилке (см. медиа-запрос ниже).
@@ -173,6 +173,60 @@
 	color: #222;
 	font-weight: 500;
 	word-break: break-word;
+}
+
+.request-client-hierarchy {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.request-client-line {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	align-items: baseline;
+	column-gap: 6px;
+	min-width: 0;
+}
+
+.request-client-parent {
+	font-size: 12px;
+	font-weight: 650;
+	color: #252627;
+	opacity: 0.82;
+}
+
+.request-client-current {
+	font-size: 14px;
+	font-weight: 680;
+	color: #171717;
+}
+
+.request-client-subclient {
+	grid-template-columns: 14px max-content minmax(0, 1fr);
+}
+
+.request-client-branch {
+	color: #404246;
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 1;
+}
+
+.request-client-type {
+	font-size: 0.86em;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.request-client-parent .request-client-type {
+	font-weight: 500;
+}
+
+.request-client-name {
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 
 .card-actions {
@@ -1934,6 +1988,13 @@
 	.card-item-client {
 		order: 10;
 	}
+	.request-client-line {
+		column-gap: 5px;
+	}
+
+	.request-client-subclient {
+		grid-template-columns: 12px max-content minmax(0, 1fr);
+	}
 	.card-item-status {
 		order: 20;
 	}
@@ -2188,8 +2249,6 @@
 		font-size: 14px;
 	}
 }
-
-
 
 .footer-tech-backdrop {
 	display: none;

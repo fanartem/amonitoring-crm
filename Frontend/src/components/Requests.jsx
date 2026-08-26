@@ -578,29 +578,114 @@ export default function Requests() {
 		INDIVIDUAL: 'Физ. лицо',
 	}
 
-	const getClientDisplayName = req => {
-		const clientType = req.client_type || req.type
+		const technicalRootParentNames = new Set([
+			'тоо "автопарк-слежение"',
+			'тоо «автопарк-слежение»',
+			'автопарк-слежение',
+			'автопарк слежение',
+		])
 
-		if (clientType === 'TOO' || clientType === 'IP') {
-			return req.company_name || req.client_name || 'Не указано'
+		const normalizeClientHierarchyName = value =>
+			String(value || '')
+				.trim()
+				.toLowerCase()
+				.replace(/\s+/g, ' ')
+
+		const getClientEntityDisplayName = ({
+			type,
+			name,
+			companyName,
+			fallback,
+		}) => {
+			if (type === 'TOO' || type === 'IP') {
+				return companyName || name || fallback || 'Не указано'
+			}
+
+			return name || companyName || fallback || 'Не указано'
 		}
 
-		return req.client_name || req.company_name || 'Не указано'
-	}
-
-	const getClientSubtitle = req => {
-		const clientType = req.client_type || req.type
-
-		if ((clientType === 'TOO' || clientType === 'IP') && req.client_name) {
-			return `${clientTypeLabels[clientType] || clientType} · ${req.client_name}`
+		const getClientDisplayName = req => {
+			return getClientEntityDisplayName({
+				type: req.client_type || req.type,
+				name: req.client_name,
+				companyName: req.company_name,
+			})
 		}
 
-		if (clientType === 'INDIVIDUAL') {
-			return clientTypeLabels[clientType]
+		const getParentClientInfo = req => {
+			const sourceParentName = String(
+				req.parent_client_source_name || '',
+			).trim()
+
+			if (!sourceParentName) return null
+
+			const normalizedParentName =
+				normalizeClientHierarchyName(sourceParentName)
+			const normalizedClientSourceName = normalizeClientHierarchyName(
+				req.client_source_name || getClientDisplayName(req),
+			)
+
+			if (
+				technicalRootParentNames.has(normalizedParentName) ||
+				normalizedParentName === normalizedClientSourceName
+			) {
+				return null
+			}
+
+			return {
+				typeLabel:
+					clientTypeLabels[req.parent_client_type] ||
+					req.parent_client_type ||
+					'Клиент',
+				name: getClientEntityDisplayName({
+					type: req.parent_client_type,
+					name: req.parent_client_name,
+					companyName: req.parent_client_company_name,
+					fallback: sourceParentName,
+				}),
+			}
 		}
 
-		return null
-	}
+		const renderRequestClientHierarchy = req => {
+			const parentClient = getParentClientInfo(req)
+			const currentClientType = req.client_type || req.type
+
+			return (
+				<div className='request-client-hierarchy'>
+					{parentClient && (
+						<div className='request-client-line request-client-parent'>
+							<span className='request-client-type'>
+								{parentClient.typeLabel}
+							</span>
+
+							<span className='request-client-name'>{parentClient.name}</span>
+						</div>
+					)}
+
+					<div
+						className={`request-client-line request-client-current ${
+							parentClient ? 'request-client-subclient' : ''
+						}`}
+					>
+						{parentClient && (
+							<span className='request-client-branch' aria-hidden='true'>
+								↳
+							</span>
+						)}
+
+						<span className='request-client-type'>
+							{clientTypeLabels[currentClientType] ||
+								currentClientType ||
+								'Клиент'}
+						</span>
+
+						<span className='request-client-name'>
+							{getClientDisplayName(req)}
+						</span>
+					</div>
+				</div>
+			)
+		}
 
 	const getVehicleTitle = (vehicle, index) => {
 		const title =
@@ -1431,20 +1516,7 @@ export default function Requests() {
 							<div className='card-item card-item-client'>
 								<span className='card-label'>Клиент</span>
 
-								<span className='card-value'>{getClientDisplayName(req)}</span>
-
-								{getClientSubtitle(req) && (
-									<span
-										style={{
-											fontSize: '12px',
-											color: '#888',
-											fontWeight: '400',
-											marginTop: '2px',
-										}}
-									>
-										{getClientSubtitle(req)}
-									</span>
-								)}
+								{renderRequestClientHierarchy(req)}
 
 								<span
 									style={{

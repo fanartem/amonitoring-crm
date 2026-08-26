@@ -1637,6 +1637,13 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     c.company_name,
                     c.phone,
                     c.type AS client_type,
+                    c.source_client_name AS client_source_name,
+                    c.source_parent_client_name AS parent_client_source_name,
+
+                    parent_client.name AS parent_client_name,
+                    parent_client.company_name AS parent_client_company_name,
+                    parent_client.type AS parent_client_type,
+
                     c.status AS client_status,
                     c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
@@ -1645,6 +1652,24 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
 
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
+
+                LEFT JOIN (
+                    SELECT
+                        MIN(pc.id) AS client_id,
+                        LOWER(TRIM(COALESCE(
+                            NULLIF(pc.source_client_name, ''),
+                            NULLIF(pc.company_name, ''),
+                            NULLIF(pc.name, '')
+                        ))) AS source_key
+                    FROM clients pc
+                    WHERE pc.is_deleted = 0
+                    GROUP BY source_key
+                ) parent_match
+                    ON parent_match.source_key = LOWER(TRIM(c.source_parent_client_name))
+
+                LEFT JOIN clients parent_client
+                    ON parent_client.id = parent_match.client_id
+
                 LEFT JOIN users creator ON r.created_by = creator.id
                 LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
                 WHERE {where_clause}
