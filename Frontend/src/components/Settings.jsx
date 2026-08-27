@@ -9,6 +9,40 @@ import {
 import '../styles/Settings.css'
 
 const ADMIN_ONLY_NOTIFICATION_TYPES = ['REQUEST_TIME_CONFLICT']
+const NOTIFICATION_SOUND_SRC = '/sounds/notification.wav'
+const NOTIFICATION_SOUND_ENABLED_KEY = 'crm_notification_sound_enabled'
+const NOTIFICATION_SOUND_VOLUME_KEY = 'crm_notification_sound_volume'
+const DEFAULT_NOTIFICATION_SOUND_VOLUME_PERCENT = 35
+
+const getInitialNotificationSoundEnabled = () => {
+	const value = localStorage.getItem(NOTIFICATION_SOUND_ENABLED_KEY)
+	return value === null ? true : value === '1'
+}
+
+const getInitialNotificationSoundVolume = () => {
+	const rawValue = localStorage.getItem(NOTIFICATION_SOUND_VOLUME_KEY)
+
+	if (rawValue === null) {
+		return DEFAULT_NOTIFICATION_SOUND_VOLUME_PERCENT
+	}
+
+	const value = Number(rawValue)
+
+	if (!Number.isFinite(value) || value < 0 || value > 1) {
+		return DEFAULT_NOTIFICATION_SOUND_VOLUME_PERCENT
+	}
+
+	return Math.round(value * 100)
+}
+
+const clampVolumePercent = value => {
+	const numberValue = Number(value)
+
+	if (!Number.isFinite(numberValue))
+		return DEFAULT_NOTIFICATION_SOUND_VOLUME_PERCENT
+
+	return Math.min(100, Math.max(0, Math.round(numberValue)))
+}
 
 const DEFAULT_ROLE_COLOR = '#64748B'
 
@@ -137,6 +171,14 @@ export default function Settings() {
 	const [notificationSettings, setNotificationSettings] = useState([])
 	const [notificationLoading, setNotificationLoading] = useState(false)
 	const [notificationError, setNotificationError] = useState('')
+
+	const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(
+		getInitialNotificationSoundEnabled,
+	)
+	const [notificationSoundVolume, setNotificationSoundVolume] = useState(
+		getInitialNotificationSoundVolume,
+	)
+	const [notificationSoundSaved, setNotificationSoundSaved] = useState('')
 
 	const [timeConflictCities, setTimeConflictCities] = useState([])
 	const [timeConflictCitiesLoading, setTimeConflictCitiesLoading] =
@@ -319,6 +361,42 @@ export default function Settings() {
 		} catch (err) {
 			setNotificationError(err.message)
 			fetchNotificationSettings()
+		}
+	}
+
+	const handleNotificationSoundEnabledChange = () => {
+		const nextValue = !notificationSoundEnabled
+
+		setNotificationSoundEnabled(nextValue)
+		localStorage.setItem(NOTIFICATION_SOUND_ENABLED_KEY, nextValue ? '1' : '0')
+		setNotificationSoundSaved('Настройка звука сохранена')
+	}
+
+	const handleNotificationSoundVolumeChange = e => {
+		const nextVolume = clampVolumePercent(e.target.value)
+
+		setNotificationSoundVolume(nextVolume)
+		localStorage.setItem(
+			NOTIFICATION_SOUND_VOLUME_KEY,
+			String(nextVolume / 100),
+		)
+		setNotificationSoundSaved('Громкость сохранена')
+	}
+
+	const handleTestNotificationSound = () => {
+		const volume = clampVolumePercent(notificationSoundVolume)
+
+		if (!notificationSoundEnabled || volume <= 0) return
+
+		const audio = new Audio(NOTIFICATION_SOUND_SRC)
+		audio.volume = volume / 100
+
+		const playPromise = audio.play()
+
+		if (playPromise?.catch) {
+			playPromise.catch(err => {
+				console.warn('Не удалось воспроизвести тестовый звук:', err)
+			})
 		}
 	}
 
@@ -851,6 +929,60 @@ export default function Settings() {
 				<p>Управление системными параметрами CRM.</p>
 			</div>
 
+			<div className='settings-card settings-sound-card'>
+				<div className='settings-card-header settings-card-header-actions'>
+					<div>
+						<h3>Звук уведомлений</h3>
+						<p>Персональная настройка для этого браузера и устройства.</p>
+					</div>
+
+					<button
+						type='button'
+						className='settings-secondary-btn'
+						onClick={handleTestNotificationSound}
+						disabled={!notificationSoundEnabled || notificationSoundVolume <= 0}
+					>
+						Проверить звук
+					</button>
+				</div>
+
+				{notificationSoundSaved && (
+					<div className='settings-success'>{notificationSoundSaved}</div>
+				)}
+
+				<div className='settings-sound-controls'>
+					<label className='settings-sound-toggle'>
+						<input
+							type='checkbox'
+							checked={notificationSoundEnabled}
+							onChange={handleNotificationSoundEnabledChange}
+						/>
+						<span>Включить звук новых уведомлений</span>
+					</label>
+
+					<div className='settings-sound-volume-row'>
+						<label htmlFor='notificationSoundVolume'>Громкость</label>
+
+						<input
+							id='notificationSoundVolume'
+							type='range'
+							min='0'
+							max='100'
+							step='5'
+							value={notificationSoundVolume}
+							onChange={handleNotificationSoundVolumeChange}
+							disabled={!notificationSoundEnabled}
+						/>
+
+						<strong>
+							{notificationSoundEnabled
+								? `${notificationSoundVolume}%`
+								: 'Отключён'}
+						</strong>
+					</div>
+				</div>
+			</div>
+
 			{canManageRoles && (
 				<div className='settings-card settings-roles-card'>
 					<div className='settings-card-header settings-card-header-actions'>
@@ -1106,7 +1238,9 @@ export default function Settings() {
 										<div>
 											<h5>Стандартные доступы роли</h5>
 											<p>
-												Выбрано: {rolePermissionCodes.size}. При сохранении доступы будут автоматически применены сотрудникам с этой ролью.
+												Выбрано: {rolePermissionCodes.size}. При сохранении
+												доступы будут автоматически применены сотрудникам с этой
+												ролью.
 											</p>
 										</div>
 
@@ -1120,9 +1254,7 @@ export default function Settings() {
 
 									<div className='settings-permission-groups'>
 										{permissions.length === 0 ? (
-											<div className='settings-empty'>
-												Доступы не загружены
-											</div>
+											<div className='settings-empty'>Доступы не загружены</div>
 										) : Object.keys(groupedRolePermissions).length === 0 ? (
 											<div className='settings-empty'>Ничего не найдено</div>
 										) : (

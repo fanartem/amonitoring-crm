@@ -868,3 +868,104 @@
 		grid-template-columns: 1fr;
 	}
 }
+
+
+/* Step 58.2 — personal sound settings */
+.settings-sound-card {
+	border-color: #e3ecd8;
+}
+
+.settings-secondary-btn {
+	white-space: nowrap;
+	border: 1px solid #d6e7c5;
+	background: #f8fcf4;
+	color: #3f6f16;
+	padding: 10px 16px;
+	border-radius: 8px;
+	cursor: pointer;
+	font-weight: 700;
+}
+
+.settings-secondary-btn:hover {
+	background: #eef7e7;
+}
+
+.settings-secondary-btn:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.settings-sound-controls {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.settings-sound-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 14px;
+	font-weight: 700;
+	color: #1f2937;
+	cursor: pointer;
+}
+
+.settings-sound-toggle input {
+	width: 18px;
+	height: 18px;
+	cursor: pointer;
+}
+
+.settings-sound-volume-row {
+	display: grid;
+	grid-template-columns: 100px minmax(180px, 1fr) 70px;
+	align-items: center;
+	gap: 12px;
+	padding: 14px;
+	border: 1px solid #eef1ea;
+	border-radius: 10px;
+	background: #fbfcfa;
+}
+
+.settings-sound-volume-row label {
+	font-size: 13px;
+	font-weight: 700;
+	color: #4b5563;
+}
+
+.settings-sound-volume-row input[type='range'] {
+	width: 100%;
+	cursor: pointer;
+	accent-color: #5e9424;
+}
+
+.settings-sound-volume-row input[type='range']:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.settings-sound-volume-row strong {
+	font-size: 13px;
+	color: #2e5902;
+	text-align: right;
+}
+
+@media (max-width: 720px) {
+	.settings-card-header-actions {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.settings-secondary-btn {
+		width: 100%;
+	}
+
+	.settings-sound-volume-row {
+		grid-template-columns: 1fr;
+	}
+
+	.settings-sound-volume-row strong {
+		text-align: left;
+	}
+}

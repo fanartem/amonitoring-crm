@@ -7,6 +7,26 @@ import { getWorkTypeLabel } from '../utils/workTypes'
 import { getStoredUser, hasAnyPermission } from '../utils/access'
 
 const NOTIFICATION_SOUND_SRC = '/sounds/notification.wav'
+const NOTIFICATION_SOUND_ENABLED_KEY = 'crm_notification_sound_enabled'
+const NOTIFICATION_SOUND_VOLUME_KEY = 'crm_notification_sound_volume'
+const DEFAULT_NOTIFICATION_SOUND_VOLUME = 0.35
+
+const getNotificationSoundSettings = () => {
+	const enabledValue = localStorage.getItem(NOTIFICATION_SOUND_ENABLED_KEY)
+	const volumeRawValue = localStorage.getItem(NOTIFICATION_SOUND_VOLUME_KEY)
+	const volumeValue = Number(volumeRawValue)
+
+	return {
+		enabled: enabledValue === null ? true : enabledValue === '1',
+		volume:
+			volumeRawValue !== null &&
+			Number.isFinite(volumeValue) &&
+			volumeValue >= 0 &&
+			volumeValue <= 1
+				? volumeValue
+				: DEFAULT_NOTIFICATION_SOUND_VOLUME,
+	}
+}
 
 export default function Header() {
 	const user = getStoredUser()
@@ -103,6 +123,11 @@ export default function Header() {
 
 		if (!audio) return
 
+		const soundSettings = getNotificationSoundSettings()
+
+		if (!soundSettings.enabled || soundSettings.volume <= 0) return
+
+		audio.volume = soundSettings.volume
 		audio.currentTime = 0
 
 		const playPromise = audio.play()
@@ -120,7 +145,7 @@ export default function Header() {
 	useEffect(() => {
 		const audio = new Audio(NOTIFICATION_SOUND_SRC)
 		audio.preload = 'auto'
-		audio.volume = 0.75
+		audio.volume = getNotificationSoundSettings().volume
 		notificationSoundRef.current = audio
 
 		const unlockNotificationSound = () => {
