@@ -110,6 +110,57 @@ const getInitialRequestFilters = searchParams => {
 	}
 }
 
+const REQUEST_EQUIPMENT_CATEGORY_LABELS = {
+	GPS_TRACKER: 'Трекер',
+	BEACON: 'Маяк',
+	FUEL_SENSOR: 'ДУТ',
+	BLE_SENSOR: 'BLE-датчик',
+	WIRED_SENSOR: 'Пров. датчик',
+	RELAY: 'Реле',
+	CABLE: 'Кабель',
+	CONSUMABLE: 'Расходники',
+	TOOLS: 'Инструменты',
+	FIRST_AID: 'Аптечки',
+	OTHER: 'Другое',
+}
+
+const getRequestEquipmentBadgeText = equipment => {
+	const category = String(equipment?.category || '').toUpperCase()
+	const categoryLabel =
+		REQUEST_EQUIPMENT_CATEGORY_LABELS[category] ||
+		equipment?.category ||
+		'Оборудование'
+
+	const quantity = Math.max(Number(equipment?.quantity) || 1, 1)
+
+	if (category === 'RELAY') {
+		return quantity > 1 ? `${categoryLabel} ×${quantity}` : categoryLabel
+	}
+
+	const identifierType = String(equipment?.identifier_type || '').toUpperCase()
+
+	const identifierValue = String(equipment?.identifier_value || '').trim()
+
+	if (identifierType === 'IMEI' && identifierValue) {
+		return `${categoryLabel} ${identifierValue}`
+	}
+
+	return quantity > 1 ? `${categoryLabel} ×${quantity}` : categoryLabel
+}
+
+const getRequestEquipmentBadgeTone = category => {
+	switch (String(category || '').toUpperCase()) {
+		case 'GPS_TRACKER':
+			return 'tracker'
+		case 'BEACON':
+			return 'beacon'
+		case 'RELAY':
+			return 'relay'
+		default:
+			return 'default'
+	}
+}
+
 export default function Requests() {
 	const [requests, setRequests] = useState([])
 	const [filteredRequests, setFilteredRequests] = useState([])
@@ -692,9 +743,16 @@ export default function Requests() {
 			`${vehicle.brand || ''} ${vehicle.model || ''}`.trim() ||
 			`Авто ${index + 1}`
 
-		const plate = vehicle.plate_number || 'б/н'
+		const plate = String(vehicle.plate_number || '').trim()
+		const vin = String(vehicle.vin || '').trim()
 
-		return `${title} (${plate})`
+		const normalizedPlate = plate.toLowerCase().replace(/[^a-zа-яё0-9]/gi, '')
+
+		const hasRealPlate = normalizedPlate !== '' && normalizedPlate !== 'безгрнз'
+
+		const vehicleIdentifier = hasRealPlate ? plate : vin || 'б/н'
+
+		return `${title} (${vehicleIdentifier})`
 	}
 
 	const getVehicleInstallText = vehicle => {
@@ -1612,9 +1670,32 @@ export default function Requests() {
 										req.vehicles.map((vehicle, index) => (
 											<div
 												key={vehicle.request_vehicle_id || index}
-												className='client-request-line'
+												className='client-request-line request-vehicle-line'
 											>
-												{getVehicleTitle(vehicle, index)}
+												<span className='request-vehicle-title'>
+													{getVehicleTitle(vehicle, index)}
+												</span>
+
+												{Array.isArray(vehicle.equipment) &&
+													vehicle.equipment.length > 0 && (
+														<span className='request-equipment-badges'>
+															{vehicle.equipment.map(
+																(equipment, equipmentIndex) => (
+																	<span
+																		key={`${equipment.category || 'equipment'}-${
+																			equipment.identifier_value ||
+																			equipmentIndex
+																		}`}
+																		className={`request-equipment-badge request-equipment-badge--${getRequestEquipmentBadgeTone(
+																			equipment.category,
+																		)}`}
+																	>
+																		{getRequestEquipmentBadgeText(equipment)}
+																	</span>
+																),
+															)}
+														</span>
+													)}
 											</div>
 										))
 									) : (

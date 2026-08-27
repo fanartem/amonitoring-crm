@@ -774,6 +774,7 @@ def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
     request_vehicle_ids = [row["request_vehicle_id"] for row in rows]
 
     sensors_grouped = {}
+    equipment_grouped = {}
 
     if request_vehicle_ids:
         sensor_placeholders = ", ".join(["%s"] * len(request_vehicle_ids))
@@ -797,6 +798,52 @@ def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
 
         for sensor in sensor_rows:
             sensors_grouped.setdefault(sensor["request_vehicle_id"], []).append(sensor)
+
+        equipment_placeholders = ", ".join(
+            ["%s"] * len(request_vehicle_ids)
+        )
+
+        cursor.execute(
+            f"""
+            SELECT
+                re.request_vehicle_id,
+                COALESCE(re.quantity, 1) AS quantity,
+                wi.category,
+                wi.identifier_type,
+                wi.identifier_value
+            FROM request_equipment re
+            INNER JOIN warehouse_items wi
+                ON wi.id = re.warehouse_item_id
+            WHERE re.request_vehicle_id IN ({equipment_placeholders})
+            ORDER BY re.id ASC
+            """,
+            tuple(request_vehicle_ids)
+        )
+
+        equipment_rows = cursor.fetchall()
+        relay_by_vehicle = {}
+
+        for equipment in equipment_rows:
+            request_vehicle_id = equipment["request_vehicle_id"]
+            quantity = max(int(equipment.get("quantity") or 1), 1)
+
+            equipment["quantity"] = quantity
+
+            # Если реле добавляли несколькими действиями,
+            # объединяем их в один бейдж "Реле ×N".
+            if equipment.get("category") == "RELAY":
+                existing_relay = relay_by_vehicle.get(request_vehicle_id)
+
+                if existing_relay:
+                    existing_relay["quantity"] += quantity
+                    continue
+
+                relay_by_vehicle[request_vehicle_id] = equipment
+
+            equipment_grouped.setdefault(
+                request_vehicle_id,
+                []
+            ).append(equipment)
     
     grouped = {}
 
@@ -804,6 +851,10 @@ def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
         row["has_beacon"] = bool(row["has_beacon"])
         row["has_blocking"] = bool(row["has_blocking"])
         row["extra_sensors"] = sensors_grouped.get(row["request_vehicle_id"], [])
+        row["equipment"] = equipment_grouped.get(
+            row["request_vehicle_id"],
+            []
+        )
 
         grouped.setdefault(row["request_id"], []).append(row)
 
