@@ -7,6 +7,7 @@ from app.permissions import (
     can_create_request_for_client,
     can_open_client_details,
     has_any_permission,
+    is_client_owned_by_user,
 )
 
 import re
@@ -221,13 +222,22 @@ VEHICLE_VIEW_ALL_PERMISSION_CODES = [
     "clients.manage",
 ]
 
-VEHICLE_EDIT_PERMISSION_CODES = [
-    "vehicles.edit",
+VEHICLE_VIEW_OWN_PERMISSION_CODES = [
+    "vehicles.view_own",
+    "vehicles.manage_own",
+]
+
+# Редактирование машин любого клиента.
+VEHICLE_EDIT_ALL_PERMISSION_CODES = [
     "vehicles.edit_all",
     "vehicles.manage",
 ]
 
+# Редактирование машин только своих клиентов.
+# "vehicles.edit" теперь работает в рамках зоны ответственности,
+# а не даёт доступ ко всем клиентам.
 VEHICLE_EDIT_OWN_PERMISSION_CODES = [
+    "vehicles.edit",
     "vehicles.edit_own",
     "vehicles.manage_own",
 ]
@@ -246,13 +256,25 @@ VEHICLE_TRANSFER_HISTORY_PERMISSION_CODES = [
     "vehicles.manage",
 ]
 
+# Доступ к разделу корзины машин как таковой.
 VEHICLE_TRASH_VIEW_PERMISSION_CODES = [
     "vehicles.trash.view",
+    "vehicles.trash.view_all",
+    "vehicles.trash.view_own",
     "vehicles.deleted.view",
     "vehicles.restore",
     "vehicles.delete",
     "vehicles.manage",
     "trash.view",
+    "trash.manage",
+]
+
+# Право видеть корзину машин ВСЕХ клиентов.
+# Без него выборка автоматически сужается до своих клиентов.
+VEHICLE_TRASH_VIEW_ALL_PERMISSION_CODES = [
+    "vehicles.trash.view_all",
+    "vehicles.view_all",
+    "vehicles.manage",
     "trash.manage",
 ]
 
@@ -337,6 +359,10 @@ def can_view_vehicle_trash(current_user: dict) -> bool:
     )
 
 
+def can_view_all_vehicle_trash(current_user: dict) -> bool:
+    return has_any_permission(current_user, VEHICLE_TRASH_VIEW_ALL_PERMISSION_CODES)
+
+
 def can_delete_vehicle(current_user: dict) -> bool:
     return has_any_permission(current_user, VEHICLE_DELETE_PERMISSION_CODES) or has_legacy_role(
         current_user,
@@ -375,6 +401,14 @@ def can_access_client_vehicles(client: dict, current_user: dict) -> bool:
     if has_any_permission(current_user, VEHICLE_VIEW_ALL_PERMISSION_CODES):
         return True
 
+    # "Просмотр машин своих клиентов": машины видны только у клиентов,
+    # где пользователь создатель или ответственный менеджер.
+    if (
+        has_any_permission(current_user, VEHICLE_VIEW_OWN_PERMISSION_CODES)
+        and is_client_owned_by_user(client, current_user)
+    ):
+        return True
+
     if can_open_client_details(client, current_user):
         return True
 
@@ -390,17 +424,11 @@ def ensure_can_access_client_vehicles(client: dict, current_user: dict):
 
 
 def can_edit_vehicle_for_client(client: dict, current_user: dict) -> bool:
-    if has_any_permission(current_user, VEHICLE_EDIT_PERMISSION_CODES):
+    if has_any_permission(current_user, VEHICLE_EDIT_ALL_PERMISSION_CODES):
         return True
 
-    if has_legacy_role(current_user, ["ADMIN", "ROP"]):
-        return True
-
-    if has_any_permission(current_user, VEHICLE_EDIT_OWN_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        ["MANAGER"],
-    ):
-        return can_open_client_details(client, current_user)
+    if has_any_permission(current_user, VEHICLE_EDIT_OWN_PERMISSION_CODES):
+        return is_client_owned_by_user(client, current_user)
 
     return False
 
@@ -745,9 +773,13 @@ def search_vehicles(
     if not can_view_vehicle_trash(current_user):
         conditions.append("v.is_deleted = 0")
 
-    if current_user.get("client_access_scope") == "RESPONSIBLE_ONLY":
-        conditions.append("c.responsible_manager_id = %s")
-        values.append(current_user["id"])
+    # Без права на корзину всех клиентов показываем только своих:
+    # где пользователь ответственный менеджер или создатель клиента.
+    if not can_view_all_vehicle_trash(current_user):
+        conditions.append(
+            "(c.responsible_manager_id = %s OR c.created_by = %s)"
+        )
+        values.extend([current_user["id"], current_user["id"]])
 
     where_clause = " AND ".join(conditions)
 

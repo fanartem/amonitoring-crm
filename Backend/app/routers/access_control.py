@@ -133,6 +133,7 @@ UI_HIDDEN_PERMISSION_CODES = {
 
     # Vehicles: trash/transfer aliases.
     "vehicles.deleted.view",
+    "vehicles.trash.view",
     "vehicles.change_client",
 
     # Warehouse aliases commonly added only for backward compatibility.

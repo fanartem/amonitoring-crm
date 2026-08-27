@@ -134,21 +134,45 @@ export default function Clients() {
 		hasAnyPermission(currentUser, ['vehicles.delete', 'vehicles.manage']) ||
 		hasLegacyRole(currentUser, ['ADMIN'])
 
-	const canViewVehicleTrash =
-		hasAnyPermission(currentUser, [
-			'vehicles.trash.view',
-			'vehicles.deleted.view',
-			'vehicles.restore',
-			'vehicles.delete',
-			'vehicles.manage',
-		]) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'ROP',
-			'ACCOUNTANT',
-			'MANAGER',
-			'WAREHOUSE_MANAGER',
-		])
+	const canViewVehicleTrash = hasAnyPermission(currentUser, [
+		'vehicles.trash.view_all',
+		'vehicles.trash.view_own',
+		'vehicles.restore',
+		'vehicles.delete',
+		'vehicles.manage',
+		'trash.view',
+		'trash.manage',
+	])
+
+	const canViewVehiclesForClient = client => {
+		if (!client) return false
+
+		if (
+			hasAnyPermission(currentUser, [
+				'vehicles.view_all',
+				'vehicles.manage',
+				'clients.view_all',
+				'clients.manage',
+			])
+		) {
+			return true
+		}
+
+		const userId = Number(currentUser?.id)
+
+		const isOwnClient =
+			Number(client.responsible_manager_id) === userId ||
+			Number(client.created_by) === userId
+
+		return (
+			isOwnClient &&
+			hasAnyPermission(currentUser, [
+				'vehicles.view_own',
+				'vehicles.manage_own',
+				'clients.view_own',
+			])
+		)
+	}
 
 	const canRestoreVehicle =
 		hasAnyPermission(currentUser, ['vehicles.restore', 'vehicles.manage']) ||
@@ -3583,52 +3607,55 @@ export default function Clients() {
 						<div>
 							<div className='client-vehicle-toolbar'>
 								<div className='client-vehicle-toolbar-left'>
-									<button
-										className='btn-green client-vehicle-toolbar-btn'
-										onClick={() => {
-											if (showVehicles) {
-												setShowVehicles(false)
-											} else {
-												setShowDeletedVehicles(false)
-												setShowVehicles(true)
-												fetchClientVehicles(
-													selectedClient.id,
-													false,
-													vehiclesPage,
-													vehiclesPageSize,
-												)
-											}
-										}}
-										disabled={isVehiclesLoading}
-									>
-										{isVehiclesLoading
-											? 'Загрузка...'
-											: showVehicles
-												? '🚗 Скрыть машины клиента'
-												: '🚗 Просмотреть все машины клиента'}
-									</button>
-
-									{canViewVehicleTrash && (
+									{canViewVehiclesForClient(selectedClient) && (
 										<button
-											className='btn-details client-vehicle-toolbar-btn'
+											className='btn-green client-vehicle-toolbar-btn'
 											onClick={() => {
-												if (showDeletedVehicles) {
-													setShowDeletedVehicles(false)
-												} else {
+												if (showVehicles) {
 													setShowVehicles(false)
-													setShowDeletedVehicles(true)
-													fetchDeletedVehicles(selectedClient.id)
+												} else {
+													setShowDeletedVehicles(false)
+													setShowVehicles(true)
+													fetchClientVehicles(
+														selectedClient.id,
+														false,
+														vehiclesPage,
+														vehiclesPageSize,
+													)
 												}
 											}}
-											disabled={deletedVehiclesLoading}
+											disabled={isVehiclesLoading}
 										>
-											{deletedVehiclesLoading
+											{isVehiclesLoading
 												? 'Загрузка...'
-												: showDeletedVehicles
-													? '🗑 Скрыть корзину машин'
-													: '🗑 Корзина машин'}
+												: showVehicles
+													? '🚗 Скрыть машины клиента'
+													: '🚗 Просмотреть все машины клиента'}
 										</button>
 									)}
+
+									{canViewVehicleTrash &&
+										canViewVehiclesForClient(selectedClient) && (
+											<button
+												className='btn-details client-vehicle-toolbar-btn'
+												onClick={() => {
+													if (showDeletedVehicles) {
+														setShowDeletedVehicles(false)
+													} else {
+														setShowVehicles(false)
+														setShowDeletedVehicles(true)
+														fetchDeletedVehicles(selectedClient.id)
+													}
+												}}
+												disabled={deletedVehiclesLoading}
+											>
+												{deletedVehiclesLoading
+													? 'Загрузка...'
+													: showDeletedVehicles
+														? '🗑 Скрыть корзину машин'
+														: '🗑 Корзина машин'}
+											</button>
+										)}
 								</div>
 
 								<div className='client-vehicle-toolbar-right'>
