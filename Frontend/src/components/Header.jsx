@@ -6,6 +6,8 @@ import '../styles/Header.css'
 import { getWorkTypeLabel } from '../utils/workTypes'
 import { getStoredUser, hasAnyPermission } from '../utils/access'
 
+const NOTIFICATION_SOUND_SRC = '/sounds/notification.wav'
+
 export default function Header() {
 	const user = getStoredUser()
 	const userRole = String(user?.role || '').toUpperCase()
@@ -92,6 +94,79 @@ export default function Header() {
 	const [unreadCount, setUnreadCount] = useState(0)
 	const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
 	const notificationsRef = useRef(null)
+	const notificationSoundRef = useRef(null)
+	const previousUnreadCountRef = useRef(null)
+	const notificationSoundUnlockedRef = useRef(false)
+
+	const playNotificationSound = () => {
+		const audio = notificationSoundRef.current
+
+		if (!audio) return
+
+		audio.currentTime = 0
+
+		const playPromise = audio.play()
+
+		if (playPromise?.catch) {
+			playPromise.catch(err => {
+				if (err?.name === 'NotAllowedError') return
+				if (err?.name === 'AbortError') return
+
+				console.warn('Не удалось воспроизвести звук уведомления:', err)
+			})
+		}
+	}
+
+	useEffect(() => {
+		const audio = new Audio(NOTIFICATION_SOUND_SRC)
+		audio.preload = 'auto'
+		audio.volume = 0.75
+		notificationSoundRef.current = audio
+
+		const unlockNotificationSound = () => {
+			if (notificationSoundUnlockedRef.current) return
+			if (!notificationSoundRef.current) return
+
+			const sound = notificationSoundRef.current
+			const previousVolume = sound.volume
+
+			sound.volume = 0
+			sound.currentTime = 0
+
+			const playPromise = sound.play()
+
+			if (playPromise?.then) {
+				playPromise
+					.then(() => {
+						sound.pause()
+						sound.currentTime = 0
+						sound.volume = previousVolume
+						notificationSoundUnlockedRef.current = true
+					})
+					.catch(() => {
+						sound.volume = previousVolume
+					})
+
+				return
+			}
+
+			sound.volume = previousVolume
+			notificationSoundUnlockedRef.current = true
+		}
+
+		window.addEventListener('pointerdown', unlockNotificationSound, {
+			once: true,
+		})
+		window.addEventListener('keydown', unlockNotificationSound, { once: true })
+
+		return () => {
+			window.removeEventListener('pointerdown', unlockNotificationSound)
+			window.removeEventListener('keydown', unlockNotificationSound)
+
+			audio.pause()
+			notificationSoundRef.current = null
+		}
+	}, [])
 
 	const fetchNotifications = async () => {
 		try {
@@ -109,7 +184,18 @@ export default function Header() {
 
 			if (countRes.ok) {
 				const data = await countRes.json()
-				setUnreadCount(Number(data.unread_count || 0))
+				const nextUnreadCount = Number(data.unread_count || 0)
+				const previousUnreadCount = previousUnreadCountRef.current
+
+				if (
+					previousUnreadCount !== null &&
+					nextUnreadCount > previousUnreadCount
+				) {
+					playNotificationSound()
+				}
+
+				previousUnreadCountRef.current = nextUnreadCount
+				setUnreadCount(nextUnreadCount)
 			}
 		} catch (err) {
 			console.error('Ошибка загрузки уведомлений:', err)
@@ -133,7 +219,12 @@ export default function Header() {
 					),
 				)
 
-				setUnreadCount(prev => Math.max(0, prev - 1))
+				setUnreadCount(prev => {
+					const nextUnreadCount = Math.max(0, prev - 1)
+					previousUnreadCountRef.current = nextUnreadCount
+
+					return nextUnreadCount
+				})
 			}
 		} catch (err) {
 			console.error('Ошибка отметки уведомления:', err)
@@ -155,6 +246,7 @@ export default function Header() {
 					})),
 				)
 
+				previousUnreadCountRef.current = 0
 				setUnreadCount(0)
 			}
 		} catch (err) {
