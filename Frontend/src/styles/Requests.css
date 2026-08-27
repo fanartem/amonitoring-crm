@@ -2196,7 +2196,26 @@
 
 	.filters-panel.mobile-open {
 		display: block;
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
+		overflow-x: hidden;
 		animation: filtersPanelReveal 0.18s ease;
+	}
+
+	.filters-panel .filters-bar,
+	.filters-panel .filter-group {
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
+	.filters-panel .filter-input,
+	.filters-panel .filter-select {
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 }
 
@@ -2223,12 +2242,25 @@
 
 @media (max-width: 640px) {
 	.filters-bar {
+		width: 100%;
+		max-width: 100%;
+		box-sizing: border-box;
 		flex-direction: column;
 		align-items: stretch;
 	}
 
 	.filter-group {
 		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
+	.my-requests-toggle {
+		width: 100%;
+		max-width: 100%;
+		box-sizing: border-box;
+		white-space: normal;
 	}
 
 	.btn-reset {
