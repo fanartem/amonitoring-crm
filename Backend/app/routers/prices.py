@@ -33,24 +33,40 @@ PRICE_READ_PERMISSION_CODES = [
     "base_prices.manage",
     "client_prices.view",
     "client_prices.manage",
-    "reports.view",
-    "reports.manage",
 ]
 
+# Общий пакет управления базовыми ценами.
 BASE_PRICE_MANAGE_PERMISSION_CODES = [
     "prices.manage",
+    "prices.base.manage",
     "base_prices.manage",
+]
+
+# Отдельные операции. Зависимость base_prices.manage -> create/edit/delete/restore
+# уже прописана в permission_dependencies, поэтому общая галочка даёт все четыре.
+BASE_PRICE_CREATE_PERMISSION_CODES = [
+    *BASE_PRICE_MANAGE_PERMISSION_CODES,
     "base_prices.create",
+]
+
+BASE_PRICE_EDIT_PERMISSION_CODES = [
+    *BASE_PRICE_MANAGE_PERMISSION_CODES,
     "base_prices.edit",
+]
+
+BASE_PRICE_DELETE_PERMISSION_CODES = [
+    *BASE_PRICE_MANAGE_PERMISSION_CODES,
     "base_prices.delete",
+]
+
+BASE_PRICE_RESTORE_PERMISSION_CODES = [
+    *BASE_PRICE_MANAGE_PERMISSION_CODES,
     "base_prices.restore",
 ]
 
 CLIENT_PRICE_VIEW_ALL_PERMISSION_CODES = [
     "prices.manage",
-    "client_prices.view",
     "client_prices.view_all",
-    "client_prices.manage",
     "client_prices.manage_all",
 ]
 
@@ -61,7 +77,6 @@ CLIENT_PRICE_VIEW_OWN_PERMISSION_CODES = [
 
 CLIENT_PRICE_MANAGE_ALL_PERMISSION_CODES = [
     "prices.manage",
-    "client_prices.manage",
     "client_prices.manage_all",
 ]
 
@@ -194,12 +209,50 @@ def require_price_calculate(current_user: dict):
         )
 
 
-def require_base_price_manage(current_user: dict):
-    if not can_manage_base_prices_for_user(current_user):
-        raise HTTPException(
-            status_code=403,
-            detail="Недостаточно прав для управления базовыми ценами"
-        )
+def require_base_price_action(
+    current_user: dict,
+    permission_codes: list[str],
+    detail: str,
+):
+    if user_has_any_permission(current_user, permission_codes):
+        return
+
+    if has_legacy_role(current_user, BASE_PRICE_MANAGE_LEGACY_ROLES):
+        return
+
+    raise HTTPException(status_code=403, detail=detail)
+
+
+def require_base_price_create(current_user: dict):
+    require_base_price_action(
+        current_user,
+        BASE_PRICE_CREATE_PERMISSION_CODES,
+        "Недостаточно прав для создания базовых цен",
+    )
+
+
+def require_base_price_edit(current_user: dict):
+    require_base_price_action(
+        current_user,
+        BASE_PRICE_EDIT_PERMISSION_CODES,
+        "Недостаточно прав для редактирования базовых цен",
+    )
+
+
+def require_base_price_delete(current_user: dict):
+    require_base_price_action(
+        current_user,
+        BASE_PRICE_DELETE_PERMISSION_CODES,
+        "Недостаточно прав для отключения базовых цен",
+    )
+
+
+def require_base_price_restore(current_user: dict):
+    require_base_price_action(
+        current_user,
+        BASE_PRICE_RESTORE_PERMISSION_CODES,
+        "Недостаточно прав для восстановления базовых цен",
+    )
 
 
 def can_access_client_prices(client: dict, current_user: dict) -> bool:
@@ -397,7 +450,7 @@ def create_price_item(
     Создать новую базовую цену.
     Доступ: ADMIN, MANAGER.
     """
-    require_base_price_manage(current_user)
+    require_base_price_create(current_user)
 
     code = data.code.strip().upper()
     name = data.name.strip()
@@ -483,7 +536,7 @@ def update_price_item(
     Редактировать базовую цену.
     Доступ: ADMIN, MANAGER.
     """
-    require_base_price_manage(current_user)
+    require_base_price_edit(current_user)
 
     update_data = data.dict(exclude_unset=True)
 
@@ -621,7 +674,7 @@ def deactivate_price_item(
     Физически не удаляем, чтобы не ломать будущие расчёты и историю.
     Доступ: ADMIN, MANAGER.
     """
-    require_base_price_manage(current_user)
+    require_base_price_delete(current_user)
 
     connection = get_connection()
 
@@ -678,7 +731,7 @@ def restore_price_item(
     Включить ранее отключённую базовую цену.
     Доступ: ADMIN, MANAGER.
     """
-    require_base_price_manage(current_user)
+    require_base_price_restore(current_user)
 
     connection = get_connection()
 

@@ -21,8 +21,15 @@ from app.permissions import (
     SENIOR_TECHNICIAN,
     has_any_permission,
     is_super_admin,
+    is_client_owned_by_user,
     can_view_attachment,
     can_delete_attachment,
+)
+
+from app.routers.requests import (
+    user_can_access_request,
+    user_is_limited_executor,
+    get_current_user_city,
 )
 
 router = APIRouter(prefix="/attachments", tags=["Attachments"])
@@ -110,6 +117,21 @@ ENTITY_ATTACHMENT_PERMISSION_CODES = {
         ],
     },
 }
+
+# Область данных для файлов клиентов.
+# Право на действие (view/upload) отвечает "можно ли работать с файлами вообще",
+# эти два кода — "чьи именно карточки доступны".
+CLIENT_ATTACHMENTS_VIEW_ALL_PERMISSION_CODES = [
+    "clients.attachments.view_all",
+    "clients.attachments.manage",
+    "clients.view_all",
+    "clients.manage",
+]
+
+CLIENT_ATTACHMENTS_VIEW_OWN_PERMISSION_CODES = [
+    "clients.attachments.view_own",
+    "clients.view_own",
+]
 
 # Старое поведение upload endpoint было очень мягким: любой авторизованный
 # пользователь мог загрузить файл к существующему клиенту/заявке. Чтобы после
@@ -322,6 +344,118 @@ def check_entity_exists(cursor, entity_type: str, entity_id: int):
             raise HTTPException(status_code=404, detail="Заявка не найдена")
 
 
+def user_can_access_client_entity(
+    cursor,
+    client_id: int,
+    current_user: dict,
+) -> bool:
+    if user_has_any_permission(
+        current_user,
+        CLIENT_ATTACHMENTS_VIEW_ALL_PERMISSION_CODES,
+    ):
+        return True
+
+    if not user_has_any_permission(
+        current_user,
+        CLIENT_ATTACHMENTS_VIEW_OWN_PERMISSION_CODES,
+    ):
+        return False
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            created_by,
+            responsible_manager_id
+        FROM clients
+        WHERE id = %s
+        """,
+        (client_id,),
+    )
+
+    client = cursor.fetchone()
+
+    if not client:
+        return False
+
+    return is_client_owned_by_user(client, current_user)
+
+
+def user_can_access_request_entity(
+    cursor,
+    request_id: int,
+    current_user: dict,
+) -> bool:
+    cursor.execute(
+        """
+        SELECT
+            r.id,
+            r.city,
+            r.assigned_to,
+            r.is_paid,
+            r.created_by,
+            c.payment_type AS client_payment_type,
+            c.responsible_manager_id,
+
+            EXISTS (
+                SELECT 1
+                FROM request_executors re
+                WHERE re.request_id = r.id
+                  AND re.user_id = %s
+            ) AS current_user_is_executor
+        FROM requests r
+        LEFT JOIN clients c ON r.client_id = c.id
+        WHERE r.id = %s
+          AND r.is_deleted = 0
+        """,
+        (current_user["id"], request_id),
+    )
+
+    request = cursor.fetchone()
+
+    if not request:
+        return False
+
+    user_city = None
+
+    if user_is_limited_executor(current_user):
+        user_city = get_current_user_city(cursor, current_user)
+
+    return user_can_access_request(request, current_user, user_city)
+
+
+def user_can_access_attachment_entity(
+    cursor,
+    entity_type: str,
+    entity_id: int,
+    current_user: dict,
+) -> bool:
+    entity_type = normalize_entity_type(entity_type)
+
+    if entity_type == "CLIENT":
+        return user_can_access_client_entity(cursor, entity_id, current_user)
+
+    return user_can_access_request_entity(cursor, entity_id, current_user)
+
+
+def ensure_attachment_entity_access(
+    cursor,
+    entity_type: str,
+    entity_id: int,
+    current_user: dict,
+):
+    if not user_can_access_attachment_entity(
+        cursor,
+        entity_type,
+        entity_id,
+        current_user,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для доступа к файлам этой карточки",
+        )
+    
+
 @router.get("/entity/{entity_type}/{entity_id}")
 def get_attachments(
     entity_type: str,
@@ -335,6 +469,12 @@ def get_attachments(
     try:
         with connection.cursor() as cursor:
             check_entity_exists(cursor, entity_type, entity_id)
+            ensure_attachment_entity_access(
+                cursor,
+                entity_type,
+                entity_id,
+                current_user,
+            )
 
             conditions = [
                 "a.entity_type = %s",
@@ -411,6 +551,12 @@ def upload_attachment(
     try:
         with connection.cursor() as cursor:
             check_entity_exists(cursor, entity_type, entity_id)
+            ensure_attachment_entity_access(
+                cursor,
+                entity_type,
+                entity_id,
+                current_user,
+            )
 
             original_filename = file.filename
             suffix = Path(original_filename).suffix.lower()
@@ -525,6 +671,13 @@ def download_attachment(
             if not attachment or attachment["is_deleted"]:
                 raise HTTPException(status_code=404, detail="Файл не найден")
 
+            ensure_attachment_entity_access(
+                cursor,
+                attachment["entity_type"],
+                attachment["entity_id"],
+                current_user,
+            )
+
             if not user_can_view_attachment(attachment, current_user):
                 raise HTTPException(
                     status_code=403,
@@ -591,6 +744,13 @@ def update_attachment(
                     detail="Переименовать файл может пользователь с правом управления файлами либо автор файла в течение 2 минут после загрузки"
                 )
 
+            ensure_attachment_entity_access(
+                cursor,
+                attachment["entity_type"],
+                attachment["entity_id"],
+                current_user,
+            )
+
             cursor.execute(
                 """
                 UPDATE attachments
@@ -653,6 +813,13 @@ def delete_attachment(
                     status_code=403,
                     detail="Удалить файл может пользователь с правом удаления файлов либо автор файла в течение 2 минут после загрузки"
                 )
+
+            ensure_attachment_entity_access(
+                cursor,
+                attachment["entity_type"],
+                attachment["entity_id"],
+                current_user,
+            )
 
             cursor.execute(
                 """

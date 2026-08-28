@@ -509,6 +509,19 @@ def update_user(
                     detail="Нельзя изменять владельца системы",
                 )
 
+            if (
+                user.get("is_super_admin")
+                and not is_self
+                and not is_owner(current_user)
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Изменять данные Супер-Админа может только владелец системы. "
+                        "Либо сначала снимите флаг Супер-Админа."
+                    ),
+                )
+            
             old_value = {
                 "email": user["email"],
                 "name": user["name"],
