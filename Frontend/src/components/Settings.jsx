@@ -117,6 +117,7 @@ const DEFAULT_ROLE_FORM = {
 	is_active: true,
 	can_be_request_executor: false,
 	can_be_responsible_manager: false,
+	can_self_register: false,
 	sort_order: 100,
 	reason: '',
 }
@@ -204,44 +205,26 @@ export default function Settings() {
 	const [permissionSearch, setPermissionSearch] = useState('')
 
 	const currentUser = getStoredUser()
-	const userRole = currentUser.role || null
-
-	const isAdmin = userRole === 'ADMIN'
-	const isRop = userRole === 'ROP'
-	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
 	const canManageRoles = isSuperAdmin(currentUser)
 
-	const canViewWarehouseNotifications =
-		hasAnyPermission(currentUser, [
-			'warehouse.view',
-			'warehouse.manage',
-			'warehouse.items.view',
-			'warehouse.items.manage',
-		]) ||
-		isAdmin ||
-		isWarehouseManager
+	const canViewWarehouseNotifications = hasAnyPermission(currentUser, [
+		'warehouse.manage',
+		'warehouse.reports.view',
+		'notifications.settings.manage',
+	])
 
-	const canManageCities =
-		hasAnyPermission(currentUser, [
-			'settings.manage_cities',
-			'settings.cities.manage',
-			'settings.manage',
-			'cities.manage',
-			'cities.create',
-			'cities.edit',
-		]) ||
-		isAdmin ||
-		isRop
+	const canManageCities = hasAnyPermission(currentUser, [
+		'settings.manage_cities',
+		'settings.cities.manage',
+		'cities.manage',
+	])
 
-	const canManageTimeConflictCities =
-		hasAnyPermission(currentUser, [
-			'settings.manage_notifications',
-			'settings.notifications.manage',
-			'notifications.manage',
-			'notifications.settings.manage',
-			'notifications.request_time_conflict.manage',
-			'settings.manage',
-		]) || isAdmin
+	const canManageTimeConflictCities = hasAnyPermission(currentUser, [
+		'settings.manage_notifications',
+		'settings.notifications.manage',
+		'notifications.request_time_conflict.manage',
+		'notifications.settings.manage',
+	])
 
 	const selectedRoleIsSystem = toBool(selectedRole?.is_system)
 	const selectedRoleCanBeDeleted =
@@ -710,6 +693,7 @@ export default function Settings() {
 				is_active: toBool(role.is_active),
 				can_be_request_executor: toBool(role.can_be_request_executor),
 				can_be_responsible_manager: toBool(role.can_be_responsible_manager),
+				can_self_register: toBool(role.can_self_register),
 				sort_order: Number(role.sort_order || 100),
 				reason: '',
 			})
@@ -765,6 +749,7 @@ export default function Settings() {
 		is_active: Boolean(roleForm.is_active),
 		can_be_request_executor: Boolean(roleForm.can_be_request_executor),
 		can_be_responsible_manager: Boolean(roleForm.can_be_responsible_manager),
+		can_self_register: Boolean(roleForm.can_self_register),
 		sort_order: Number(roleForm.sort_order || 100),
 		reason: roleForm.reason || 'Изменение роли через Настройки',
 	})
@@ -1225,12 +1210,25 @@ export default function Settings() {
 											/>
 											<span>Может быть ответственным менеджером</span>
 										</label>
+
+										<label className='settings-role-flag'>
+											<input
+												type='checkbox'
+												checked={Boolean(roleForm.can_self_register)}
+												onChange={e =>
+													updateRoleForm('can_self_register', e.target.checked)
+												}
+											/>
+											<span>Доступна при самостоятельной регистрации</span>
+										</label>
 									</div>
 
 									{selectedRoleIsSystem && (
 										<div className='settings-role-note'>
-											Это системная роль. Data scope, активность и role flags
-											защищены от изменения, чтобы не сломать бизнес-логику.
+											Это системная роль. Data scope, активность и флаги
+											исполнителя/ответственного защищены от изменения, чтобы не
+											сломать бизнес-логику. Доступность при самостоятельной
+											регистрации настраивается.
 										</div>
 									)}
 

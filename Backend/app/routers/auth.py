@@ -31,7 +31,8 @@ def validate_registration_role(cursor, role_code: str) -> dict:
             code,
             name,
             is_active,
-            can_be_request_executor
+            can_be_request_executor,
+            can_self_register
         FROM roles
         WHERE code = %s
         LIMIT 1
@@ -46,6 +47,12 @@ def validate_registration_role(cursor, role_code: str) -> dict:
 
     if not role["is_active"]:
         raise HTTPException(status_code=400, detail="Выбранная роль отключена")
+
+    if not role.get("can_self_register"):
+        raise HTTPException(
+            status_code=400,
+            detail="Эту роль нельзя выбрать при самостоятельной регистрации",
+        )
 
     return role
 
@@ -75,6 +82,7 @@ def get_registration_roles():
                     sort_order
                 FROM roles
                 WHERE is_active = 1
+                  AND can_self_register = 1
                   AND code <> %s
                 ORDER BY sort_order ASC, name ASC
                 """,

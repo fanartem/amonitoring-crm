@@ -231,6 +231,7 @@ def get_role_by_code(cursor, role_code: str) -> dict | None:
             r.is_system,
             r.is_active,
             r.can_be_request_executor,
+            r.can_self_register,
             r.can_be_responsible_manager,
             r.sort_order,
             r.created_at,
@@ -252,6 +253,7 @@ def get_role_by_code(cursor, role_code: str) -> dict | None:
             r.is_system,
             r.is_active,
             r.can_be_request_executor,
+            r.can_self_register,
             r.can_be_responsible_manager,
             r.sort_order,
             r.created_at,
@@ -270,6 +272,7 @@ def get_role_by_code(cursor, role_code: str) -> dict | None:
     role["is_active"] = bool(role["is_active"])
     role["can_be_request_executor"] = bool(role["can_be_request_executor"])
     role["can_be_responsible_manager"] = bool(role["can_be_responsible_manager"])
+    role["can_self_register"] = bool(role["can_self_register"])
     role["users_count"] = int(role["users_count"] or 0)
 
     return role
@@ -588,6 +591,7 @@ def get_roles(current_user: dict = Depends(get_current_user)):
                     r.is_system,
                     r.is_active,
                     r.can_be_request_executor,
+                    r.can_self_register,
                     r.can_be_responsible_manager,
                     r.sort_order,
                     r.created_at,
@@ -612,6 +616,7 @@ def get_roles(current_user: dict = Depends(get_current_user)):
                     r.is_system,
                     r.is_active,
                     r.can_be_request_executor,
+                    r.can_self_register,
                     r.can_be_responsible_manager,
                     r.sort_order,
                     r.created_at,
@@ -631,6 +636,7 @@ def get_roles(current_user: dict = Depends(get_current_user)):
                 role["can_be_responsible_manager"] = bool(
                     role["can_be_responsible_manager"]
                 )
+                role["can_self_register"] = bool(role["can_self_register"])
                 role["users_count"] = int(role["users_count"] or 0)
                 role["permissions_count"] = int(role["permissions_count"] or 0)
                 role["locked_core_count"] = int(role["locked_core_count"] or 0)
@@ -669,6 +675,7 @@ def get_role_detail(
                     is_system,
                     is_active,
                     can_be_request_executor,
+                    can_self_register,
                     can_be_responsible_manager,
                     sort_order,
                     created_at,
@@ -691,6 +698,7 @@ def get_role_detail(
             role["can_be_responsible_manager"] = bool(
                 role["can_be_responsible_manager"]
             )
+            role["can_self_register"] = bool(role["can_self_register"])
 
             cursor.execute(
                 """
@@ -919,11 +927,12 @@ def create_role(
                     is_active,
                     can_be_request_executor,
                     can_be_responsible_manager,
+                    can_self_register,
                     sort_order,
                     created_by,
                     updated_by
                 )
-                VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     role_code,
@@ -934,6 +943,7 @@ def create_role(
                     bool(data.is_active),
                     bool(data.can_be_request_executor),
                     bool(data.can_be_responsible_manager),
+                    bool(data.can_self_register),
                     int(data.sort_order or 100),
                     current_user["id"],
                     current_user["id"],
@@ -982,6 +992,7 @@ def create_role(
                     "is_active": bool(data.is_active),
                     "can_be_request_executor": bool(data.can_be_request_executor),
                     "can_be_responsible_manager": bool(data.can_be_responsible_manager),
+                    "can_self_register": bool(data.can_self_register),
                     "sort_order": int(data.sort_order or 100),
                     "permission_codes": sorted(permission_codes),
                 },
@@ -1121,6 +1132,10 @@ def update_role(
             if "can_be_responsible_manager" in incoming and not role["is_system"]:
                 updates.append("can_be_responsible_manager = %s")
                 values.append(bool(incoming["can_be_responsible_manager"]))
+
+            if "can_self_register" in incoming:
+                updates.append("can_self_register = %s")
+                values.append(bool(incoming["can_self_register"]))
 
             if "sort_order" in incoming:
                 updates.append("sort_order = %s")
@@ -1792,6 +1807,7 @@ def get_role_options(current_user: dict = Depends(get_current_user)):
                     r.is_system,
                     r.is_active,
                     r.can_be_request_executor,
+                    r.can_self_register,
                     r.can_be_responsible_manager,
                     r.sort_order,
 
@@ -1811,6 +1827,7 @@ def get_role_options(current_user: dict = Depends(get_current_user)):
                     r.is_system,
                     r.is_active,
                     r.can_be_request_executor,
+                    r.can_self_register,
                     r.can_be_responsible_manager,
                     r.sort_order
                 ORDER BY
@@ -1828,6 +1845,7 @@ def get_role_options(current_user: dict = Depends(get_current_user)):
                 role["can_be_responsible_manager"] = bool(
                     role["can_be_responsible_manager"]
                 )
+                role["can_self_register"] = bool(role["can_self_register"])
                 role["users_count"] = int(role["users_count"] or 0)
 
             return roles

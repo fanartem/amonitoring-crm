@@ -174,6 +174,31 @@ export default function Clients() {
 		)
 	}
 
+	const canEditVehicleForClient = client => {
+		if (!client) return false
+
+		if (
+			hasAnyPermission(currentUser, ['vehicles.edit_all', 'vehicles.manage'])
+		) {
+			return true
+		}
+
+		const userId = Number(currentUser?.id)
+
+		const isOwnClient =
+			Number(client.responsible_manager_id) === userId ||
+			Number(client.created_by) === userId
+
+		return (
+			isOwnClient &&
+			hasAnyPermission(currentUser, [
+				'vehicles.edit',
+				'vehicles.edit_own',
+				'vehicles.manage_own',
+			])
+		)
+	}
+
 	const canRestoreVehicle =
 		hasAnyPermission(currentUser, ['vehicles.restore', 'vehicles.manage']) ||
 		hasLegacyRole(currentUser, ['ADMIN'])
@@ -3741,7 +3766,7 @@ export default function Clients() {
 												</div>
 
 												{(v.vin ||
-													canEditClient(selectedClient) ||
+													canEditVehicleForClient(selectedClient) ||
 													canTransferVehicle ||
 													canManageDirectVehicleEquipment) && (
 													<div className='vehicle-card-actions'>
@@ -3763,7 +3788,7 @@ export default function Clients() {
 																История VIN
 															</button>
 														)}
-														{canEditClient(selectedClient) && (
+														{canEditVehicleForClient(selectedClient) && (
 															<button
 																className='btn-details vehicle-edit-btn'
 																onClick={() => openEditVehicleModal(v)}

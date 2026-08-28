@@ -473,6 +473,7 @@ class RoleCreate(BaseModel):
     is_active: bool = True
     can_be_request_executor: bool = False
     can_be_responsible_manager: bool = False
+    can_self_register: bool = False
     sort_order: int = 100
     permission_codes: list[str] = []
     reason: str | None = None
@@ -486,6 +487,7 @@ class RoleUpdate(BaseModel):
     is_active: bool | None = None
     can_be_request_executor: bool | None = None
     can_be_responsible_manager: bool | None = None
+    can_self_register: bool | None = None
     sort_order: int | None = None
     reason: str | None = None
 
