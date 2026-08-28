@@ -29,9 +29,11 @@ def ensure_any_permission(
 
 
 def ensure_employees_view_access(current_user: dict):
-    # Любой авторизованный сотрудник может видеть список сотрудников.
-    # get_current_user уже проверил токен, активность, approved и роль.
-    return
+    ensure_any_permission(
+        current_user,
+        ["employees.view"],
+        "Недостаточно прав для просмотра списка сотрудников",
+    )
 
 
 def ensure_employees_manage_access(current_user: dict):

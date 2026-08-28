@@ -28,21 +28,6 @@ const formatDateTime = value => {
 	}
 }
 
-const LEGACY_ATTACHMENT_UPLOAD_ROLES = [
-	'ADMIN',
-	'ROP',
-	'MANAGER',
-	'TECH_SUPPORT',
-	'ACCOUNTANT',
-	'WAREHOUSE_MANAGER',
-	'SENIOR_TECHNICIAN',
-	'TECHNICIAN',
-]
-
-const LEGACY_ATTACHMENT_MANAGE_ROLES = ['ADMIN', 'ROP', 'MANAGER']
-
-const hasLegacyRole = (user, roles) => roles.includes(user?.role)
-
 const getEntityAttachmentPrefix = entityType => {
 	const normalized = String(entityType || '').toUpperCase()
 
@@ -76,39 +61,24 @@ const getEntityAttachmentPermissions = (entityType, action) => {
 	return [`${prefix}.manage`]
 }
 
-const canUploadAttachments = (user, entityType) => {
-	return (
-		hasAnyPermission(user, [
-			'attachments.upload',
-			'attachments.manage',
-			...getEntityAttachmentPermissions(entityType, 'upload'),
-		]) || hasLegacyRole(user, LEGACY_ATTACHMENT_UPLOAD_ROLES)
-	)
-}
+const canUploadAttachments = (user, entityType) =>
+	hasAnyPermission(user, [
+		'attachments.upload',
+		'attachments.manage',
+		...getEntityAttachmentPermissions(entityType, 'upload'),
+	])
 
-const canManageAttachments = (user, entityType) => {
-	return (
-		hasAnyPermission(user, [
-			'attachments.manage',
-			...getEntityAttachmentPermissions(entityType, 'rename'),
-			...getEntityAttachmentPermissions(entityType, 'delete'),
-		]) || hasLegacyRole(user, LEGACY_ATTACHMENT_MANAGE_ROLES)
-	)
-}
+const canManageAttachments = (user, entityType) =>
+	hasAnyPermission(user, [
+		'attachments.manage',
+		...getEntityAttachmentPermissions(entityType, 'rename'),
+		...getEntityAttachmentPermissions(entityType, 'delete'),
+	])
 
-const canDownloadAttachment = attachment => attachment?.can_download !== false
-
-const canRenameAttachment = attachment => {
-	if (typeof attachment?.can_rename === 'boolean') return attachment.can_rename
-
-	return true
-}
-
-const canDeleteAttachment = attachment => {
-	if (typeof attachment?.can_delete === 'boolean') return attachment.can_delete
-
-	return true
-}
+// Права на конкретный файл считает бэкенд в attach_attachment_permissions().
+const canDownloadAttachment = attachment => Boolean(attachment?.can_download)
+const canRenameAttachment = attachment => Boolean(attachment?.can_rename)
+const canDeleteAttachment = attachment => Boolean(attachment?.can_delete)
 
 export default function AttachmentsPanel({ entityType, entityId }) {
 	const fileInputRef = useRef(null)
@@ -126,7 +96,6 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 	const normalizedEntityType = String(entityType || '').toUpperCase()
 	const user = getStoredUser()
-	const userRole = user?.role || null
 
 	const canUploadCurrentEntity = canUploadAttachments(
 		user,
@@ -137,32 +106,19 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 		normalizedEntityType,
 	)
 
-	const isTechnician = userRole === 'TECHNICIAN'
-	const isSeniorTechnician = userRole === 'SENIOR_TECHNICIAN'
+	const seesOnlyOwnAttachments =
+		!hasAnyPermission(user, ['attachments.view_all', 'attachments.manage']) &&
+		hasAnyPermission(user, ['attachments.view_own'])
 
-	const getAttachmentsDescription = () => {
-		if (isTechnician) {
-			return 'Вы видите только файлы, загруженные вами.'
-		}
+	const getAttachmentsDescription = () =>
+		seesOnlyOwnAttachments
+			? 'Вы видите только файлы, загруженные вами.'
+			: 'Документы, фото, чеки и другие файлы по этому объекту.'
 
-		if (isSeniorTechnician) {
-			return 'Вы видите файлы, загруженные монтажниками и старшими монтажниками.'
-		}
-
-		return 'Документы, фото, чеки и другие файлы по этому объекту.'
-	}
-
-	const getEmptyText = () => {
-		if (isTechnician) {
-			return 'У вас пока нет загруженных файлов по этому объекту.'
-		}
-
-		if (isSeniorTechnician) {
-			return 'Пока нет файлов, загруженных монтажниками или старшими монтажниками.'
-		}
-
-		return 'Файлы пока не прикреплены'
-	}
+	const getEmptyText = () =>
+		seesOnlyOwnAttachments
+			? 'У вас пока нет загруженных файлов по этому объекту.'
+			: 'Файлы пока не прикреплены'
 
 	useEffect(() => {
 		if (!normalizedEntityType || !entityId) return

@@ -5,7 +5,7 @@ import '../styles/Requests.css'
 import RequestEquipmentPanel from './RequestEquipmentPanel'
 import AttachmentsPanel from './AttachmentsPanel'
 import { getWorkTypeLabel } from '../utils/workTypes'
-import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 
 const mapTypeToUI = dbType => {
 	if (!dbType) return 'Физ. лицо'
@@ -104,86 +104,47 @@ export default function RequestDetailModal({
 	const [scheduleApprovalLoading, setScheduleApprovalLoading] = useState(false)
 
 	const currentUser = getStoredUser()
-	const userRole = currentUser.role || null
 
 	/*
-		Новая логика:
-		- основной источник — permissions из localStorage.user_data.permissions;
-		- Супер-Админ получает true внутри hasAnyPermission;
-		- legacy role fallback временно оставляем для старых ролей.
+		Права на конкретную заявку считает бэкенд в attach_request_permissions()
+		и отдаёт готовыми флагами в GET /requests/{id}.
+		Дублировать их на фронте нельзя: списки кодов расходятся молча.
 	*/
 
-	const canViewRequestPrice =
-		hasAnyPermission(currentUser, [
-			'prices.view',
-			'prices.manage',
-			'requests.price.view',
-			'requests.prices.view',
-			'requests.view_price',
-			'requests.view_prices',
-		]) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'ROP',
-			'MANAGER',
-			'TECH_SUPPORT',
-			'ACCOUNTANT',
-			'WAREHOUSE_MANAGER',
-		])
-
-	const canPayRequest =
-		hasAnyPermission(currentUser, [
-			'requests.payment.manage',
-			'requests.pay',
-			'finance.manage',
-			'prices.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'ACCOUNTANT'])
-
-	const canAssignTechnician =
-		hasAnyPermission(currentUser, [
-			'requests.assign',
-			'requests.assign_executor',
-			'requests.executors.manage',
-			'requests.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'])
+	const canViewRequestPrice = Boolean(request?.can_view_prices)
+	const canPayRequest = Boolean(request?.can_edit_payment)
+	const canAssignTechnician = Boolean(request?.can_manage_executors)
+	const canDecideScheduleApproval = Boolean(
+		request?.can_decide_schedule_approval,
+	)
 
 	const canDeleteRequest =
 		Boolean(request?.can_delete) ||
 		Boolean(request?.can_delete_own_with_time_limit)
 
 	const canEditRequest = Boolean(request?.can_edit)
-
 	const canChangeRequestStatus = Boolean(request?.can_change_status)
 
 	const isRemovalRequest = request?.work_type === 'REMOVAL'
 
-	const canViewEquipmentTab =
-		hasAnyPermission(currentUser, [
-			'requests.equipment.view',
-			'requests.equipment.manage',
-			'warehouse.view',
-			'warehouse.manage',
-			'warehouse.items.view',
-			'warehouse.items.manage',
-		]) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'ROP',
-			'MANAGER',
-			'ACCOUNTANT',
-			'WAREHOUSE_MANAGER',
-			'TECHNICIAN',
-			'SENIOR_TECHNICIAN',
-		])
+	// Оборудование живёт в warehouse.py и своего флага в заявке не имеет.
+	// Список держим синхронно с can_read_request_equipment().
+	const canViewEquipmentTab = hasAnyPermission(currentUser, [
+		'requests.equipment.view',
+		'requests.equipment.view_own',
+		'requests.equipment.view_assigned',
+		'requests.equipment.attach',
+		'requests.equipment.manage',
+		'warehouse.view',
+		'warehouse.manage',
+	])
 
 	const canUseEquipmentTab = canViewEquipmentTab && !isRemovalRequest
 
-	const canDecideScheduleApproval =
-		hasAnyPermission(currentUser, [
-			'requests.schedule_approval.decide',
-			'requests.schedule.approve',
-			'requests.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN'])
+	const canCommentRequest = hasAnyPermission(currentUser, [
+		'requests.comments.create',
+		'requests.comments.manage',
+	])
 
 	const isScheduleApprovalPending =
 		request?.schedule_approval_status === 'PENDING'
@@ -1262,16 +1223,21 @@ export default function RequestDetailModal({
 												))
 											)}
 										</div>
-										<div className='comment-input-area'>
-											<textarea
-												placeholder='Написать комментарий...'
-												value={newComment}
-												onChange={e => setNewComment(e.target.value)}
-											></textarea>
-											<button className='btn-green' onClick={handleAddComment}>
-												Отправить
-											</button>
-										</div>
+										{canCommentRequest && (
+											<div className='comment-input-area'>
+												<textarea
+													placeholder='Написать комментарий...'
+													value={newComment}
+													onChange={e => setNewComment(e.target.value)}
+												></textarea>
+												<button
+													className='btn-green'
+													onClick={handleAddComment}
+												>
+													Отправить
+												</button>
+											</div>
+										)}
 									</div>
 								)}
 

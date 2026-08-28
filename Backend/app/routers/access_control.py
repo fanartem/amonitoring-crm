@@ -8,6 +8,7 @@ from app.database import get_connection
 from app.security import get_current_user
 from app.permissions import (
     is_super_admin,
+    is_owner,
     has_any_permission,
     get_user_base_access,
     attach_effective_permissions,
@@ -451,6 +452,7 @@ def get_user_security_flags_snapshot(cursor, user_id: int) -> dict:
         SELECT
             user_id,
             is_super_admin,
+            super_admin_granted_by,
             is_owner,
             created_at,
             updated_at,
@@ -468,6 +470,7 @@ def get_user_security_flags_snapshot(cursor, user_id: int) -> dict:
         return {
             "user_id": user_id,
             "is_super_admin": False,
+            "super_admin_granted_by": None,
             "is_owner": False,
             "created_at": None,
             "updated_at": None,
@@ -791,6 +794,8 @@ def get_user_access_detail(
 
             attach_effective_permissions(cursor, user)
 
+            security_flags = get_user_security_flags_snapshot(cursor, user_id)
+
             cursor.execute(
                 """
                 SELECT
@@ -867,6 +872,9 @@ def get_user_access_detail(
                     "is_active": bool(user["is_active"]),
                     "deleted_at": user["deleted_at"],
                     "is_super_admin": user["is_super_admin"],
+                    "super_admin_granted_by": security_flags.get(
+                        "super_admin_granted_by"
+                    ),
                     "is_owner": user["is_owner"],
                     "can_be_request_executor": user["can_be_request_executor"],
                     "can_be_responsible_manager": user["can_be_responsible_manager"],
@@ -1568,6 +1576,23 @@ def update_user_security_flags(
                 )
 
             if old_flags["is_super_admin"] and not new_is_super_admin:
+                granted_by = old_flags.get("super_admin_granted_by")
+
+                # Снять может тот, кто выдал. Владелец системы — всегда,
+                # в том числе если выдавший сам уже не Супер-Админ или удалён.
+                if not is_owner(current_user) and (
+                    granted_by is None
+                    or int(granted_by) != int(current_user["id"])
+                ):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            "Снять Супер-Админа может только тот, кто его выдал, "
+                            "или владелец системы"
+                        ),
+                    )
+
+            if old_flags["is_super_admin"] and not new_is_super_admin:
                 active_super_admins_count = count_active_super_admins(cursor)
 
                 if active_super_admins_count <= 1:
@@ -1576,25 +1601,39 @@ def update_user_security_flags(
                         detail="Нельзя оставить систему без активного Супер-Админа",
                     )
 
+            if new_is_super_admin:
+                # При повторной выдаче кураторство не переписываем,
+                # иначе Супер-Админа можно было бы «перехватить» лишним PATCH.
+                granted_by_value = (
+                    old_flags.get("super_admin_granted_by")
+                    if old_flags["is_super_admin"]
+                    else current_user["id"]
+                )
+            else:
+                granted_by_value = None
+
             cursor.execute(
                 """
                 INSERT INTO user_security_flags (
                     user_id,
                     is_super_admin,
+                    super_admin_granted_by,
                     is_owner,
                     created_at,
                     updated_at,
                     updated_by
                 )
-                VALUES (%s, %s, 0, NOW(), NOW(), %s)
+                VALUES (%s, %s, %s, 0, NOW(), NOW(), %s)
                 ON DUPLICATE KEY UPDATE
                     is_super_admin = VALUES(is_super_admin),
+                    super_admin_granted_by = VALUES(super_admin_granted_by),
                     updated_at = NOW(),
                     updated_by = VALUES(updated_by)
                 """,
                 (
                     user_id,
                     new_is_super_admin,
+                    granted_by_value,
                     current_user["id"],
                 ),
             )

@@ -10,6 +10,8 @@ export const getStoredUser = () => {
 
 export const isSuperAdmin = user => toBool(user?.is_super_admin)
 
+export const isOwner = user => toBool(user?.is_owner)
+
 export const hasPermission = (user, permissionCode) => {
 	if (isSuperAdmin(user)) return true
 
@@ -141,14 +143,10 @@ export const canAccessRoute = (routeKey, user = getStoredUser()) => {
 			)
 
 		case 'employees':
-			// Список сотрудников по твоему требованию видят все авторизованные.
-			return true
+			return hasAnyPermission(user, ['employees.view'])
 
 		case 'approvals':
-			return (
-				hasAnyPermission(user, ['employees.approve', 'employees.manage']) ||
-				hasLegacyRole(user, ['ADMIN', 'ROP'])
-			)
+			return hasAnyPermission(user, ['employees.approve'])
 
 		case 'warehouse':
 			return (

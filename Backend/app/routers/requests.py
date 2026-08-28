@@ -155,9 +155,7 @@ REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES = [
 
 REQUEST_COMMENT_PERMISSION_CODES = [
     "requests.comments.create",
-    "requests.comment",
     "requests.comments.manage",
-    "requests.manage",
 ]
 
 
@@ -307,13 +305,7 @@ def user_can_complete_assigned_request(current_user: dict) -> bool:
 
 
 def user_can_comment_requests(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, REQUEST_COMMENT_PERMISSION_CODES)
-        or has_legacy_role(
-            current_user,
-            [ADMIN, ROP, MANAGER, TECH_SUPPORT, ACCOUNTANT, WAREHOUSE_MANAGER, SENIOR_TECHNICIAN, TECHNICIAN],
-        )
-    )
+    return user_has_any_permission(current_user, REQUEST_COMMENT_PERMISSION_CODES)
 
 
 def user_is_limited_executor(current_user: dict) -> bool:

@@ -11,18 +11,9 @@ from app.security import get_current_user
 from app.schemas import AttachmentUpdate
 
 from app.permissions import (
-    ADMIN,
-    ROP,
-    MANAGER,
-    TECH_SUPPORT,
-    ACCOUNTANT,
-    WAREHOUSE_MANAGER,
-    TECHNICIAN,
-    SENIOR_TECHNICIAN,
     has_any_permission,
     is_super_admin,
     is_client_owned_by_user,
-    can_view_attachment,
     can_delete_attachment,
 )
 
@@ -51,6 +42,16 @@ ALLOWED_EXTENSIONS = {
 ATTACHMENT_VIEW_PERMISSION_CODES = [
     "attachments.view",
     "attachments.manage",
+]
+
+# Область видимости файлов внутри доступной карточки/заявки.
+ATTACHMENT_VIEW_ALL_PERMISSION_CODES = [
+    "attachments.view_all",
+    "attachments.manage",
+]
+
+ATTACHMENT_VIEW_OWN_PERMISSION_CODES = [
+    "attachments.view_own",
 ]
 
 ATTACHMENT_UPLOAD_PERMISSION_CODES = [
@@ -97,23 +98,19 @@ ENTITY_ATTACHMENT_PERMISSION_CODES = {
         "view": [
             "requests.attachments.view",
             "requests.attachments.manage",
-            "requests.manage",
         ],
         "upload": [
             "requests.attachments.upload",
             "requests.attachments.manage",
-            "requests.manage",
         ],
         "update": [
             "requests.attachments.rename",
             "requests.attachments.edit",
             "requests.attachments.manage",
-            "requests.manage",
         ],
         "delete": [
             "requests.attachments.delete",
             "requests.attachments.manage",
-            "requests.manage",
         ],
     },
 }
@@ -132,22 +129,6 @@ CLIENT_ATTACHMENTS_VIEW_OWN_PERMISSION_CODES = [
     "clients.attachments.view_own",
     "clients.view_own",
 ]
-
-# Старое поведение upload endpoint было очень мягким: любой авторизованный
-# пользователь мог загрузить файл к существующему клиенту/заявке. Чтобы после
-# перехода на permissions не отвалились текущие роли, оставляем legacy fallback.
-LEGACY_ATTACHMENT_UPLOAD_ROLES = [
-    ADMIN,
-    ROP,
-    MANAGER,
-    TECH_SUPPORT,
-    ACCOUNTANT,
-    WAREHOUSE_MANAGER,
-    TECHNICIAN,
-    SENIOR_TECHNICIAN,
-]
-
-LEGACY_ATTACHMENT_MANAGE_ROLES = [ADMIN, ROP, MANAGER]
 
 
 def normalize_entity_type(entity_type: str) -> str:
@@ -173,17 +154,6 @@ def to_bool(value) -> bool:
         return value != 0
 
     return str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
-
-
-def permissions_are_loaded(current_user: dict | None) -> bool:
-    return current_user is not None and isinstance(current_user.get("permissions"), list)
-
-
-def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user or permissions_are_loaded(current_user):
-        return False
-
-    return current_user.get("role") in roles
 
 
 def user_has_any_permission(current_user: dict | None, permission_codes: list[str]) -> bool:
@@ -219,42 +189,49 @@ def can_manage_attachment_by_permission(attachment: dict, current_user: dict) ->
             *get_entity_permission_codes(entity_type, "update"),
             *get_entity_permission_codes(entity_type, "delete"),
         ],
-    ) or has_legacy_role(current_user, LEGACY_ATTACHMENT_MANAGE_ROLES)
+    )
 
 
 def user_can_view_attachment(attachment: dict, current_user: dict) -> bool:
     entity_type = normalize_entity_type(attachment.get("entity_type"))
 
-    if user_has_any_permission(
+    # 1. Право работать с файлами этой сущности вообще.
+    if not user_has_any_permission(
         current_user,
         [
             *ATTACHMENT_VIEW_PERMISSION_CODES,
             *get_entity_permission_codes(entity_type, "view"),
         ],
     ):
+        return False
+
+    # 2. Область: все файлы или только загруженные самим пользователем.
+    if user_has_any_permission(current_user, ATTACHMENT_VIEW_ALL_PERMISSION_CODES):
         return True
 
-    # Совместимость со старой permission-функцией.
-    return can_view_attachment(attachment, current_user)
+    if user_has_any_permission(current_user, ATTACHMENT_VIEW_OWN_PERMISSION_CODES):
+        return attachment_is_owner(attachment, current_user)
+
+    return False
 
 
 def user_can_upload_attachment(entity_type: str, current_user: dict) -> bool:
     entity_type = normalize_entity_type(entity_type)
 
-    return (
-        user_has_any_permission(
-            current_user,
-            [
-                *ATTACHMENT_UPLOAD_PERMISSION_CODES,
-                *get_entity_permission_codes(entity_type, "upload"),
-            ],
-        )
-        or has_legacy_role(current_user, LEGACY_ATTACHMENT_UPLOAD_ROLES)
+    return user_has_any_permission(
+        current_user,
+        [
+            *ATTACHMENT_UPLOAD_PERMISSION_CODES,
+            *get_entity_permission_codes(entity_type, "upload"),
+        ],
     )
 
 
 def user_can_update_attachment(attachment: dict, current_user: dict) -> bool:
     entity_type = normalize_entity_type(attachment.get("entity_type"))
+
+    if not user_can_view_attachment(attachment, current_user):
+        return False
 
     if user_has_any_permission(
         current_user,
@@ -262,7 +239,7 @@ def user_can_update_attachment(attachment: dict, current_user: dict) -> bool:
             *ATTACHMENT_UPDATE_PERMISSION_CODES,
             *get_entity_permission_codes(entity_type, "update"),
         ],
-    ) or has_legacy_role(current_user, LEGACY_ATTACHMENT_MANAGE_ROLES):
+    ):
         return True
 
     # Старое поведение: владелец может переименовать свой файл только 2 минуты.
@@ -272,6 +249,9 @@ def user_can_update_attachment(attachment: dict, current_user: dict) -> bool:
 def user_can_delete_attachment(attachment: dict, current_user: dict) -> bool:
     entity_type = normalize_entity_type(attachment.get("entity_type"))
     within_time_limit = attachment_is_within_time_limit(attachment)
+
+    if not user_can_view_attachment(attachment, current_user):
+        return False
 
     if user_has_any_permission(
         current_user,

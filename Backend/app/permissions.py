@@ -48,61 +48,41 @@ DATA_SCOPE_NONE = "NONE"
 USER_PERMISSION_ALLOW = "ALLOW"
 USER_PERMISSION_DENY = "DENY"
 
-
-# Permission code groups used by legacy helper functions below.
-# Unknown codes are harmless: they simply will not match until a matching row
-# exists in the permissions table. Keep these lists broader than the current UI
-# so old and new migrations can coexist safely.
 REQUEST_VIEW_PERMISSION_CODES = [
     "requests.view",
-    "requests.manage",
 ]
 
 REQUEST_VIEW_ALL_PERMISSION_CODES = [
     "requests.view_all",
-    "requests.manage",
 ]
 
 REQUEST_CREATE_PERMISSION_CODES = [
     "requests.create",
-    "requests.manage",
 ]
 
 REQUEST_EDIT_ALL_PERMISSION_CODES = [
     "requests.edit_all",
-    "requests.manage",
 ]
 
 REQUEST_PAYMENT_MANAGE_PERMISSION_CODES = [
     "requests.payment.manage",
-    "requests.pay",
-    "finance.manage",
-    "prices.manage",
 ]
 
 REQUEST_STATUS_MANAGE_PERMISSION_CODES = [
     "requests.status.change",
-    "requests.status.manage",
-    "requests.change_status",
-    "requests.manage",
+    "requests.status.override",
 ]
 
 REQUEST_DELETE_ANY_PERMISSION_CODES = [
     "requests.delete_any",
-    "requests.delete",
-    "requests.manage",
 ]
 
 REQUEST_DELETE_OWN_PERMISSION_CODES = [
     "requests.delete_own_limited",
-    "requests.delete_own",
 ]
 
 REQUEST_EXECUTORS_MANAGE_PERMISSION_CODES = [
     "requests.executors.manage",
-    "requests.assign_executor",
-    "requests.assign",
-    "requests.manage",
 ]
 
 CLIENTS_VIEW_PERMISSION_CODES = [
@@ -124,19 +104,15 @@ CLIENTS_EDIT_ALL_PERMISSION_CODES = [
 
 CLIENTS_EDIT_OWN_PERMISSION_CODES = [
     "clients.edit_own",
-    "clients.manage_own",
 ]
 
 CLIENTS_STATUS_MANAGE_PERMISSION_CODES = [
     "clients.status.change",
-    "clients.status.manage",
-    "clients.change_status",
     "clients.manage",
 ]
 
 CLIENTS_REASSIGN_PERMISSION_CODES = [
-    "clients.reassign",
-    "clients.responsible_manager.manage",
+    "clients.responsible.reassign",
     "clients.manage",
 ]
 
@@ -146,57 +122,49 @@ PRICES_VIEW_PERMISSION_CODES = [
     "client_prices.view",
     "requests.price.view",
     "requests.prices.view",
-    "requests.view_price",
-    "requests.view_prices",
 ]
 
 BASE_PRICES_MANAGE_PERMISSION_CODES = [
     "base_prices.manage",
+    "prices.base.manage",
     "prices.manage",
 ]
 
 CLIENT_PRICES_MANAGE_ANY_PERMISSION_CODES = [
     "client_prices.manage",
     "client_prices.manage_all",
+    "prices.client.manage_all",
     "prices.manage",
 ]
 
 CLIENT_PRICES_MANAGE_OWN_PERMISSION_CODES = [
     "client_prices.manage_own",
+    "prices.client.manage_own",
 ]
 
 WAREHOUSE_VIEW_PERMISSION_CODES = [
     "warehouse.view",
-    "warehouse.items.view",
     "warehouse.manage",
-    "warehouse.items.manage",
 ]
 
 WAREHOUSE_MANAGE_PERMISSION_CODES = [
     "warehouse.manage",
-    "warehouse.items.manage",
 ]
 
 EMPLOYEE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
     "warehouse.employee_equipment.manage",
-    "warehouse.employees_equipment.manage",
-    "warehouse.employee_inventory.manage",
-    "warehouse.employees_inventory.manage",
-    "warehouse.inventory.manage_employees",
     "warehouse.inventory.manage_all",
     "warehouse.inventory.assign",
     "warehouse.inventory.transfer",
-    "warehouse.technician_inventory.manage",
-    "warehouse.technicians_inventory.manage",
-    "warehouse.assigned_inventory.manage",
-    "warehouse.manage_employee_equipment",
-    "warehouse.manage_technician_inventory",
-    "warehouse.staff_inventory.manage",
 ]
 
 ATTACHMENT_VIEW_ALL_PERMISSION_CODES = [
     "attachments.view_all",
-    "files.view_all",
+    "attachments.manage",
+]
+
+ATTACHMENT_VIEW_OWN_PERMISSION_CODES = [
+    "attachments.view_own",
 ]
 
 ATTACHMENT_DELETE_ANY_PERMISSION_CODES = [
@@ -227,7 +195,6 @@ SUPPORT_REQUEST_ASSIGN_PERMISSION_CODES = [
 SUPPORT_REQUEST_STATUS_PERMISSION_CODES = [
     "support_requests.status.change",
     "support_requests.status.manage",
-    "support_requests.change_status",
     "support_requests.manage",
 ]
 
@@ -278,7 +245,6 @@ def get_data_scope(user: dict | None) -> str:
     return (
         user.get("data_scope")
         or user.get("role_data_scope")
-        or user.get("client_access_scope")
         or DATA_SCOPE_NONE
     )
 
@@ -827,23 +793,14 @@ def can_view_price_fields(user: dict) -> bool:
 
 
 def can_view_attachment(attachment: dict, current_user: dict) -> bool:
-    role = get_role(current_user)
-
     if has_any_permission(current_user, ATTACHMENT_VIEW_ALL_PERMISSION_CODES):
         return True
 
-    if has_legacy_role(current_user, [ADMIN, ROP, MANAGER, ACCOUNTANT, WAREHOUSE_MANAGER, TECH_SUPPORT]):
-        return True
-
-    if has_legacy_role(current_user, [TECHNICIAN]):
+    if has_any_permission(current_user, ATTACHMENT_VIEW_OWN_PERMISSION_CODES):
         return (
             attachment.get("uploaded_by") is not None
             and int(attachment["uploaded_by"]) == int(current_user["id"])
         )
-
-    if has_legacy_role(current_user, [SENIOR_TECHNICIAN]):
-        uploaded_by_role = attachment.get("uploaded_by_role")
-        return uploaded_by_role in [TECHNICIAN, SENIOR_TECHNICIAN]
 
     return False
 

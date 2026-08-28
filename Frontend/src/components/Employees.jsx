@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
+import {
+	getStoredUser,
+	hasPermission,
+	isOwner,
+	isSuperAdmin,
+	toBool,
+} from '../utils/access'
 import '../styles/Employees.css'
 
 const DEFAULT_ROLE_COLOR = '#64748B'
@@ -29,27 +36,6 @@ const CATEGORY_LABELS = {
 	calendar: 'Календарь',
 	general: 'Общие',
 	reports: 'Отчёты',
-}
-
-const getStoredUser = () => {
-	try {
-		return JSON.parse(localStorage.getItem('user_data') || 'null') || {}
-	} catch {
-		return {}
-	}
-}
-
-const toBool = value => value === true || value === 1 || value === '1'
-
-const isSuperAdmin = user => toBool(user?.is_super_admin)
-const isOwner = user => toBool(user?.is_owner)
-
-const hasPermission = (user, permissionCode) => {
-	if (isSuperAdmin(user)) return true
-	return (
-		Array.isArray(user?.permissions) &&
-		user.permissions.includes(permissionCode)
-	)
 }
 
 const normalizeRoleCode = value =>
@@ -124,6 +110,12 @@ export default function Employees() {
 		if (!emp) return false
 		if (!canManageEmployees) return false
 		if (isOwner(emp) && !isOwner(currentUser)) return false
+		if (
+			toBool(emp.is_super_admin) &&
+			!isCurrentUser(emp) &&
+			!isOwner(currentUser)
+		)
+			return false
 		return true
 	}
 
@@ -141,6 +133,15 @@ export default function Employees() {
 		if (!isSuperAdmin(currentUser)) return false
 		if (isOwner(emp)) return false
 		return true
+	}
+
+	const canRevokeSuperAdmin = user => {
+		if (!user) return false
+		if (!toBool(user.is_super_admin)) return false
+		if (toBool(user.is_owner)) return false
+		if (Number(user.id) === currentUserId) return false
+		if (isOwner(currentUser)) return true
+		return Number(user.super_admin_granted_by || 0) === currentUserId
 	}
 
 	const roleMap = useMemo(() => {
@@ -219,7 +220,8 @@ export default function Employees() {
 
 	const visibleEmployees = useMemo(() => {
 		return employees.filter(emp => {
-			if (emp.email !== 'admin@amonitoring.kz') return true
+			if (emp.deleted_at) return false
+			if (!isOwner(emp)) return true
 			return isCurrentUser(emp) || isSuperAdmin(currentUser)
 		})
 	}, [employees, currentUserId, currentUser])
@@ -473,16 +475,12 @@ export default function Employees() {
 
 		try {
 			const body = {}
-			const canEditIdentityFields = canManageEmployees && !isOwner(selectedUser)
-			const canEditCityField = canManageEmployees && !isOwner(selectedUser)
+			const canEditFields = canEditEmployee(selectedUser)
 			const canEditRoleField = canChangeRole(selectedUser)
 
-			if (canEditIdentityFields) {
+			if (canEditFields) {
 				body.email = formData.email
 				body.name = formData.name
-			}
-
-			if (canEditCityField) {
 				body.city = formData.city || null
 			}
 
@@ -491,7 +489,7 @@ export default function Employees() {
 				body.city = formData.city || null
 			}
 
-			if (formData.password) {
+			if (formData.password && canEditFields) {
 				body.password = formData.password
 			}
 
@@ -932,9 +930,11 @@ export default function Employees() {
 						</div>
 
 						<div className='employee-modal-body'>
-							{isOwner(selectedUser) && !isOwner(currentUser) && (
+							{!canEditEmployee(selectedUser) && (
 								<div className='employee-readonly-note'>
-									Владелец системы защищён от редактирования.
+									{isOwner(selectedUser)
+										? 'Владелец системы защищён от редактирования.'
+										: 'Данные Супер-Админа может изменять только владелец системы.'}
 								</div>
 							)}
 
@@ -970,6 +970,7 @@ export default function Employees() {
 									placeholder='Оставьте пустым, если не нужно менять'
 									value={formData.password}
 									onChange={handleChange}
+									disabled={!canEditEmployee(selectedUser)}
 								/>
 							</label>
 
@@ -1134,7 +1135,9 @@ export default function Employees() {
 											disabled={
 												accessSaving ||
 												toBool(accessDetail.user.is_owner) ||
-												Number(accessDetail.user.id) === currentUserId
+												Number(accessDetail.user.id) === currentUserId ||
+												(toBool(accessDetail.user.is_super_admin) &&
+													!canRevokeSuperAdmin(accessDetail.user))
 											}
 										>
 											{toBool(accessDetail.user.is_super_admin)
@@ -1149,6 +1152,16 @@ export default function Employees() {
 											нельзя менять индивидуальные доступы.
 										</div>
 									)}
+
+									{toBool(accessDetail.user.is_super_admin) &&
+										!toBool(accessDetail.user.is_owner) &&
+										Number(accessDetail.user.id) !== currentUserId &&
+										!canRevokeSuperAdmin(accessDetail.user) && (
+											<div className='employee-readonly-note'>
+												Снять Супер-Админа может только тот, кто его выдал, или
+												владелец системы.
+											</div>
+										)}
 
 									{toBool(accessDetail.user.is_super_admin) &&
 										!toBool(accessDetail.user.is_owner) && (

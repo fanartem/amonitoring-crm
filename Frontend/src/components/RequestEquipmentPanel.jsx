@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/RequestEquipmentPanel.css'
-import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
+import { getStoredUser, hasAnyPermission, toBool } from '../utils/access'
 
 const CATEGORIES = {
 	GPS_TRACKER: 'Трекер',
@@ -466,48 +466,33 @@ export default function RequestEquipmentPanel({
 		- legacy fallback оставлен временно для старых системных ролей.
 	*/
 
-	const canManageWarehouse =
-		hasAnyPermission(currentUser, [
-			'warehouse.manage',
-			'warehouse.items.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	const canManageWarehouse = hasAnyPermission(currentUser, ['warehouse.manage'])
 
 	const canManageEmployeeEquipment =
+		canManageWarehouse ||
 		hasAnyPermission(currentUser, [
 			'warehouse.employee_equipment.manage',
-			'warehouse.employees_equipment.manage',
-			'warehouse.employee_inventory.manage',
-			'warehouse.employees_inventory.manage',
-			'warehouse.inventory.manage_employees',
 			'warehouse.inventory.manage_all',
 			'warehouse.inventory.assign',
 			'warehouse.inventory.transfer',
-			'warehouse.technician_inventory.manage',
-			'warehouse.technicians_inventory.manage',
-			'warehouse.assigned_inventory.manage',
-			'warehouse.manage_employee_equipment',
-			'warehouse.manage_technician_inventory',
-			'warehouse.staff_inventory.manage',
-		]) || canManageWarehouse
+		])
 
 	const canManageEquipment = canManageWarehouse || canManageEmployeeEquipment
 
+	// Зеркало can_attach_request_equipment() из warehouse.py.
 	const canAttachEquipment =
+		canManageEquipment ||
 		hasAnyPermission(currentUser, [
 			'requests.equipment.attach',
 			'requests.equipment.manage',
-			'warehouse.request_equipment.attach',
-			'warehouse.request_equipment.manage',
-			'warehouse.my_inventory.attach',
-			'warehouse.inventory.attach_own',
 		]) ||
-		canManageEquipment ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'WAREHOUSE_MANAGER',
-			'SENIOR_TECHNICIAN',
-			'TECHNICIAN',
-		])
+		(toBool(currentUser?.can_be_request_executor) &&
+			hasAnyPermission(currentUser, [
+				'requests.equipment.view_assigned',
+				'requests.equipment.view_own',
+				'warehouse.request_equipment.view_assigned',
+				'warehouse.request_equipment.view_own',
+			]))
 
 	const [attachedItems, setAttachedItems] = useState([])
 	const [availableItems, setAvailableItems] = useState([])

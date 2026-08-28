@@ -28,34 +28,7 @@ from app.schemas import (
 
 router = APIRouter(prefix="/warehouse", tags=["Warehouse"])
 
-WAREHOUSE_MANAGE_ROLES = ["ADMIN", "WAREHOUSE_MANAGER"]
-
-INVENTORY_FULL_READ_ROLES = [
-    "ADMIN",
-    "WAREHOUSE_MANAGER",
-    "SENIOR_TECHNICIAN",
-]
-
 REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS = 120
-
-REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES = [
-    "TECHNICIAN",
-    "SENIOR_TECHNICIAN",
-]
-
-# Полноценный доступ к странице склада: список, группировка, история, корзина
-WAREHOUSE_FULL_READ_ROLES = ["ADMIN", "WAREHOUSE_MANAGER"]
-
-# Просмотр оборудования только внутри заявки/автомобиля
-REQUEST_EQUIPMENT_READ_ROLES = [
-    "ADMIN",
-    "ROP",
-    "WAREHOUSE_MANAGER",
-    "MANAGER",
-    "TECH_SUPPORT",
-    "SENIOR_TECHNICIAN",
-    "TECHNICIAN",
-]
 
 ALLOWED_CATEGORIES = [
     "GPS_TRACKER",
@@ -97,14 +70,11 @@ ALLOWED_CONDITION_STATUSES = [
 
 WAREHOUSE_FULL_READ_PERMISSION_CODES = [
     "warehouse.view",
-    "warehouse.items.view",
     "warehouse.manage",
-    "warehouse.items.manage",
 ]
 
 WAREHOUSE_MANAGE_PERMISSION_CODES = [
     "warehouse.manage",
-    "warehouse.items.manage",
 ]
 
 # Только коды, которые реально показываются галочками в разделе ролей.
@@ -118,19 +88,9 @@ INVENTORY_FULL_READ_PERMISSION_CODES = [
 
 EMPLOYEE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
     "warehouse.employee_equipment.manage",
-    "warehouse.employees_equipment.manage",
-    "warehouse.employee_inventory.manage",
-    "warehouse.employees_inventory.manage",
-    "warehouse.inventory.manage_employees",
     "warehouse.inventory.manage_all",
     "warehouse.inventory.assign",
     "warehouse.inventory.transfer",
-    "warehouse.technician_inventory.manage",
-    "warehouse.technicians_inventory.manage",
-    "warehouse.assigned_inventory.manage",
-    "warehouse.manage_employee_equipment",
-    "warehouse.manage_technician_inventory",
-    "warehouse.staff_inventory.manage",
 ]
 
 MY_INVENTORY_VIEW_PERMISSION_CODES = [
@@ -141,34 +101,22 @@ MY_INVENTORY_VIEW_PERMISSION_CODES = [
 REQUEST_EQUIPMENT_READ_PERMISSION_CODES = [
     "requests.equipment.view",
     "requests.equipment.manage",
-    "warehouse.request_equipment.view",
-    "warehouse.request_equipment.manage",
     "warehouse.view",
-    "warehouse.items.view",
     "warehouse.manage",
-    "warehouse.items.manage",
 ]
 
 REQUEST_EQUIPMENT_ATTACH_PERMISSION_CODES = [
     "requests.equipment.attach",
     "requests.equipment.manage",
-    "warehouse.request_equipment.attach",
-    "warehouse.request_equipment.manage",
-    "warehouse.my_inventory.attach",
-    "warehouse.inventory.attach_own",
 ]
 
 REQUEST_EQUIPMENT_DETACH_WITHOUT_TIME_LIMIT_PERMISSION_CODES = [
-    "requests.equipment.detach_any",
     "requests.equipment.manage",
-    "warehouse.request_equipment.detach_any",
-    "warehouse.request_equipment.manage",
 ]
 
 VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
     "vehicles.equipment.manage",
     "warehouse.vehicle_equipment.manage",
-    "warehouse.items.manage",
     "warehouse.manage",
 ]
 
@@ -179,9 +127,6 @@ VEHICLE_EQUIPMENT_VIEW_PERMISSION_CODES = [
     "warehouse.vehicle_equipment.view",
     "warehouse.vehicle_equipment.view_all",
     "warehouse.vehicle_equipment.manage",
-    "warehouse.items.view",
-    "warehouse.items.manage",
-    "warehouse.view",
     "warehouse.manage",
 ]
 
@@ -191,26 +136,11 @@ REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES = [
     "requests.equipment.attach",
     "requests.equipment.manage",
     "warehouse.request_equipment.view_assigned",
-    "warehouse.request_equipment.attach",
-    "warehouse.request_equipment.manage",
-    "warehouse.my_inventory.attach",
-    "warehouse.inventory.attach_own",
+    "warehouse.request_equipment.view_own",
 ]
-
 
 def to_bool(value) -> bool:
     return value is True or value == 1 or str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
-
-
-def permissions_are_loaded(current_user: dict | None) -> bool:
-    return current_user is not None and isinstance(current_user.get("permissions"), list)
-
-
-def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user or permissions_are_loaded(current_user):
-        return False
-
-    return current_user.get("role") in roles
 
 
 def user_has_any_permission(current_user: dict, permission_codes: list[str]) -> bool:
@@ -218,10 +148,7 @@ def user_has_any_permission(current_user: dict, permission_codes: list[str]) -> 
 
 
 def can_manage_warehouse(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, WAREHOUSE_MANAGE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        WAREHOUSE_MANAGE_ROLES,
-    )
+    return user_has_any_permission(current_user, WAREHOUSE_MANAGE_PERMISSION_CODES)
 
 
 def can_manage_employee_equipment(current_user: dict) -> bool:
@@ -235,7 +162,7 @@ def can_read_warehouse_full(current_user: dict) -> bool:
     return can_manage_warehouse(current_user) or user_has_any_permission(
         current_user,
         WAREHOUSE_FULL_READ_PERMISSION_CODES,
-    ) or has_legacy_role(current_user, WAREHOUSE_FULL_READ_ROLES)
+    )
 
 
 def can_read_inventory_full(current_user: dict) -> bool:
@@ -249,20 +176,16 @@ def can_read_inventory_full(current_user: dict) -> bool:
 
 
 def can_view_my_inventory(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, MY_INVENTORY_VIEW_PERMISSION_CODES)
-        or has_legacy_role(current_user, ["TECHNICIAN", "SENIOR_TECHNICIAN"])
-    )
+    return user_has_any_permission(current_user, MY_INVENTORY_VIEW_PERMISSION_CODES)
 
 
 def can_read_request_equipment(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, REQUEST_EQUIPMENT_READ_PERMISSION_CODES)
-        or user_has_any_permission(
-            current_user,
-            REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES,
-        )
-        or has_legacy_role(current_user, REQUEST_EQUIPMENT_READ_ROLES)
+    return user_has_any_permission(
+        current_user,
+        REQUEST_EQUIPMENT_READ_PERMISSION_CODES,
+    ) or user_has_any_permission(
+        current_user,
+        REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES,
     )
 
 
@@ -277,7 +200,6 @@ def can_attach_request_equipment(current_user: dict) -> bool:
                 REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES,
             )
         )
-        or has_legacy_role(current_user, ["ADMIN", "WAREHOUSE_MANAGER", "SENIOR_TECHNICIAN", "TECHNICIAN"])
     )
 
 
@@ -289,17 +211,11 @@ def can_detach_request_equipment_without_time_limit(current_user: dict) -> bool:
 
 
 def can_detach_request_equipment_with_time_limit(current_user: dict) -> bool:
-    return (
-        can_attach_request_equipment(current_user)
-        or has_legacy_role(current_user, REQUEST_EQUIPMENT_LIMITED_DETACH_ROLES)
-    )
+    return can_attach_request_equipment(current_user)
 
 
 def can_manage_vehicle_equipment(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        WAREHOUSE_MANAGE_ROLES,
-    )
+    return user_has_any_permission(current_user, VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES)
 
 
 def require_warehouse_full_read(current_user: dict):
@@ -395,13 +311,10 @@ def can_user_access_vehicle_equipment(vehicle: dict, current_user: dict) -> bool
     ):
         return True
 
-    if has_legacy_role(current_user, ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT", "SENIOR_TECHNICIAN"]):
-        return True
-
     if user_has_any_permission(
         current_user,
         ["vehicles.equipment.view_own", "warehouse.vehicle_equipment.view_own"],
-    ) or has_legacy_role(current_user, ["MANAGER"]):
+    ):
         created_by = vehicle.get("client_created_by")
         responsible_manager_id = vehicle.get("responsible_manager_id")
 
@@ -437,21 +350,16 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
     if can_manage_employee_equipment(current_user) or user_has_any_permission(
         current_user,
         [
-            "requests.equipment.view_all",
-            "requests.equipment.manage_all",
-            "warehouse.request_equipment.view_all",
-            "warehouse.request_equipment.manage_all",
+            "requests.equipment.view",
+            "requests.equipment.manage",
         ],
     ):
-        return True
-
-    if has_legacy_role(current_user, ["ADMIN", "ROP", "WAREHOUSE_MANAGER", "TECH_SUPPORT", "SENIOR_TECHNICIAN"]):
         return True
 
     if user_has_any_permission(
         current_user,
         ["requests.equipment.view_own", "warehouse.request_equipment.view_own"],
-    ) or has_legacy_role(current_user, ["MANAGER"]):
+    ):
         created_by = request.get("created_by")
         responsible_manager_id = request.get("responsible_manager_id")
 
@@ -465,7 +373,7 @@ def can_user_access_request_equipment(request: dict, current_user: dict) -> bool
     can_use_executor_scope = (
         to_bool(current_user.get("can_be_request_executor"))
         and user_has_any_permission(current_user, REQUEST_EQUIPMENT_VIEW_ASSIGNED_PERMISSION_CODES)
-    ) or has_legacy_role(current_user, ["TECHNICIAN", "SENIOR_TECHNICIAN"])
+    )
 
     if can_use_executor_scope:
         assigned_to = request.get("assigned_to")
