@@ -611,6 +611,118 @@ export default function CreateRequestModal({
 		)
 	}, [isOpen, isEditMode, priceItems])
 
+	// --- Параметры установки по договору с клиентом ---
+
+	const [clientInstallationSettings, setClientInstallationSettings] =
+		useState(null)
+
+	// Для существующего клиента берём его параметры, для нового подклиента —
+	// параметры родителя: банк заводит заёмщика на своих условиях.
+	const installationSettingsSourceClientId =
+		clientKind === 'existing'
+			? formData.client_id || null
+			: formData.is_subclient
+				? formData.parent_client_id || null
+				: null
+
+	const buildVehicleFromInstallationSettings = (vehicle, data) => {
+		const settings = data?.settings
+
+		if (!settings) return vehicle
+
+		return {
+			...vehicle,
+			gps_price_code: settings.gps_price_code || '',
+			tracker_subscription_months: settings.gps_price_code
+				? Number(settings.tracker_subscription_months || 0)
+				: 0,
+			blocking: settings.has_blocking ? 'С блокировкой' : 'Без блокировки',
+			beacon: settings.has_beacon ? 'С маяком' : 'Без маяка',
+			beacon_subscription_months: settings.has_beacon
+				? Number(settings.beacon_subscription_months || 0)
+				: 0,
+			// Датчики из договора ставятся в каждый автомобиль заявки.
+			extra_sensors: (data.sensors || []).map(sensor => ({
+				local_id: createLocalId(),
+				name: sensor.name || '',
+				price:
+					sensor.price === null || sensor.price === undefined
+						? ''
+						: String(sensor.price),
+			})),
+		}
+	}
+
+	const applyInstallationSettings = data => {
+		const settings = data?.settings
+
+		if (!settings) return
+
+		setFormData(prev => ({
+			...prev,
+			work_format:
+				settings.visit_type === 'IN_OFFICE'
+					? 'В офисе'
+					: settings.visit_type === 'ON_SITE'
+						? 'Выезд к клиенту'
+						: prev.work_format,
+			visit_price_code:
+				settings.visit_type === 'ON_SITE' && settings.visit_price_code
+					? settings.visit_price_code
+					: prev.visit_price_code,
+			platform: settings.platform || prev.platform,
+		}))
+
+		setRequestVehicles(prev =>
+			prev.map(vehicle => buildVehicleFromInstallationSettings(vehicle, data)),
+		)
+	}
+
+	useEffect(() => {
+		if (!isOpen || isEditMode) return
+
+		if (!installationSettingsSourceClientId) {
+			setClientInstallationSettings(null)
+			return
+		}
+
+		let cancelled = false
+
+		const load = async () => {
+			try {
+				const res = await fetch(
+					`${API_BASE_URL}/clients/${installationSettingsSourceClientId}/installation-settings`,
+					{ headers: getAuthHeaders() },
+				)
+
+				if (!res.ok) {
+					if (!cancelled) setClientInstallationSettings(null)
+					return
+				}
+
+				const data = await res.json()
+
+				if (cancelled) return
+
+				setClientInstallationSettings(data)
+
+				if (data?.is_configured) {
+					applyInstallationSettings(data)
+				}
+			} catch (err) {
+				console.error('Ошибка загрузки параметров установки клиента:', err)
+
+				if (!cancelled) setClientInstallationSettings(null)
+			}
+		}
+
+		load()
+
+		return () => {
+			cancelled = true
+		}
+	}, [isOpen, isEditMode, installationSettingsSourceClientId])
+
 	const fetchClients = async () => {
 		try {
 			const res = await fetch(`${API_BASE_URL}/clients`, {
@@ -2032,13 +2144,77 @@ export default function CreateRequestModal({
 		item => item.category === 'GPS_TRACKER' && item.is_active,
 	)
 
-	const createVehicleWithDefaultGps = () => {
-		const firstGpsCode = gpsTrackerItems[0]?.code || 'GPS_FMB920'
+	const contractSettings = clientInstallationSettings?.settings || null
 
-		return {
-			...createEmptyRequestVehicle(),
-			gps_price_code: firstGpsCode,
+	// Позицию прайса могли отключить уже после того, как её записали в договор.
+	const contractTrackerMissing = Boolean(
+		contractSettings?.gps_price_code &&
+		gpsTrackerItems.length > 0 &&
+		!gpsTrackerItems.some(
+			item => item.code === contractSettings.gps_price_code,
+		),
+	)
+
+	const getVehicleContractDeviations = vehicle => {
+		if (!contractSettings) return []
+
+		const deviations = []
+
+		if (
+			(vehicle.gps_price_code || '') !== (contractSettings.gps_price_code || '')
+		) {
+			deviations.push('трекер')
 		}
+
+		if (
+			contractSettings.gps_price_code &&
+			Number(vehicle.tracker_subscription_months || 0) !==
+				Number(contractSettings.tracker_subscription_months || 0)
+		) {
+			deviations.push('подписка трекера')
+		}
+
+		if (
+			contractSettings.gps_price_code &&
+			(vehicle.blocking === 'С блокировкой') !==
+				Boolean(contractSettings.has_blocking)
+		) {
+			deviations.push('блокировка')
+		}
+
+		if (
+			(vehicle.beacon === 'С маяком') !==
+			Boolean(contractSettings.has_beacon)
+		) {
+			deviations.push('маяк')
+		}
+
+		if (
+			contractSettings.has_beacon &&
+			Number(vehicle.beacon_subscription_months || 0) !==
+				Number(contractSettings.beacon_subscription_months || 0)
+		) {
+			deviations.push('подписка маяка')
+		}
+
+		return deviations
+	}
+
+	const createVehicleWithDefaultGps = () => {
+		const base = {
+			...createEmptyRequestVehicle(),
+			gps_price_code: gpsTrackerItems[0]?.code || 'GPS_FMB920',
+		}
+
+		// Новый автомобиль в заявке тоже получает параметры договора.
+		if (clientInstallationSettings?.is_configured) {
+			return buildVehicleFromInstallationSettings(
+				base,
+				clientInstallationSettings,
+			)
+		}
+
+		return base
 	}
 
 	const displayedPriceCalculation = buildDisplayedPriceCalculation()
@@ -2520,6 +2696,33 @@ export default function CreateRequestModal({
 								<div className='request-modal-section-title'>
 									Организация работ
 								</div>
+
+								{!isEditMode && contractSettings && (
+									<div className='request-client-status-warning'>
+										<div className='request-client-status-warning-title'>
+											Параметры из договора применены
+											{clientInstallationSettings?.source === 'INHERITED' &&
+												` — от «${clientInstallationSettings.inherited_from_client_name}»`}
+										</div>
+										<div className='request-client-status-warning-text'>
+											Тип выезда, платформа и параметры установки подставлены из
+											карточки клиента. Изменить можно, отличия будут отмечены.
+										</div>
+									</div>
+								)}
+
+								{!isEditMode && contractTrackerMissing && (
+									<div className='request-client-status-warning debtor'>
+										<div className='request-client-status-warning-title'>
+											Трекер из договора отключён в прайсе
+										</div>
+										<div className='request-client-status-warning-text'>
+											Позиция «{contractSettings.gps_price_code}» больше не
+											активна. Выберите другой трекер или свяжитесь с нами,
+											чтобы обновить параметры клиента.
+										</div>
+									</div>
+								)}
 
 								<div className='request-modal-grid'>
 									<label className='request-modal-field'>
@@ -3022,6 +3225,17 @@ export default function CreateRequestModal({
 																<div className='request-modal-section-subtitle'>
 																	Параметры установки
 																</div>
+
+																{contractSettings &&
+																	getVehicleContractDeviations(vehicle).length >
+																		0 && (
+																		<span className='request-modal-hint warning'>
+																			Отличается от договора:{' '}
+																			{getVehicleContractDeviations(
+																				vehicle,
+																			).join(', ')}
+																		</span>
+																	)}
 
 																<label className='request-modal-field request-modal-full'>
 																	<span className='request-modal-label'>

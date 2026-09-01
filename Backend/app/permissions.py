@@ -116,6 +116,27 @@ CLIENTS_REASSIGN_PERMISSION_CODES = [
     "clients.manage",
 ]
 
+# Параметры установки по договору с клиентом.
+# Право «изменять» тянет «видеть» зависимостью, но в список включаем оба —
+# проверка не должна зависеть от того, раскрылись зависимости или нет.
+CLIENT_INSTALLATION_SETTINGS_VIEW_PERMISSION_CODES = [
+    "clients.installation_settings.view",
+    "clients.installation_settings.manage_all",
+    "clients.installation_settings.manage_own",
+]
+
+CLIENT_INSTALLATION_SETTINGS_MANAGE_ALL_PERMISSION_CODES = [
+    "clients.installation_settings.manage_all",
+]
+
+CLIENT_INSTALLATION_SETTINGS_MANAGE_OWN_PERMISSION_CODES = [
+    "clients.installation_settings.manage_own",
+]
+
+CLIENT_HISTORY_VIEW_PERMISSION_CODES = [
+    "clients.history.view",
+]
+
 PRICES_VIEW_PERMISSION_CODES = [
     "prices.view",
     "base_prices.view",
@@ -606,6 +627,50 @@ def add_access_audit_log(
         ),
     )
 
+
+def add_client_history(
+    cursor,
+    *,
+    client_id: int,
+    user_id: int | None,
+    action: str,
+    field_name: str | None = None,
+    old_value=None,
+    new_value=None,
+    comment: str | None = None,
+):
+    """
+    Журнал изменений по клиенту: данные карточки, статус, тип оплаты,
+    ответственный менеджер, параметры установки, клиентские пользователи.
+
+    Отдельно от access_audit_log: тот про роли и права сотрудников,
+    здесь — про клиента.
+    """
+    cursor.execute(
+        """
+        INSERT INTO client_history (
+            client_id,
+            user_id,
+            action,
+            field_name,
+            old_value,
+            new_value,
+            comment
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            client_id,
+            user_id,
+            action,
+            field_name,
+            None if old_value is None else str(old_value),
+            None if new_value is None else str(new_value),
+            comment,
+        ),
+    )
+
+
 def get_role(user: dict | None) -> str | None:
     if not user:
         return None
@@ -877,6 +942,42 @@ def can_edit_client(client: dict, current_user: dict) -> bool:
         return is_client_owned_by_user(client, current_user)
 
     return False
+
+
+def can_view_client_installation_settings(user: dict) -> bool:
+    return has_any_permission(user, CLIENT_INSTALLATION_SETTINGS_VIEW_PERMISSION_CODES)
+
+
+def can_manage_all_client_installation_settings(user: dict) -> bool:
+    return has_any_permission(
+        user,
+        CLIENT_INSTALLATION_SETTINGS_MANAGE_ALL_PERMISSION_CODES,
+    )
+
+
+def can_manage_own_client_installation_settings(user: dict) -> bool:
+    return has_any_permission(
+        user,
+        CLIENT_INSTALLATION_SETTINGS_MANAGE_OWN_PERMISSION_CODES,
+    )
+
+
+def can_manage_client_installation_settings(client: dict, current_user: dict) -> bool:
+    """
+    Право плюс доступ именно к этому клиенту. Флаг отдаётся в карточке,
+    фронт правило не дублирует.
+    """
+    if can_manage_all_client_installation_settings(current_user):
+        return True
+
+    if can_manage_own_client_installation_settings(current_user):
+        return is_client_owned_by_user(client, current_user)
+
+    return False
+
+
+def can_view_client_history(user: dict) -> bool:
+    return has_any_permission(user, CLIENT_HISTORY_VIEW_PERMISSION_CODES)
 
 
 def can_create_request_for_client(client: dict, current_user: dict) -> bool:

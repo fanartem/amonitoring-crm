@@ -1939,3 +1939,245 @@
 	color: #9ca3af;
 	font-size: 14px;
 }
+
+/* --- Параметры установки клиента --- */
+
+.client-install-settings-btn {
+	margin-top: 22px;
+	border: 1px solid #c7d2fe;
+	background: #eef2ff;
+	color: #3730a3;
+	border-radius: 6px;
+	padding: 8px 14px;
+	font-size: 14px;
+	font-weight: 700;
+	cursor: pointer;
+	transition: 0.15s ease;
+}
+
+.client-install-settings-btn:hover {
+	background: #e0e7ff;
+	border-color: #a5b4fc;
+	color: #312e81;
+}
+
+.client-install-settings-btn:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.client-install-modal-window {
+	width: 680px;
+	max-width: 95%;
+}
+
+.client-install-banner {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 14px;
+	padding: 12px 14px;
+	border-radius: 8px;
+	border: 1px solid #e5e7eb;
+	background: #f9fafb;
+	font-size: 13px;
+	color: #4b5563;
+	line-height: 1.45;
+}
+
+.client-install-banner strong {
+	font-size: 13px;
+	color: #1f2937;
+}
+
+.client-install-banner.own {
+	border-color: #c7e3aa;
+	background: #f4faec;
+}
+
+.client-install-banner.own strong {
+	color: #2e5902;
+}
+
+.client-install-banner.inherited {
+	border-color: #bbd7ff;
+	background: #eff6ff;
+}
+
+.client-install-banner.inherited strong {
+	color: #1d4ed8;
+}
+
+.client-install-banner.none {
+	border-color: #fde3c0;
+	background: #fff8ef;
+}
+
+.client-install-banner.none strong {
+	color: #b45309;
+}
+
+.client-install-banner.readonly {
+	border-color: #e5e7eb;
+	background: #f3f4f6;
+}
+
+.client-install-notice {
+	margin: 0 20px;
+	padding: 9px 12px;
+	border-radius: 8px;
+	border: 1px solid #c7e3aa;
+	background: #f1f8e9;
+	color: #3f7b18;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.client-install-hint {
+	display: block;
+	margin-top: 6px;
+	font-size: 12px;
+	color: #6b7280;
+	line-height: 1.4;
+}
+
+.client-install-hint b {
+	color: #374151;
+}
+
+.client-install-radio-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.client-install-radio {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	padding: 8px 13px;
+	border: 1px solid #d8d8d8;
+	border-radius: 999px;
+	background: #ffffff;
+	font-size: 13px;
+	color: #374151;
+	cursor: pointer;
+	transition: 0.15s ease;
+}
+
+.client-install-radio:hover {
+	border-color: #b7d49b;
+	background: #f7fbf1;
+}
+
+.client-install-radio.active {
+	border-color: #5e9424;
+	background: #eef7e6;
+	color: #2e5902;
+	font-weight: 600;
+}
+
+.client-install-radio input {
+	margin: 0;
+	accent-color: #5e9424;
+}
+
+.client-install-radio:has(input:disabled) {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.client-install-sensors-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.client-install-add-sensor-btn {
+	border: 1px solid #c7e3aa;
+	background: #f4faec;
+	color: #3f7b18;
+	border-radius: 6px;
+	padding: 6px 12px;
+	font-size: 13px;
+	font-weight: 700;
+	cursor: pointer;
+	margin-bottom: 14px;
+}
+
+.client-install-add-sensor-btn:hover {
+	background: #e8f3d8;
+	border-color: #a9cf86;
+}
+
+.client-install-sensor-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 12px;
+}
+
+.client-install-sensor-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 150px 34px;
+	gap: 10px;
+	align-items: end;
+	padding: 10px;
+	border: 1px solid #eeeeee;
+	border-radius: 8px;
+	background: #fafafa;
+}
+
+.client-install-sensor-remove {
+	width: 34px;
+	height: 38px;
+	border: 1px solid #ffcdd2;
+	border-radius: 6px;
+	background: #fff8f8;
+	color: #c62828;
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.client-install-sensor-remove:hover {
+	background: #ffebee;
+	border-color: #ef9a9a;
+}
+
+.client-install-empty {
+	margin-top: 12px;
+	padding: 14px;
+	border: 1px dashed #d1d5db;
+	border-radius: 8px;
+	background: #f9fafb;
+	color: #6b7280;
+	font-size: 13px;
+	text-align: center;
+}
+
+.client-install-reset-btn {
+	border-color: #ffcdd2;
+	color: #c62828;
+}
+
+.client-install-reset-btn:hover {
+	background: #ffebee;
+	border-color: #ef9a9a;
+}
+
+@media (max-width: 640px) {
+	.client-install-sensor-row {
+		grid-template-columns: 1fr;
+	}
+
+	.client-install-sensor-remove {
+		width: 100%;
+	}
+
+	.client-install-notice {
+		margin: 0 14px;
+	}
+}

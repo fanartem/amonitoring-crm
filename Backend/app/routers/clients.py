@@ -6,6 +6,7 @@ from app.schemas import (
     ClientStatusUpdate,
     ClientResponsibleUpdate,
     ClientPaymentTypeUpdate,
+    ClientInstallationSettingsUpdate,
 )
 from app.security import get_current_user
 from app.routers.vehicles import can_edit_vehicle_for_client
@@ -17,6 +18,10 @@ from app.permissions import (
     can_change_client_status,
     can_reassign_clients,
     can_create_request_for_client,
+    can_view_client_installation_settings,
+    can_manage_client_installation_settings,
+    can_view_client_history,
+    add_client_history,
     is_client_owned_by_user,
     is_valid_client_status,
 )
@@ -97,6 +102,18 @@ ALLOWED_CLIENT_PAYMENT_TYPES = [
     CLIENT_PAYMENT_PREPAYMENT,
     CLIENT_PAYMENT_POSTPAYMENT,
 ]
+
+ALLOWED_INSTALLATION_VISIT_TYPES = ["IN_OFFICE", "ON_SITE"]
+
+# Командировка по километражу зависит от адреса, а не от договора,
+# поэтому в параметрах клиента её выбрать нельзя — только при создании заявки.
+ALLOWED_INSTALLATION_VISIT_PRICE_CODES = [
+    "ON_SITE_CITY",
+    "ON_SITE_OUTSIDE_CITY",
+]
+
+# Защита от кольца в иерархии, пока родитель ищется по строковому имени.
+CLIENT_PARENT_LOOKUP_MAX_DEPTH = 10
 
 def can_view_clients(current_user: dict) -> bool:
     return has_any_permission(current_user, CLIENT_VIEW_PERMISSION_CODES)
@@ -322,6 +339,14 @@ def attach_client_permissions(client: dict, current_user: dict) -> dict:
     client["can_view_monitoring_password"] = (
         can_view_client_monitoring_password(current_user) and can_open_details
     )
+
+    client["can_view_installation_settings"] = (
+        can_view_client_installation_settings(current_user) and can_open_details
+    )
+    client["can_manage_installation_settings"] = (
+        can_manage_client_installation_settings(client, current_user) and can_open_details
+    )
+    client["can_view_history"] = can_view_client_history(current_user) and can_open_details
 
     client["can_create_request"] = can_create_request_for_client(client, current_user)
     client["can_edit_vehicles"] = can_edit_vehicle_for_client(client, current_user)
@@ -679,6 +704,288 @@ def get_subclient_ids_recursive(cursor, root_client_id: int) -> list[int]:
 
     return result_ids
 
+def load_client_for_settings(
+    cursor,
+    client_id: int,
+    allow_deleted: bool = False,
+) -> dict:
+    cursor.execute(
+        """
+        SELECT
+            id,
+            name,
+            company_name,
+            source_client_name,
+            source_parent_client_name,
+            created_by,
+            responsible_manager_id,
+            is_deleted
+        FROM clients
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (client_id,),
+    )
+
+    client = cursor.fetchone()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+
+    if client["is_deleted"] and not allow_deleted:
+        raise HTTPException(status_code=400, detail="Клиент находится в корзине")
+
+    return client
+
+
+def find_parent_client_id(cursor, client: dict) -> int | None:
+    """
+    Родитель ищется по строковому имени — тем же способом, что и в
+    get_clients_grouped. Этап 2 заменит это на clients.parent_client_id.
+    """
+    parent_name = get_parent_source_name(client)
+
+    if not parent_name:
+        return None
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM clients
+        WHERE is_deleted = 0
+          AND LOWER(TRIM(COALESCE(
+                NULLIF(source_client_name, ''),
+                NULLIF(company_name, ''),
+                NULLIF(name, '')
+              ))) = %s
+        ORDER BY id ASC
+        LIMIT 1
+        """,
+        (normalize_text(parent_name),),
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    if int(row["id"]) == int(client["id"]):
+        return None
+
+    return int(row["id"])
+
+
+def load_client_installation_settings_row(cursor, client_id: int) -> dict | None:
+    cursor.execute(
+        """
+        SELECT
+            id,
+            client_id,
+            visit_type,
+            visit_price_code,
+            platform,
+            gps_price_code,
+            tracker_subscription_months,
+            has_blocking,
+            has_beacon,
+            beacon_subscription_months,
+            created_at,
+            updated_at
+        FROM client_installation_settings
+        WHERE client_id = %s
+        LIMIT 1
+        """,
+        (client_id,),
+    )
+
+    return cursor.fetchone()
+
+
+def load_client_installation_sensors(cursor, settings_id: int) -> list[dict]:
+    cursor.execute(
+        """
+        SELECT id, name, price, sort_order
+        FROM client_installation_sensors
+        WHERE settings_id = %s
+        ORDER BY sort_order ASC, id ASC
+        """,
+        (settings_id,),
+    )
+
+    rows = cursor.fetchall()
+
+    for row in rows:
+        row["price"] = float(row["price"] or 0)
+
+    return rows
+
+
+def build_installation_settings_payload(
+    cursor,
+    row: dict,
+    source: str,
+    owner_client: dict | None,
+) -> dict:
+    is_inherited = source == "INHERITED"
+
+    return {
+        "source": source,
+        "is_configured": True,
+        "settings": {
+            "visit_type": row.get("visit_type"),
+            "visit_price_code": row.get("visit_price_code"),
+            "platform": row.get("platform"),
+            "gps_price_code": row.get("gps_price_code"),
+            "tracker_subscription_months": int(row.get("tracker_subscription_months") or 0),
+            "has_blocking": bool(row.get("has_blocking")),
+            "has_beacon": bool(row.get("has_beacon")),
+            "beacon_subscription_months": int(row.get("beacon_subscription_months") or 0),
+            "updated_at": row.get("updated_at") or row.get("created_at"),
+        },
+        "sensors": load_client_installation_sensors(cursor, int(row["id"])),
+        "inherited_from_client_id": (
+            int(owner_client["id"]) if is_inherited and owner_client else None
+        ),
+        "inherited_from_client_name": (
+            get_client_display_name(owner_client) if is_inherited and owner_client else None
+        ),
+    }
+
+
+def resolve_client_installation_settings(cursor, client: dict) -> dict:
+    """
+    Свои параметры клиента, а если их нет — родительские.
+
+    source: OWN — заданы у этого клиента, INHERITED — взяты у родителя,
+    NONE — не настроены нигде по цепочке.
+    """
+    own_row = load_client_installation_settings_row(cursor, int(client["id"]))
+
+    if own_row:
+        return build_installation_settings_payload(cursor, own_row, "OWN", client)
+
+    visited = {int(client["id"])}
+    current = client
+
+    for _ in range(CLIENT_PARENT_LOOKUP_MAX_DEPTH):
+        parent_id = find_parent_client_id(cursor, current)
+
+        if not parent_id or parent_id in visited:
+            break
+
+        visited.add(parent_id)
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                name,
+                company_name,
+                source_client_name,
+                source_parent_client_name
+            FROM clients
+            WHERE id = %s
+            LIMIT 1
+            """,
+            (parent_id,),
+        )
+
+        parent_client = cursor.fetchone()
+
+        if not parent_client:
+            break
+
+        parent_row = load_client_installation_settings_row(cursor, parent_id)
+
+        if parent_row:
+            return build_installation_settings_payload(
+                cursor, parent_row, "INHERITED", parent_client
+            )
+
+        current = parent_client
+
+    return {
+        "source": "NONE",
+        "is_configured": False,
+        "settings": None,
+        "sensors": [],
+        "inherited_from_client_id": None,
+        "inherited_from_client_name": None,
+    }
+
+
+def describe_installation_settings(payload: dict) -> str:
+    """Одна строка для журнала изменений — читаемая человеком."""
+    if not payload or not payload.get("is_configured"):
+        return "не настроены"
+
+    settings = payload.get("settings") or {}
+    parts = []
+
+    if settings.get("visit_type"):
+        parts.append(
+            "в офисе" if settings["visit_type"] == "IN_OFFICE" else "выезд к клиенту"
+        )
+
+    if settings.get("visit_price_code"):
+        parts.append(f"тип выезда {settings['visit_price_code']}")
+
+    if settings.get("platform"):
+        parts.append(f"платформа {settings['platform']}")
+
+    if settings.get("gps_price_code"):
+        parts.append(f"трекер {settings['gps_price_code']}")
+        parts.append(
+            f"подписка трекера {settings.get('tracker_subscription_months') or 0} мес."
+        )
+        parts.append("с блокировкой" if settings.get("has_blocking") else "без блокировки")
+    else:
+        parts.append("без трекера")
+
+    if settings.get("has_beacon"):
+        parts.append(f"маяк, подписка {settings.get('beacon_subscription_months') or 0} мес.")
+    else:
+        parts.append("без маяка")
+
+    sensors = payload.get("sensors") or []
+
+    if sensors:
+        parts.append(
+            "датчики: "
+            + ", ".join(f"{s['name']} — {s['price']:.0f} тг" for s in sensors)
+        )
+    else:
+        parts.append("без датчиков")
+
+    if payload.get("source") == "INHERITED":
+        parts.append(f"унаследовано от «{payload.get('inherited_from_client_name')}»")
+
+    return "; ".join(parts)
+
+
+def ensure_price_code_active(cursor, code: str | None, field_label: str) -> str | None:
+    if not code:
+        return None
+
+    normalized = str(code).strip().upper()
+
+    if not normalized:
+        return None
+
+    cursor.execute(
+        "SELECT code FROM price_items WHERE code = %s AND is_active = 1 LIMIT 1",
+        (normalized,),
+    )
+
+    if not cursor.fetchone():
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_label}: позиция прайса «{normalized}» не найдена или отключена",
+        )
+
+    return normalized
+
+
 @router.get("")
 def get_clients(current_user: dict = Depends(get_current_user)):
     ensure_can_view_clients(current_user)
@@ -882,8 +1189,17 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                 )
             )
 
-            connection.commit()
             new_id = cursor.lastrowid
+
+            add_client_history(
+                cursor,
+                client_id=new_id,
+                user_id=current_user["id"],
+                action="CLIENT_CREATED",
+                new_value=data.company_name or data.name,
+            )
+
+            connection.commit()
 
             return {
                 "id": new_id,
@@ -1655,7 +1971,19 @@ def update_client(
             
             cursor.execute(
                 """
-                SELECT type, name, company_name, phone, bin_iin
+                SELECT
+                    type,
+                    name,
+                    company_name,
+                    phone,
+                    email,
+                    bin_iin,
+                    monitoring_login,
+                    monitoring_password,
+                    source_system,
+                    source_client_name,
+                    source_parent_client_name,
+                    source_inn
                 FROM clients
                 WHERE id = %s
                 """,
@@ -1710,10 +2038,28 @@ def update_client(
                 if optional_field in update_data:
                     update_data[optional_field] = normalize_optional_str(update_data.get(optional_field))
 
+            changed_fields = []
+
             for field in allowed_fields:
-                if field in update_data:
-                    updates.append(f"{field} = %s")
-                    values.append(update_data[field])
+                if field not in update_data:
+                    continue
+
+                old_field_value = current_client_data.get(field)
+                new_field_value = update_data[field]
+
+                # Поле прислали, но значение то же — не пишем ни в UPDATE,
+                # ни в журнал, иначе история забьётся пустыми записями.
+                if str(old_field_value or "") == str(new_field_value or ""):
+                    continue
+
+                updates.append(f"{field} = %s")
+                values.append(new_field_value)
+
+                if field == "monitoring_password":
+                    # Пароль мониторинга в журнал не пишем, только факт замены.
+                    changed_fields.append((field, "•••", "•••"))
+                else:
+                    changed_fields.append((field, old_field_value, new_field_value))
 
             if not updates:
                 return {"message": "Нет допустимых полей для обновления"}
@@ -1727,6 +2073,18 @@ def update_client(
             """
 
             cursor.execute(sql, tuple(values))
+
+            for field, old_field_value, new_field_value in changed_fields:
+                add_client_history(
+                    cursor,
+                    client_id=client_id,
+                    user_id=current_user["id"],
+                    action="CLIENT_UPDATED",
+                    field_name=field,
+                    old_value=old_field_value,
+                    new_value=new_field_value,
+                )
+
             connection.commit()
 
             return {
@@ -1801,6 +2159,16 @@ def update_client_status(
                     current_user["id"],
                     client_id,
                 )
+            )
+
+            add_client_history(
+                cursor,
+                client_id=client_id,
+                user_id=current_user["id"],
+                action="STATUS_CHANGED",
+                field_name="status",
+                old_value=client["status"],
+                new_value=new_status,
             )
 
             connection.commit()
@@ -1886,6 +2254,16 @@ def update_client_payment_type(
                 )
             )
 
+            add_client_history(
+                cursor,
+                client_id=client_id,
+                user_id=current_user["id"],
+                action="PAYMENT_TYPE_CHANGED",
+                field_name="payment_type",
+                old_value=old_payment_type,
+                new_value=payment_type,
+            )
+
             connection.commit()
 
             return {
@@ -1959,6 +2337,21 @@ def update_client_responsible(
                 WHERE id IN ({placeholders})
                 """,
                 tuple([data.responsible_manager_id, current_user["id"]] + target_ids)
+            )
+
+            add_client_history(
+                cursor,
+                client_id=client_id,
+                user_id=current_user["id"],
+                action="RESPONSIBLE_CHANGED",
+                field_name="responsible_manager_id",
+                old_value=client.get("responsible_manager_id"),
+                new_value=data.responsible_manager_id,
+                comment=(
+                    f"Вместе с подклиентами: {len(target_ids) - 1}"
+                    if len(target_ids) > 1
+                    else None
+                ),
             )
 
             connection.commit()
@@ -2039,6 +2432,14 @@ def delete_client(client_id: int, current_user: dict = Depends(get_current_user)
                 (current_user["id"], client_id)
             )
 
+            add_client_history(
+                cursor,
+                client_id=client_id,
+                user_id=current_user["id"],
+                action="CLIENT_DELETED",
+                old_value=client.get("name"),
+            )
+
             connection.commit()
 
             return {
@@ -2090,6 +2491,14 @@ def restore_client(client_id: int, current_user: dict = Depends(get_current_user
                 WHERE id = %s
                 """,
                 (client_id,)
+            )
+
+            add_client_history(
+                cursor,
+                client_id=client_id,
+                user_id=current_user["id"],
+                action="CLIENT_RESTORED",
+                new_value=client.get("name"),
             )
 
             connection.commit()
@@ -2184,6 +2593,364 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
                     request["total_price"] = None
 
             return requests
+
+    finally:
+        connection.close()
+
+@router.get("/{client_id}/installation-settings")
+def get_client_installation_settings(
+    client_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Параметры установки клиента. Если своих нет — отдаются родительские
+    с пометкой source = INHERITED.
+    """
+    ensure_can_view_clients(current_user)
+
+    if not can_view_client_installation_settings(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для просмотра параметров установки",
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            client = load_client_for_settings(cursor, client_id)
+
+            ensure_client_visible_by_scope(client, current_user)
+
+            if not can_open_client_details_for_router(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра этого клиента",
+                )
+
+            payload = resolve_client_installation_settings(cursor, client)
+
+            payload["client_id"] = client_id
+            payload["can_manage"] = can_manage_client_installation_settings(
+                client, current_user
+            )
+
+            return payload
+
+    finally:
+        connection.close()
+
+
+@router.put("/{client_id}/installation-settings")
+def update_client_installation_settings(
+    client_id: int,
+    data: ClientInstallationSettingsUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            client = load_client_for_settings(cursor, client_id)
+
+            ensure_client_visible_by_scope(client, current_user)
+
+            if not can_manage_client_installation_settings(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для изменения параметров установки этого клиента",
+                )
+
+            visit_type = str(data.visit_type or "").strip().upper() or None
+
+            if visit_type and visit_type not in ALLOWED_INSTALLATION_VISIT_TYPES:
+                raise HTTPException(status_code=400, detail="Некорректный формат работ")
+
+            visit_price_code = str(data.visit_price_code or "").strip().upper() or None
+
+            if visit_type == "IN_OFFICE":
+                visit_price_code = None
+
+            if (
+                visit_price_code
+                and visit_price_code not in ALLOWED_INSTALLATION_VISIT_PRICE_CODES
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "В параметрах клиента можно выбрать только выезд в черте города "
+                        "или за пределы города. Командировка зависит от адреса и "
+                        "указывается при создании заявки."
+                    ),
+                )
+
+            visit_price_code = ensure_price_code_active(
+                cursor, visit_price_code, "Тип выезда"
+            )
+            gps_price_code = ensure_price_code_active(
+                cursor, data.gps_price_code, "Трекер"
+            )
+
+            platform = normalize_optional_str(data.platform)
+
+            tracker_months = int(data.tracker_subscription_months or 0)
+            beacon_months = int(data.beacon_subscription_months or 0)
+
+            if tracker_months < 0 or beacon_months < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Количество месяцев подписки не может быть отрицательным",
+                )
+
+            has_beacon = bool(data.has_beacon)
+
+            # Блокировка и подписка трекера существуют только вместе с трекером.
+            has_blocking = bool(data.has_blocking) if gps_price_code else False
+
+            if not gps_price_code:
+                tracker_months = 0
+
+            if not has_beacon:
+                beacon_months = 0
+
+            sensors = []
+
+            for index, sensor in enumerate(data.sensors or []):
+                sensor_name = str(sensor.name or "").strip()
+
+                if not sensor_name:
+                    continue
+
+                sensor_price = float(sensor.price or 0)
+
+                if sensor_price < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Цена датчика не может быть отрицательной",
+                    )
+
+                sensors.append(
+                    {
+                        "name": sensor_name,
+                        "price": sensor_price,
+                        "sort_order": index,
+                    }
+                )
+
+            old_payload = resolve_client_installation_settings(cursor, client)
+
+            cursor.execute(
+                """
+                INSERT INTO client_installation_settings (
+                    client_id,
+                    visit_type,
+                    visit_price_code,
+                    platform,
+                    gps_price_code,
+                    tracker_subscription_months,
+                    has_blocking,
+                    has_beacon,
+                    beacon_subscription_months,
+                    created_by,
+                    updated_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    visit_type = VALUES(visit_type),
+                    visit_price_code = VALUES(visit_price_code),
+                    platform = VALUES(platform),
+                    gps_price_code = VALUES(gps_price_code),
+                    tracker_subscription_months = VALUES(tracker_subscription_months),
+                    has_blocking = VALUES(has_blocking),
+                    has_beacon = VALUES(has_beacon),
+                    beacon_subscription_months = VALUES(beacon_subscription_months),
+                    updated_by = VALUES(updated_by)
+                """,
+                (
+                    client_id,
+                    visit_type,
+                    visit_price_code,
+                    platform,
+                    gps_price_code,
+                    tracker_months,
+                    1 if has_blocking else 0,
+                    1 if has_beacon else 0,
+                    beacon_months,
+                    current_user["id"],
+                    current_user["id"],
+                ),
+            )
+
+            settings_row = load_client_installation_settings_row(cursor, client_id)
+            settings_id = int(settings_row["id"])
+
+            cursor.execute(
+                "DELETE FROM client_installation_sensors WHERE settings_id = %s",
+                (settings_id,),
+            )
+
+            for sensor in sensors:
+                cursor.execute(
+                    """
+                    INSERT INTO client_installation_sensors (
+                        settings_id,
+                        name,
+                        price,
+                        sort_order
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        settings_id,
+                        sensor["name"],
+                        sensor["price"],
+                        sensor["sort_order"],
+                    ),
+                )
+
+            new_payload = resolve_client_installation_settings(cursor, client)
+
+            add_client_history(
+                cursor,
+                client_id=client_id,
+                user_id=current_user["id"],
+                action="INSTALLATION_SETTINGS_UPDATED",
+                old_value=describe_installation_settings(old_payload),
+                new_value=describe_installation_settings(new_payload),
+            )
+
+            connection.commit()
+
+            new_payload["client_id"] = client_id
+            new_payload["can_manage"] = True
+
+            return new_payload
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@router.delete("/{client_id}/installation-settings")
+def reset_client_installation_settings(
+    client_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Сброс собственных параметров клиента. После этого он снова берёт
+    родительские, а если родителя нет — считается ненастроенным.
+    """
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            client = load_client_for_settings(cursor, client_id)
+
+            ensure_client_visible_by_scope(client, current_user)
+
+            if not can_manage_client_installation_settings(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для изменения параметров установки этого клиента",
+                )
+
+            own_row = load_client_installation_settings_row(cursor, client_id)
+
+            if not own_row:
+                raise HTTPException(
+                    status_code=400,
+                    detail="У этого клиента нет собственных параметров установки",
+                )
+
+            old_payload = resolve_client_installation_settings(cursor, client)
+
+            cursor.execute(
+                "DELETE FROM client_installation_settings WHERE client_id = %s",
+                (client_id,),
+            )
+
+            new_payload = resolve_client_installation_settings(cursor, client)
+
+            add_client_history(
+                cursor,
+                client_id=client_id,
+                user_id=current_user["id"],
+                action="INSTALLATION_SETTINGS_RESET",
+                old_value=describe_installation_settings(old_payload),
+                new_value=describe_installation_settings(new_payload),
+            )
+
+            connection.commit()
+
+            new_payload["client_id"] = client_id
+            new_payload["can_manage"] = True
+
+            return new_payload
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@router.get("/{client_id}/history")
+def get_client_history(
+    client_id: int,
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_can_view_clients(current_user)
+
+    if not can_view_client_history(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для просмотра истории клиента",
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            client = load_client_for_settings(cursor, client_id, allow_deleted=True)
+
+            ensure_client_visible_by_scope(client, current_user)
+
+            if not can_open_client_details_for_router(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра этого клиента",
+                )
+
+            cursor.execute(
+                """
+                SELECT
+                    h.id,
+                    h.action,
+                    h.field_name,
+                    h.old_value,
+                    h.new_value,
+                    h.comment,
+                    h.created_at,
+                    u.name AS user_name
+                FROM client_history h
+                LEFT JOIN users u ON u.id = h.user_id
+                WHERE h.client_id = %s
+                ORDER BY h.created_at DESC, h.id DESC
+                LIMIT %s
+                """,
+                (client_id, limit),
+            )
+
+            return cursor.fetchall()
 
     finally:
         connection.close()

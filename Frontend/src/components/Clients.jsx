@@ -8,6 +8,7 @@ import CreateClientModal from './CreateClientModal'
 import RequestDetailModal from './RequestDetailModal'
 import AttachmentsPanel from './AttachmentsPanel'
 import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
+import ClientInstallationSettingsModal from './ClientInstallationSettingsModal'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
 import { getStoredUser, hasAnyPermission } from '../utils/access'
 
@@ -59,6 +60,8 @@ export default function Clients() {
 	const [techniciansLookup, setTechniciansLookup] = useState([])
 	const [vehicleEquipmentMap, setVehicleEquipmentMap] = useState({})
 	const [attachEquipmentVehicle, setAttachEquipmentVehicle] = useState(null)
+	const [installationSettingsClient, setInstallationSettingsClient] =
+		useState(null)
 
 	const [responsibleManagers, setResponsibleManagers] = useState([])
 	const [clientActionLoading, setClientActionLoading] = useState(false)
@@ -207,6 +210,9 @@ export default function Clients() {
 
 	const canViewClientMonitoringPassword = client =>
 		Boolean(client?.can_view_monitoring_password)
+
+	const canViewClientInstallationSettings = client =>
+		Boolean(client?.can_view_installation_settings)
 
 	const getClientPaymentTypeLabel = paymentType => {
 		if (paymentType === 'POSTPAYMENT') return 'Постоплата'
@@ -3540,7 +3546,9 @@ export default function Clients() {
 							)}
 						</div>
 
-						{(canEditClient(selectedClient) || canDeleteClient) && (
+						{(canEditClient(selectedClient) ||
+							canDeleteClient ||
+							canViewClientInstallationSettings(selectedClient)) && (
 							<div className='client-edit-btn-wrapper'>
 								{canEditClient(selectedClient) && (
 									<button
@@ -3565,6 +3573,18 @@ export default function Clients() {
 										disabled={clientActionLoading}
 									>
 										🗑 Удалить клиента
+									</button>
+								)}
+
+								{canViewClientInstallationSettings(selectedClient) && (
+									<button
+										className='client-install-settings-btn client-detail-action-btn'
+										onClick={() =>
+											setInstallationSettingsClient(selectedClient)
+										}
+										disabled={clientActionLoading}
+									>
+										⚙ Параметры установки
 									</button>
 								)}
 							</div>
@@ -4845,6 +4865,12 @@ export default function Clients() {
 					</div>
 				</div>
 			)}
+
+			<ClientInstallationSettingsModal
+				isOpen={Boolean(installationSettingsClient)}
+				client={installationSettingsClient}
+				onClose={() => setInstallationSettingsClient(null)}
+			/>
 
 			<AttachEquipmentToVehicleModal
 				isOpen={Boolean(attachEquipmentVehicle)}

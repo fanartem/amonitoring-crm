@@ -121,6 +121,26 @@ class ClientResponsibleUpdate(BaseModel):
 class ClientPaymentTypeUpdate(BaseModel):
     payment_type: str
 
+class ClientInstallationSensorInput(BaseModel):
+    name: str
+    price: float = 0
+
+
+class ClientInstallationSettingsUpdate(BaseModel):
+    # Параметры любой заявки клиента
+    visit_type: Optional[str] = None
+    visit_price_code: Optional[str] = None
+    platform: Optional[str] = None
+
+    # Параметры установки
+    gps_price_code: Optional[str] = None
+    tracker_subscription_months: int = 0
+    has_blocking: bool = False
+    has_beacon: bool = False
+    beacon_subscription_months: int = 0
+
+    sensors: list["ClientInstallationSensorInput"] = []
+
 class VehicleCreate(BaseModel):
     client_id: int
     brand: str
