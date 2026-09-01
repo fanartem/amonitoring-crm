@@ -7,7 +7,7 @@ import '../styles/Clients.css'
 const PLATFORM_OPTIONS = ['Wialon', 'GLONASS Soft', 'Amonitoring']
 
 // Командировки в параметрах нет намеренно: километраж зависит от адреса,
-// а не от договора. Backend такой код тоже не примет.
+// а не от шаблона. Backend такой код тоже не примет.
 const VISIT_PRICE_CODE_OPTIONS = [
 	{ code: 'ON_SITE_CITY', label: 'В черте города' },
 	{ code: 'ON_SITE_OUTSIDE_CITY', label: 'За пределы города' },
@@ -697,7 +697,7 @@ export default function ClientInstallationSettingsModal({
 							<div className='vehicle-form-card'>
 								<div className='client-install-sensors-header'>
 									<div className='vehicle-form-section-title'>
-										Дополнительные датчики по договору
+										Дополнительные датчики по шаблону
 									</div>
 
 									{canManage && (
@@ -718,7 +718,7 @@ export default function ClientInstallationSettingsModal({
 
 								{sensors.length === 0 ? (
 									<div className='client-install-empty'>
-										Датчики по договору не заданы
+										Датчики по шаблону не заданы
 									</div>
 								) : (
 									<div className='client-install-sensor-list'>
