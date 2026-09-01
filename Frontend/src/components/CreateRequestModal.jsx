@@ -85,6 +85,10 @@ const canDecideRequestScheduleApproval = user =>
 		'requests.schedule.approve',
 	])
 
+// Совпадает с PRICE_MANUAL_LINE_PERMISSION_CODES в prices.py.
+const canSetManualPriceLines = user =>
+	hasAnyPermission(user, ['prices.manual_lines', 'prices.manage'])
+
 function SearchableSelect({
 	value,
 	options,
@@ -422,6 +426,7 @@ export default function CreateRequestModal({
 	const canSetPaymentType = canManageClientPaymentType(user)
 	const canBypassScheduleRules = canBypassRequestScheduleRules(user)
 	const canDecideScheduleApproval = canDecideRequestScheduleApproval(user)
+	const canEditPriceLines = canSetManualPriceLines(user)
 
 	const [clientKind, setClientKind] = useState(
 		canCreateClient ? 'new' : 'existing',
@@ -2004,7 +2009,12 @@ export default function CreateRequestModal({
 			const data = await res.json()
 			setPriceCalculation(data)
 		} catch (err) {
+			// Раньше ошибка уходила только в консоль, и панель продолжала
+			// показывать прошлый расчёт — в том числе при отказе по правам.
 			console.error('Ошибка расчёта цены:', err)
+
+			setPriceCalculation({ total_price: 0, lines: [], currency: 'KZT' })
+			setError(err.message || 'Не удалось рассчитать стоимость')
 		} finally {
 			setPriceLoading(false)
 		}
@@ -3146,15 +3156,17 @@ export default function CreateRequestModal({
 																			Дополнительные датчики
 																		</div>
 
-																		<button
-																			type='button'
-																			className='request-add-sensor-btn'
-																			onClick={() =>
-																				addExtraSensor(vehicle.local_id)
-																			}
-																		>
-																			+ Датчик
-																		</button>
+																		{canEditPriceLines && (
+																			<button
+																				type='button'
+																				className='request-add-sensor-btn'
+																				onClick={() =>
+																					addExtraSensor(vehicle.local_id)
+																				}
+																			>
+																				+ Датчик
+																			</button>
+																		)}
 																	</div>
 
 																	{!vehicle.extra_sensors ||
@@ -3380,6 +3392,11 @@ export default function CreateRequestModal({
 																инд. цена
 															</span>
 														)}
+														{line.is_manual && line.code && (
+															<span className='request-price-source'>
+																цена изменена
+															</span>
+														)}
 													</div>
 												</div>
 
@@ -3419,14 +3436,18 @@ export default function CreateRequestModal({
 																{formatMoney(line.total_price)}
 															</div>
 
-															<button
-																type='button'
-																className='request-price-edit-line-btn'
-																onClick={() => startEditPriceLine(line, index)}
-																title='Изменить цену только для этой заявки'
-															>
-																✎
-															</button>
+															{canEditPriceLines && (
+																<button
+																	type='button'
+																	className='request-price-edit-line-btn'
+																	onClick={() =>
+																		startEditPriceLine(line, index)
+																	}
+																	title='Изменить цену только для этой заявки'
+																>
+																	✎
+																</button>
+															)}
 
 															{priceLineOverrides[
 																getPriceLineUiKey(line, index)
@@ -3452,77 +3473,79 @@ export default function CreateRequestModal({
 									</div>
 								)}
 
-								<div className='request-manual-lines'>
-									<div className='request-price-panel-subtitle'>
-										Ручные строки
-									</div>
-
-									{manualPriceLines.map(line => (
-										<div
-											key={line.local_id}
-											className='request-manual-line-row'
-										>
-											<input
-												className='request-modal-input'
-												value={line.label}
-												onChange={e =>
-													handleManualPriceLineChange(
-														line.local_id,
-														'label',
-														e.target.value,
-													)
-												}
-												placeholder='Название'
-											/>
-
-											<input
-												className='request-modal-input'
-												type='number'
-												min='1'
-												value={line.quantity}
-												onChange={e =>
-													handleManualPriceLineChange(
-														line.local_id,
-														'quantity',
-														e.target.value,
-													)
-												}
-												placeholder='Кол-во'
-											/>
-
-											<input
-												className='request-modal-input'
-												type='number'
-												min='0'
-												value={line.unit_price}
-												onChange={e =>
-													handleManualPriceLineChange(
-														line.local_id,
-														'unit_price',
-														e.target.value,
-													)
-												}
-												placeholder='Цена'
-											/>
-
-											<button
-												type='button'
-												className='request-manual-line-remove'
-												onClick={() => removeManualPriceLine(line.local_id)}
-											>
-												×
-											</button>
+								{canEditPriceLines && (
+									<div className='request-manual-lines'>
+										<div className='request-price-panel-subtitle'>
+											Ручные строки
 										</div>
-									))}
 
-									<button
-										type='button'
-										className='request-add-manual-line-btn'
-										onClick={addManualPriceLine}
-									>
-										+ Строка
-									</button>
-								</div>
+										{manualPriceLines.map(line => (
+											<div
+												key={line.local_id}
+												className='request-manual-line-row'
+											>
+												<input
+													className='request-modal-input'
+													value={line.label}
+													onChange={e =>
+														handleManualPriceLineChange(
+															line.local_id,
+															'label',
+															e.target.value,
+														)
+													}
+													placeholder='Название'
+												/>
+
+												<input
+													className='request-modal-input'
+													type='number'
+													min='1'
+													value={line.quantity}
+													onChange={e =>
+														handleManualPriceLineChange(
+															line.local_id,
+															'quantity',
+															e.target.value,
+														)
+													}
+													placeholder='Кол-во'
+												/>
+
+												<input
+													className='request-modal-input'
+													type='number'
+													min='0'
+													value={line.unit_price}
+													onChange={e =>
+														handleManualPriceLineChange(
+															line.local_id,
+															'unit_price',
+															e.target.value,
+														)
+													}
+													placeholder='Цена'
+												/>
+
+												<button
+													type='button'
+													className='request-manual-line-remove'
+													onClick={() => removeManualPriceLine(line.local_id)}
+												>
+													×
+												</button>
+											</div>
+										))}
+
+										<button
+											type='button'
+											className='request-add-manual-line-btn'
+											onClick={addManualPriceLine}
+										>
+											+ Строка
+										</button>
+									</div>
+								)}
 
 								<div className='request-price-total'>
 									<span>Итого</span>

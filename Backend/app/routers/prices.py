@@ -333,9 +333,15 @@ def resolve_request_price_lines(cursor, lines, client_id, current_user) -> list[
     """
     Приводит строки расчёта заявки к серверным ценам.
 
-    Строка с кодом прайса всегда получает цену из price_items с учётом
+    Строка с кодом прайса по умолчанию получает цену из price_items с учётом
     индивидуальной цены клиента: присланная браузером цена игнорируется.
-    Строка без кода — цена, назначенная человеком, и требует права.
+
+    Исключение — строка, помеченная is_manual: цену позиции прайса поправили
+    руками в калькуляторе. Тогда берём присланную цену, но только у того, у
+    кого есть право на ручные строки. Код позиции сохраняем, чтобы в отчётах
+    было видно, что это прайсовая строка с изменённой ценой, а не своя позиция.
+
+    Строка без кода — цена, назначенная человеком, и тоже требует права.
     """
     can_manual = can_set_manual_price_lines(current_user)
 
@@ -356,6 +362,7 @@ def resolve_request_price_lines(cursor, lines, client_id, current_user) -> list[
             )
 
         code = str(line.code or "").strip().upper() or None
+        wants_manual_price = bool(line.is_manual)
 
         if code:
             item = get_effective_price(cursor, code, client_id)
@@ -366,10 +373,32 @@ def resolve_request_price_lines(cursor, lines, client_id, current_user) -> list[
                     detail=f"Цена '{code}' не найдена или отключена",
                 )
 
-            unit_price = item["unit_price"]
             unit = item["unit"]
-            source = item["source"]
-            is_manual = False
+
+            if wants_manual_price:
+                if not can_manual:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            f"Недостаточно прав для строки расчёта «{label}»: "
+                            "цена позиции прайса изменена вручную"
+                        ),
+                    )
+
+                unit_price = float(line.unit_price or 0)
+
+                if unit_price < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Цена в строке расчёта не может быть отрицательной",
+                    )
+
+                source = "manual_override"
+                is_manual = True
+            else:
+                unit_price = item["unit_price"]
+                source = item["source"]
+                is_manual = False
         else:
             if not can_manual:
                 raise HTTPException(

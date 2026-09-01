@@ -52,12 +52,17 @@ const getRequestPaymentText = request => {
 	return isPaid ? 'Предоплата · оплачено' : 'Предоплата · не оплачено'
 }
 
-const getPriceSourceLabel = source => {
-	if (source === 'client_override') return 'инд. цена'
-	if (source === 'manual') return 'ручная'
-	if (source === 'extra_sensor') return 'датчик'
-	return ''
+// Значения source приходят из resolve_request_price_lines в prices.py.
+// className указан явно, чтобы новое значение источника не требовало
+// новой строки в Requests.css.
+const PRICE_SOURCE_LABELS = {
+	client_override: { label: 'инд. цена', className: 'client_override' },
+	manual_override: { label: 'цена изменена', className: 'manual' },
+	manual: { label: 'ручная', className: 'manual' },
+	extra_sensor: { label: 'датчик', className: 'extra_sensor' },
 }
+
+const getPriceSource = source => PRICE_SOURCE_LABELS[source] || null
 
 const getVisitPriceCodeLabel = code => {
 	if (code === 'ON_SITE_OUTSIDE_CITY') return 'За пределами города'
@@ -1150,9 +1155,7 @@ export default function RequestDetailModal({
 												request.price_lines.length > 0 ? (
 													<div className='request-price-detail-list'>
 														{request.price_lines.map((line, index) => {
-															const sourceLabel = getPriceSourceLabel(
-																line.source,
-															)
+															const priceSource = getPriceSource(line.source)
 
 															return (
 																<div
@@ -1170,11 +1173,11 @@ export default function RequestDetailModal({
 																			).toLocaleString('ru-RU')}{' '}
 																			{line.unit || 'шт'} ×{' '}
 																			{formatMoney(line.unit_price)}
-																			{sourceLabel && (
+																			{priceSource && (
 																				<span
-																					className={`request-price-detail-source ${line.source}`}
+																					className={`request-price-detail-source ${priceSource.className}`}
 																				>
-																					{sourceLabel}
+																					{priceSource.label}
 																				</span>
 																			)}
 																		</div>
