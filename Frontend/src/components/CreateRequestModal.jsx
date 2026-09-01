@@ -611,7 +611,7 @@ export default function CreateRequestModal({
 		)
 	}, [isOpen, isEditMode, priceItems])
 
-	// --- Параметры установки по договору с клиентом ---
+	// --- Параметры установки по шаблону у клиента ---
 
 	const [clientInstallationSettings, setClientInstallationSettings] =
 		useState(null)
@@ -641,7 +641,7 @@ export default function CreateRequestModal({
 			beacon_subscription_months: settings.has_beacon
 				? Number(settings.beacon_subscription_months || 0)
 				: 0,
-			// Датчики из договора ставятся в каждый автомобиль заявки.
+			// Датчики из шаблона ставятся в каждый автомобиль заявки.
 			extra_sensors: (data.sensors || []).map(sensor => ({
 				local_id: createLocalId(),
 				name: sensor.name || '',
@@ -2146,7 +2146,7 @@ export default function CreateRequestModal({
 
 	const contractSettings = clientInstallationSettings?.settings || null
 
-	// Позицию прайса могли отключить уже после того, как её записали в договор.
+	// Позицию прайса могли отключить уже после того, как её записали в шаблон.
 	const contractTrackerMissing = Boolean(
 		contractSettings?.gps_price_code &&
 		gpsTrackerItems.length > 0 &&
@@ -2206,7 +2206,7 @@ export default function CreateRequestModal({
 			gps_price_code: gpsTrackerItems[0]?.code || 'GPS_FMB920',
 		}
 
-		// Новый автомобиль в заявке тоже получает параметры договора.
+		// Новый автомобиль в заявке тоже получает параметры шаблона.
 		if (clientInstallationSettings?.is_configured) {
 			return buildVehicleFromInstallationSettings(
 				base,
@@ -2698,9 +2698,9 @@ export default function CreateRequestModal({
 								</div>
 
 								{!isEditMode && contractSettings && (
-									<div className='request-client-status-warning'>
+									<div className='request-client-status-warning contract'>
 										<div className='request-client-status-warning-title'>
-											Параметры из договора применены
+											Параметры из шаблона применены
 											{clientInstallationSettings?.source === 'INHERITED' &&
 												` — от «${clientInstallationSettings.inherited_from_client_name}»`}
 										</div>
@@ -2714,7 +2714,7 @@ export default function CreateRequestModal({
 								{!isEditMode && contractTrackerMissing && (
 									<div className='request-client-status-warning debtor'>
 										<div className='request-client-status-warning-title'>
-											Трекер из договора отключён в прайсе
+											Трекер из шаблона отключён в прайсе
 										</div>
 										<div className='request-client-status-warning-text'>
 											Позиция «{contractSettings.gps_price_code}» больше не
@@ -3230,7 +3230,7 @@ export default function CreateRequestModal({
 																	getVehicleContractDeviations(vehicle).length >
 																		0 && (
 																		<span className='request-modal-hint warning'>
-																			Отличается от договора:{' '}
+																			Отличается от шаблона:{' '}
 																			{getVehicleContractDeviations(
 																				vehicle,
 																			).join(', ')}

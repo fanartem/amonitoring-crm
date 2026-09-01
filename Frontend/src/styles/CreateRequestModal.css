@@ -832,9 +832,21 @@
 	margin-bottom: 10px;
 	padding: 11px 13px;
 	border-radius: 12px;
-	border: 1px solid transparent;
+	/* Базовый вид — нейтральная плашка. Раньше фон и рамка были прозрачными,
+	   поэтому предоплата выглядела как обычный текст, а постоплата —
+	   как оформленный блок. */
+	border: 1px solid #e2e8f0;
+	background: #f8fafc;
+	color: #334155;
 	font-size: 13px;
 	line-height: 1.4;
+}
+
+/* Параметры из договора — не предупреждение, а подтверждение. */
+.request-client-status-warning.contract {
+	background: #f4faec;
+	border-color: #cfe3b5;
+	color: #3f7b18;
 }
 
 .request-client-status-warning-title {
