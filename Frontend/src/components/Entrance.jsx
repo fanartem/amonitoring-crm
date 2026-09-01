@@ -1,5 +1,25 @@
 import React, { useEffect, useState } from 'react'
 import { API_BASE_URL, clearAuthData } from '../api'
+import { resolveLandingRoute } from '../utils/access'
+
+const extractErrorMessage = (data, fallback) => {
+	const detail = data?.detail
+
+	if (typeof detail === 'string' && detail.trim()) {
+		return detail
+	}
+
+	// FastAPI на 422 отдаёт массив объектов вида { loc, msg, type }.
+	if (Array.isArray(detail) && detail.length > 0) {
+		const messages = detail.map(item => item?.msg).filter(Boolean)
+
+		if (messages.length > 0) {
+			return messages.join('; ')
+		}
+	}
+
+	return fallback
+}
 
 export default function Entrance() {
 	const [isLoginMode, setIsLoginMode] = useState(true)
@@ -16,11 +36,30 @@ export default function Entrance() {
 	const [error, setError] = useState('')
 	const [success, setSuccess] = useState('')
 	const [showPassword, setShowPassword] = useState(false)
+	const [isSubmitting, setIsSubmitting] = useState(false)
+
+	const selectedRegistrationRole = registrationRoles.find(
+		item => item.code === role,
+	)
+
+	const isCityRequiredForRegistration = Boolean(
+		selectedRegistrationRole?.can_be_request_executor,
+	)
+
+	// Регистрация возможна, только если хотя бы одна роль помечена
+	// как «доступна для самостоятельной регистрации» в Settings.
+	const canSelfRegister = !rolesLoading && registrationRoles.length > 0
 
 	useEffect(() => {
-		fetchCities()
 		fetchRegistrationRoles()
 	}, [])
+
+	// Города нужны только в форме регистрации и только для ролей-исполнителей.
+	useEffect(() => {
+		if (isCityRequiredForRegistration && cities.length === 0) {
+			fetchCities()
+		}
+	}, [isCityRequiredForRegistration, cities.length])
 
 	useEffect(() => {
 		const params = new URLSearchParams(window.location.search)
@@ -41,12 +80,17 @@ export default function Entrance() {
 		try {
 			const response = await fetch(`${API_BASE_URL}/cities`)
 
-			if (response.ok) {
-				const data = await response.json()
-				setCities(Array.isArray(data) ? data : [])
+			if (!response.ok) {
+				throw new Error('Не удалось загрузить список городов')
 			}
+
+			const data = await response.json()
+			setCities(Array.isArray(data) ? data : [])
 		} catch (err) {
 			console.error('Ошибка загрузки городов:', err)
+			setError(
+				'Не удалось загрузить список городов. Обновите страницу или обратитесь к администратору.',
+			)
 		}
 	}
 
@@ -86,6 +130,12 @@ export default function Entrance() {
 			return
 		}
 
+		if (isSubmitting) {
+			return
+		}
+
+		setIsSubmitting(true)
+
 		try {
 			const params = new URLSearchParams()
 			params.append('username', email)
@@ -100,28 +150,25 @@ export default function Entrance() {
 			const data = await response.json()
 
 			if (!response.ok) {
-				throw new Error(data.detail || 'Неверный логин или пароль')
+				throw new Error(extractErrorMessage(data, 'Неверный логин или пароль'))
 			}
 
 			setError('')
 			setSuccess('')
 
+			// Чистим ключи предыдущего пользователя: перезаписываются только
+			// access_token и user_data, остальное (кэши, фильтры) достаётся новому.
+			clearAuthData()
+
 			localStorage.setItem('access_token', data.access_token)
 			localStorage.setItem('user_data', JSON.stringify(data.user))
 
-			window.location.href = '/requests'
+			window.location.href = resolveLandingRoute(data.user)
 		} catch (err) {
 			setError(err.message)
+			setIsSubmitting(false)
 		}
 	}
-
-	const selectedRegistrationRole = registrationRoles.find(
-		item => item.code === role,
-	)
-
-	const isCityRequiredForRegistration = Boolean(
-		selectedRegistrationRole?.can_be_request_executor,
-	)
 
 	// === ЛОГИКА РЕГИСТРАЦИИ ===
 	const handleRegister = async e => {
@@ -139,6 +186,12 @@ export default function Entrance() {
 			return
 		}
 
+		if (isSubmitting) {
+			return
+		}
+
+		setIsSubmitting(true)
+
 		try {
 			const response = await fetch(`${API_BASE_URL}/auth/register`, {
 				method: 'POST',
@@ -155,17 +208,21 @@ export default function Entrance() {
 			const data = await response.json()
 
 			if (!response.ok) {
-				throw new Error(data.detail || 'Ошибка регистрации')
+				throw new Error(extractErrorMessage(data, 'Ошибка регистрации'))
 			}
 
 			setSuccess('Заявка отправлена! Ожидайте одобрения администратора.')
 			setName('')
 			setEmail('')
 			setPassword('')
-			setRole('')
+			// Пустая роль оставила бы селект визуально заполненным,
+			// но следующая отправка упала бы на «Заполните все обязательные поля».
+			setRole(registrationRoles[0]?.code || '')
 			setCity('')
 		} catch (err) {
 			setError(err.message)
+		} finally {
+			setIsSubmitting(false)
 		}
 	}
 
@@ -248,19 +305,21 @@ export default function Entrance() {
 						</div>
 					</div>
 
-					<button type='submit' className='login-btn'>
-						Войти
+					<button type='submit' className='login-btn' disabled={isSubmitting}>
+						{isSubmitting ? 'Вход...' : 'Войти'}
 					</button>
 
-					<p
-						className='login-hint'
-						style={{ textAlign: 'center', marginTop: '4px' }}
-					>
-						Нет аккаунта?{' '}
-						<button type='button' className='link-btn' onClick={toggleMode}>
-							Зарегистрироваться
-						</button>
-					</p>
+					{canSelfRegister && (
+						<p
+							className='login-hint'
+							style={{ textAlign: 'center', marginTop: '4px' }}
+						>
+							Нет аккаунта?{' '}
+							<button type='button' className='link-btn' onClick={toggleMode}>
+								Зарегистрироваться
+							</button>
+						</p>
+					)}
 				</form>
 			) : (
 				<form
@@ -394,8 +453,12 @@ export default function Entrance() {
 						</div>
 					)}
 
-					<button type='submit' className='login-btn'>
-						Зарегистрироваться
+					<button
+						type='submit'
+						className='login-btn'
+						disabled={isSubmitting || !canSelfRegister}
+					>
+						{isSubmitting ? 'Отправка...' : 'Зарегистрироваться'}
 					</button>
 
 					<p className='login-hint' style={{ textAlign: 'center' }}>

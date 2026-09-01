@@ -18,18 +18,6 @@ from openpyxl.styles import Font, PatternFill, Alignment
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
 
-VEHICLE_DELETE_ROLES = ["ADMIN"]
-
-VEHICLE_TRASH_VIEW_ROLES = [
-    "ADMIN",
-    "ROP",
-    "ACCOUNTANT",
-    "MANAGER",
-    "WAREHOUSE_MANAGER",
-]
-
-VEHICLE_RESTORE_ROLES = ["ADMIN"]
-
 ALLOWED_VEHICLE_DELETE_REASON_TYPES = [
     "EQUIPMENT_REMOVED",
     "SERVICE_STOPPED_SIM_BLOCKED",
@@ -189,8 +177,9 @@ def get_client_display_name(client: dict) -> str:
 # ============================================================================
 # Permission-aware access helpers
 # ----------------------------------------------------------------------------
-# Старые роли оставляем как fallback, чтобы текущие сотрудники не потеряли доступ
-# после перехода на новую систему permissions.
+# Доступ определяется только правами и областью данных. Fallback по кодам ролей
+# удалён: на бэкенде он не срабатывал никогда, потому что permissions
+# загружаются в get_current_user всегда.
 # ============================================================================
 
 VEHICLE_CREATE_PERMISSION_CODES = [
@@ -224,7 +213,6 @@ VEHICLE_VIEW_ALL_PERMISSION_CODES = [
 
 VEHICLE_VIEW_OWN_PERMISSION_CODES = [
     "vehicles.view_own",
-    "vehicles.manage_own",
 ]
 
 # Редактирование машин любого клиента.
@@ -239,13 +227,18 @@ VEHICLE_EDIT_ALL_PERMISSION_CODES = [
 VEHICLE_EDIT_OWN_PERMISSION_CODES = [
     "vehicles.edit",
     "vehicles.edit_own",
-    "vehicles.manage_own",
 ]
 
+# Перенос машин любого клиента.
 VEHICLE_TRANSFER_PERMISSION_CODES = [
     "vehicles.transfer",
     "vehicles.transfer_client",
     "vehicles.manage",
+]
+
+# Перенос машин только своих клиентов.
+VEHICLE_TRANSFER_OWN_PERMISSION_CODES = [
+    "vehicles.transfer_own",
 ]
 
 VEHICLE_TRANSFER_HISTORY_PERMISSION_CODES = [
@@ -265,17 +258,6 @@ VEHICLE_TRASH_VIEW_PERMISSION_CODES = [
     "vehicles.restore",
     "vehicles.delete",
     "vehicles.manage",
-    "trash.view",
-    "trash.manage",
-]
-
-# Право видеть корзину машин ВСЕХ клиентов.
-# Без него выборка автоматически сужается до своих клиентов.
-VEHICLE_TRASH_VIEW_ALL_PERMISSION_CODES = [
-    "vehicles.trash.view_all",
-    "vehicles.view_all",
-    "vehicles.manage",
-    "trash.manage",
 ]
 
 VEHICLE_DELETE_PERMISSION_CODES = [
@@ -300,88 +282,45 @@ VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
     "vehicles.equipment.manage",
     "warehouse.vehicle_equipment.manage",
     "warehouse.manage",
-    "warehouse.items.manage",
 ]
-
-VEHICLE_CREATE_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]
-VEHICLE_IMPORT_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT"]
-VEHICLE_VIEW_LEGACY_ROLES = [
-    "ADMIN",
-    "ROP",
-    "MANAGER",
-    "TECH_SUPPORT",
-    "ACCOUNTANT",
-    "WAREHOUSE_MANAGER",
-    "SENIOR_TECHNICIAN",
-    "TECHNICIAN",
-]
-VEHICLE_EDIT_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER"]
-VEHICLE_TRANSFER_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER"]
-VEHICLE_TRANSFER_HISTORY_LEGACY_ROLES = ["ADMIN", "ROP", "MANAGER"]
-
-
-def permissions_are_loaded(current_user: dict | None) -> bool:
-    return current_user is not None and isinstance(current_user.get("permissions"), list)
-
-
-def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user or permissions_are_loaded(current_user):
-        return False
-
-    return current_user.get("role") in roles
 
 
 def can_create_vehicle(current_user: dict) -> bool:
-    return has_any_permission(current_user, VEHICLE_CREATE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        VEHICLE_CREATE_LEGACY_ROLES,
-    )
+    return has_any_permission(current_user, VEHICLE_CREATE_PERMISSION_CODES)
 
 
 def can_import_vehicles(current_user: dict) -> bool:
-    return has_any_permission(current_user, VEHICLE_IMPORT_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        VEHICLE_IMPORT_LEGACY_ROLES,
-    )
+    return has_any_permission(current_user, VEHICLE_IMPORT_PERMISSION_CODES)
 
 
 def can_search_vehicles(current_user: dict) -> bool:
-    return has_any_permission(current_user, VEHICLE_VIEW_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        VEHICLE_VIEW_LEGACY_ROLES,
-    )
+    return has_any_permission(current_user, VEHICLE_VIEW_PERMISSION_CODES)
 
 
 def can_view_vehicle_trash(current_user: dict) -> bool:
-    return has_any_permission(current_user, VEHICLE_TRASH_VIEW_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        VEHICLE_TRASH_VIEW_ROLES,
-    )
+    return has_any_permission(current_user, VEHICLE_TRASH_VIEW_PERMISSION_CODES)
 
 
-def can_view_all_vehicle_trash(current_user: dict) -> bool:
-    return has_any_permission(current_user, VEHICLE_TRASH_VIEW_ALL_PERMISSION_CODES)
+def can_view_all_client_vehicles(current_user: dict) -> bool:
+    """
+    Видит машины всех клиентов, а не только своих.
+
+    Опирается на те же коды, что и просмотр карточки клиента:
+    у кого есть clients.view_all, у того нет смысла сужать поиск машин.
+    """
+    return has_any_permission(current_user, VEHICLE_VIEW_ALL_PERMISSION_CODES)
 
 
 def can_delete_vehicle(current_user: dict) -> bool:
-    return has_any_permission(current_user, VEHICLE_DELETE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        VEHICLE_DELETE_ROLES,
-    )
+    return has_any_permission(current_user, VEHICLE_DELETE_PERMISSION_CODES)
 
 
 def can_restore_vehicle(current_user: dict) -> bool:
-    return has_any_permission(current_user, VEHICLE_RESTORE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        VEHICLE_RESTORE_ROLES,
-    )
+    return has_any_permission(current_user, VEHICLE_RESTORE_PERMISSION_CODES)
 
 
 def can_manage_direct_vehicle_equipment(current_user: dict) -> bool:
-    return has_any_permission(current_user, VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        ["ADMIN", "WAREHOUSE_MANAGER"],
-    )
+    return has_any_permission(current_user, VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES)
 
 
 def build_client_from_vehicle_row(row: dict) -> dict:
@@ -437,11 +376,8 @@ def can_transfer_vehicle_for_client(client: dict, current_user: dict) -> bool:
     if has_any_permission(current_user, VEHICLE_TRANSFER_PERMISSION_CODES):
         return True
 
-    if has_legacy_role(current_user, ["ADMIN", "ROP"]):
-        return True
-
-    if has_legacy_role(current_user, ["MANAGER"]):
-        return can_create_request_for_client(client, current_user)
+    if has_any_permission(current_user, VEHICLE_TRANSFER_OWN_PERMISSION_CODES):
+        return is_client_owned_by_user(client, current_user)
 
     return False
 
@@ -450,8 +386,9 @@ def can_view_vehicle_transfer_history_for_client(client: dict, current_user: dic
     if has_any_permission(current_user, VEHICLE_TRANSFER_HISTORY_PERMISSION_CODES):
         return True
 
-    if has_legacy_role(current_user, VEHICLE_TRANSFER_HISTORY_LEGACY_ROLES):
-        return can_open_client_details(client, current_user)
+    # Кто может переносить машины своих клиентов — видит и историю по ним.
+    if has_any_permission(current_user, VEHICLE_TRANSFER_OWN_PERMISSION_CODES):
+        return is_client_owned_by_user(client, current_user)
 
     return False
 
@@ -773,9 +710,9 @@ def search_vehicles(
     if not can_view_vehicle_trash(current_user):
         conditions.append("v.is_deleted = 0")
 
-    # Без права на корзину всех клиентов показываем только своих:
+    # Без права видеть машины всех клиентов показываем только своих:
     # где пользователь ответственный менеджер или создатель клиента.
-    if not can_view_all_vehicle_trash(current_user):
+    if not can_view_all_client_vehicles(current_user):
         conditions.append(
             "(c.responsible_manager_id = %s OR c.created_by = %s)"
         )
@@ -1577,9 +1514,12 @@ def get_deleted_vehicles(
         conditions.append("v.client_id = %s")
         values.append(client_id)
 
-    if current_user.get("client_access_scope") == "RESPONSIBLE_ONLY":
-        conditions.append("c.responsible_manager_id = %s")
-        values.append(current_user["id"])
+    # Мёртвая колонка client_access_scope заменена на реальную проверку прав.
+    if not can_view_all_client_vehicles(current_user):
+        conditions.append(
+            "(c.responsible_manager_id = %s OR c.created_by = %s)"
+        )
+        values.extend([current_user["id"], current_user["id"]])
 
     where_clause = " AND ".join(conditions)
 
@@ -1876,9 +1816,9 @@ def transfer_vehicle_to_client(
     Старые заявки, request_vehicles и request_equipment не переносим,
     потому что они являются историей работ старого клиента.
     """
-    if not has_any_permission(current_user, VEHICLE_TRANSFER_PERMISSION_CODES) and not has_legacy_role(
+    if not has_any_permission(
         current_user,
-        VEHICLE_TRANSFER_LEGACY_ROLES,
+        VEHICLE_TRANSFER_PERMISSION_CODES + VEHICLE_TRANSFER_OWN_PERMISSION_CODES,
     ):
         raise HTTPException(
             status_code=403,

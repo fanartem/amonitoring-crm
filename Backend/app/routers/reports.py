@@ -9,12 +9,6 @@ from app.permissions import has_any_permission
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
-REQUEST_REPORT_ROLES = ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT", "ACCOUNTANT"]
-REQUEST_REPORT_ALL_ROLES = ["ADMIN", "ROP", "TECH_SUPPORT", "ACCOUNTANT"]
-MANAGER_REPORT_ROLES = ["ADMIN", "ROP"]
-WAREHOUSE_REPORT_ROLES = ["ADMIN", "WAREHOUSE_MANAGER"]
-MONEY_REPORT_ROLES = ["ADMIN", "ROP", "MANAGER", "TECH_SUPPORT", "ACCOUNTANT"]
-
 WORK_TYPE_LABELS = {
     "INSTALLATION": "Установка",
     "DIAGNOSTIC": "Диагностика",
@@ -128,37 +122,22 @@ WAREHOUSE_RETURN_ACTIONS = {
 }
 
 
-def permissions_are_loaded(current_user: dict | None) -> bool:
-    return current_user is not None and isinstance(current_user.get("permissions"), list)
-
-
-def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user or permissions_are_loaded(current_user):
-        return False
-
-    return current_user.get("role") in roles
-
-
 def can_view_request_reports(current_user: dict) -> bool:
-    return (
-        has_any_permission(current_user, [
-            "reports.view",
-            "reports.requests.view",
-            "reports.requests.view_own",
-            "reports.manage",
-        ])
-        or has_legacy_role(current_user, REQUEST_REPORT_ROLES)
-    )
+    # reports.view — общий корень дерева отчётов, он есть у всех,
+    # у кого открыт хоть один отчёт. Здесь нужен конкретный код.
+    return has_any_permission(current_user, [
+        "reports.requests.view",
+        "reports.requests.view_own",
+        "reports.requests.view_all",
+        "reports.manage",
+    ])
 
 
 def can_view_all_request_reports(current_user: dict) -> bool:
-    return (
-        has_any_permission(current_user, [
-            "reports.requests.view_all",
-            "reports.manage",
-        ])
-        or has_legacy_role(current_user, REQUEST_REPORT_ALL_ROLES)
-    )
+    return has_any_permission(current_user, [
+        "reports.requests.view_all",
+        "reports.manage",
+    ])
 
 
 def can_view_manager_reports(current_user: dict) -> bool:
@@ -167,7 +146,6 @@ def can_view_manager_reports(current_user: dict) -> bool:
             "reports.managers.view",
             "reports.manage",
         ])
-        or has_legacy_role(current_user, MANAGER_REPORT_ROLES)
     )
 
 
@@ -179,21 +157,14 @@ def can_view_warehouse_reports(current_user: dict) -> bool:
             "warehouse.reports.view",
             "warehouse.manage",
         ])
-        or has_legacy_role(current_user, WAREHOUSE_REPORT_ROLES)
     )
 
 
 def can_view_report_money(current_user: dict) -> bool:
-    return (
-        has_any_permission(current_user, [
-            "reports.money.view",
-            "reports.manage",
-            "prices.view",
-            "requests.price.view",
-            "requests.prices.view",
-        ])
-        or has_legacy_role(current_user, MONEY_REPORT_ROLES)
-    )
+    return has_any_permission(current_user, [
+        "reports.money.view",
+        "reports.manage",
+    ])
 
 
 def require_any_reports(current_user: dict):
@@ -467,6 +438,7 @@ def get_request_rows(cursor, current_user: dict, can_see_money: bool) -> list[di
             c.responsible_manager_id,
 
             responsible.name AS responsible_manager_name,
+            responsible.role AS responsible_manager_role,
 
             GROUP_CONCAT(
                 DISTINCT CONCAT(executor_user.id, '::', executor_user.name)
@@ -503,7 +475,8 @@ def get_request_rows(cursor, current_user: dict, can_see_money: bool) -> list[di
             c.phone,
             c.type,
             c.responsible_manager_id,
-            responsible.name
+            responsible.name,
+            responsible.role
         ORDER BY r.created_at DESC, r.id DESC
         """,
         tuple(values),
@@ -524,6 +497,18 @@ def get_request_rows(cursor, current_user: dict, can_see_money: bool) -> list[di
             row[date_field] = date_to_iso(row.get(date_field))
 
     return rows
+
+
+def parse_report_date(value: str, field_name: str, end_of_day: bool = False) -> datetime:
+    suffix = "T23:59:59" if end_of_day else "T00:00:00"
+
+    try:
+        return datetime.fromisoformat(f"{value}{suffix}")
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Некорректная дата {field_name}. Используйте формат ГГГГ-ММ-ДД",
+        )
 
 
 def apply_request_filters(
@@ -555,14 +540,14 @@ def apply_request_filters(
         result = [row for row in result if row.get("status") == status]
 
     if date_from:
-        from_value = datetime.fromisoformat(f"{date_from}T00:00:00")
+        from_value = parse_report_date(date_from, "date_from")
         result = [
             row for row in result
             if row.get("created_at") and datetime.fromisoformat(str(row["created_at"])) >= from_value
         ]
 
     if date_to:
-        to_value = datetime.fromisoformat(f"{date_to}T23:59:59")
+        to_value = parse_report_date(date_to, "date_to", end_of_day=True)
         result = [
             row for row in result
             if row.get("created_at") and datetime.fromisoformat(str(row["created_at"])) <= to_value
@@ -705,7 +690,7 @@ def build_request_report(rows: list[dict], all_rows: list[dict], *, granularity:
 
             if row.get("responsible_manager_id") is not None and int(row["responsible_manager_id"]) == int(owner_id):
                 name = row.get("responsible_manager_name")
-                role = "MANAGER"
+                role = row.get("responsible_manager_role")
 
             if not name and row.get("created_by") is not None and int(row["created_by"]) == int(owner_id):
                 name = row.get("created_by_name")
@@ -1144,6 +1129,8 @@ def build_warehouse_movements_report(rows: list[dict]) -> dict:
 
 @router.get("/access")
 def get_reports_access(current_user: dict = Depends(get_current_user)):
+    require_any_reports(current_user)
+
     return {
         "role": current_user.get("role"),
         "user_id": current_user.get("id"),

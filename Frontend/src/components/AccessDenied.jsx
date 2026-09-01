@@ -1,7 +1,13 @@
 import React from 'react'
 import { Link } from 'react-router'
+import { resolveLandingRoute } from '../utils/access'
 
 export default function AccessDenied() {
+	// Кнопка «назад» должна вести туда, куда человеку действительно можно,
+	// иначе он вернётся на эту же страницу (см. шаг 167).
+	const landingRoute = resolveLandingRoute()
+	const hasSomewhereToGo = landingRoute !== '/access-denied'
+
 	return (
 		<div style={{ padding: '32px' }}>
 			<div
@@ -19,25 +25,28 @@ export default function AccessDenied() {
 				</h2>
 
 				<p style={{ margin: '0 0 18px', color: '#64748b', lineHeight: 1.5 }}>
-					У вашей роли нет доступа к этому разделу. Если доступ нужен по работе,
-					обратитесь к администратору CRM.
+					{hasSomewhereToGo
+						? 'У вашей роли нет доступа к этому разделу. Если доступ нужен по работе, обратитесь к администратору CRM.'
+						: 'У вашей роли пока нет доступа ни к одному разделу. Обратитесь к администратору CRM — он настроит права.'}
 				</p>
 
-				<Link
-					to='/requests'
-					style={{
-						display: 'inline-flex',
-						alignItems: 'center',
-						padding: '10px 14px',
-						borderRadius: '10px',
-						background: '#5e9424',
-						color: '#fff',
-						textDecoration: 'none',
-						fontWeight: 700,
-					}}
-				>
-					Вернуться к заявкам
-				</Link>
+				{hasSomewhereToGo && (
+					<Link
+						to={landingRoute}
+						style={{
+							display: 'inline-flex',
+							alignItems: 'center',
+							padding: '10px 14px',
+							borderRadius: '10px',
+							background: '#5e9424',
+							color: '#fff',
+							textDecoration: 'none',
+							fontWeight: 700,
+						}}
+					>
+						Вернуться к доступным разделам
+					</Link>
+				)}
 			</div>
 		</div>
 	)

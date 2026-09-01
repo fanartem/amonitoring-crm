@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { NavLink } from 'react-router'
 import { canAccessRoute, getStoredUser } from '../utils/access'
+import { clearAuthData } from '../api'
 
 export default function Sidebar() {
 	const [isOpen, setIsOpen] = useState(false)
@@ -32,9 +33,11 @@ export default function Sidebar() {
 	}
 
 	const handleLogout = () => {
-		localStorage.removeItem('access_token')
-		localStorage.removeItem('user_data')
-		window.location.href = '/login'
+		// Единая очистка из api.js: легаси-ключ user и плашка
+		// в sessionStorage иначе переживут выход.
+		clearAuthData()
+
+		window.location.href = '/'
 	}
 
 	return (
@@ -99,7 +102,7 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 
-				{/* {canViewReports && (
+				{/* {canView('reports') && (
 					<NavLink
 						to='/reports'
 						className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}

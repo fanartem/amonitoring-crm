@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
 import { API_BASE_URL, getAuthHeaders } from '../api'
-import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 import RequestDetailModal from './RequestDetailModal'
 import { getWorkTypeLabel } from '../utils/workTypes'
 import '../styles/Calendar.css'
@@ -59,42 +59,13 @@ const statusLabels = {
 	CANCELLED: 'Отменено',
 }
 
+// Список должен совпадать с CALENDAR_VIEW_PERMISSION_CODES
+// в backend/app/routers/requests.py.
+// Право "Общий календарь заявок" целиком обрабатывает бэкенд:
+// он решает, приходят ли чужие заявки и с какими данными.
 const CALENDAR_VIEW_PERMISSION_CODES = [
 	'calendar.view',
-	'calendar.view_all',
 	'requests.calendar.view',
-	'requests.calendar.view_all',
-	'requests.view',
-	'requests.view_all',
-	'requests.manage',
-]
-
-const CALENDAR_VIEW_ALL_PERMISSION_CODES = [
-	'calendar.view_all',
-	'requests.calendar.view_all',
-	'requests.view_all',
-	'requests.manage',
-]
-
-const CALENDAR_LEGACY_VIEW_ROLES = [
-	'ADMIN',
-	'ROP',
-	'MANAGER',
-	'TECH_SUPPORT',
-	'ACCOUNTANT',
-	'WAREHOUSE_MANAGER',
-	'SENIOR_TECHNICIAN',
-	'TECHNICIAN',
-]
-
-const CALENDAR_LEGACY_VIEW_ALL_ROLES = [
-	'ADMIN',
-	'ROP',
-	'MANAGER',
-	'TECH_SUPPORT',
-	'ACCOUNTANT',
-	'WAREHOUSE_MANAGER',
-	'SENIOR_TECHNICIAN',
 ]
 
 const getStartOfDay = date => {
@@ -228,6 +199,8 @@ const buildEventTitle = item => {
 }
 
 const buildClientLabel = item => {
+	if (item.can_open_details === false) return 'Другой сотрудник'
+
 	return (
 		item.company_name ||
 		item.client_name ||
@@ -357,13 +330,10 @@ export default function Calendar() {
 
 	const userData = useMemo(() => getStoredUser(), [])
 
-	const canViewCalendar =
-		hasAnyPermission(userData, CALENDAR_VIEW_PERMISSION_CODES) ||
-		hasLegacyRole(userData, CALENDAR_LEGACY_VIEW_ROLES)
-
-	const canFilterCalendarByCity =
-		hasAnyPermission(userData, CALENDAR_VIEW_ALL_PERMISSION_CODES) ||
-		hasLegacyRole(userData, CALENDAR_LEGACY_VIEW_ALL_ROLES)
+	const canViewCalendar = hasAnyPermission(
+		userData,
+		CALENDAR_VIEW_PERMISSION_CODES,
+	)
 
 	const [workTypeFilter, setWorkTypeFilter] = useState('ALL')
 
@@ -414,6 +384,10 @@ export default function Calendar() {
 			.filter(city => city.toLowerCase().includes(query))
 			.slice(0, 8)
 	}, [cityOptions, citySearch])
+
+	// Фильтр по городу — вопрос удобства, а не прав: сам город виден
+	// в каждой карточке. Показываем, когда есть из чего выбирать.
+	const showCityFilter = cityOptions.length > 1
 
 	const clientOptions = useMemo(() => {
 		const clientMap = new Map()
@@ -468,7 +442,7 @@ export default function Calendar() {
 				return false
 			}
 
-			if (canFilterCalendarByCity) {
+			if (showCityFilter) {
 				const itemCity = String(item.city || '').trim()
 
 				if (selectedCity) {
@@ -499,13 +473,12 @@ export default function Calendar() {
 		selectedCity,
 		clientSearch,
 		selectedClientId,
-		canFilterCalendarByCity,
+		showCityFilter,
 	])
 
 	const hasActiveFilters =
 		workTypeFilter !== 'ALL' ||
-		(canFilterCalendarByCity &&
-			(Boolean(citySearch.trim()) || Boolean(selectedCity))) ||
+		(showCityFilter && (Boolean(citySearch.trim()) || Boolean(selectedCity))) ||
 		Boolean(clientSearch.trim()) ||
 		Boolean(selectedClientId)
 
@@ -1045,7 +1018,7 @@ export default function Calendar() {
 							</select>
 						</div>
 
-						{canFilterCalendarByCity && (
+						{showCityFilter && (
 							<div className='crm-calendar-filter-field picker'>
 								<label>Город</label>
 								<input

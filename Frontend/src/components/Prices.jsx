@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
-import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 import '../styles/Prices.css'
 
 const categoryLabels = {
@@ -58,62 +58,36 @@ export default function Prices() {
 	const currentUser = getStoredUser()
 
 	/*
-		Новая логика:
-		- основной источник доступа — permissions из localStorage.user_data.permissions;
-		- Супер-Админ получает true внутри hasAnyPermission;
-		- legacy role fallback оставлен временно для старых системных ролей.
+		Списки должны совпадать с backend/app/routers/prices.py.
+
+		Важно: в permission_dependencies зонтичные коды раскрываются вниз
+		(prices.manage → base_prices.manage → base_prices.create/edit/...),
+		поэтому в списках хватает самого гранулярного кода.
+
+		И наоборот: client_prices.view и client_prices.manage — общие предки
+		и для "_all", и для "_own". В списках "всех клиентов" их быть не должно,
+		иначе менеджер со "своими клиентами" пройдёт как "все".
 	*/
 
-	const canReadPrices =
-		hasAnyPermission(currentUser, [
-			'prices.view',
-			'prices.manage',
-			'base_prices.view',
-			'base_prices.manage',
-			'client_prices.view',
-			'client_prices.view_all',
-			'client_prices.view_own',
-			'client_prices.manage',
-			'client_prices.manage_all',
-			'client_prices.manage_own',
-			'requests.price.view',
-			'requests.prices.view',
-		]) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'ROP',
-			'MANAGER',
-			'TECH_SUPPORT',
-			'ACCOUNTANT',
-		])
+	const canReadPrices = hasAnyPermission(currentUser, [
+		'prices.view',
+		'base_prices.view',
+		'client_prices.view',
+	])
 
-	const canCreateBasePrice =
-		hasAnyPermission(currentUser, [
-			'prices.manage',
-			'base_prices.manage',
-			'base_prices.create',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+	const canCreateBasePrice = hasAnyPermission(currentUser, [
+		'base_prices.create',
+	])
 
-	const canEditBasePrice =
-		hasAnyPermission(currentUser, [
-			'prices.manage',
-			'base_prices.manage',
-			'base_prices.edit',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+	const canEditBasePrice = hasAnyPermission(currentUser, ['base_prices.edit'])
 
-	const canDeleteBasePrice =
-		hasAnyPermission(currentUser, [
-			'prices.manage',
-			'base_prices.manage',
-			'base_prices.delete',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+	const canDeleteBasePrice = hasAnyPermission(currentUser, [
+		'base_prices.delete',
+	])
 
-	const canRestoreBasePrice =
-		hasAnyPermission(currentUser, [
-			'prices.manage',
-			'base_prices.manage',
-			'base_prices.restore',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+	const canRestoreBasePrice = hasAnyPermission(currentUser, [
+		'base_prices.restore',
+	])
 
 	const canManageBasePrices =
 		canCreateBasePrice ||
@@ -121,34 +95,29 @@ export default function Prices() {
 		canDeleteBasePrice ||
 		canRestoreBasePrice
 
-	const canViewAllClientPrices =
-		hasAnyPermission(currentUser, [
-			'prices.manage',
-			'client_prices.view',
-			'client_prices.view_all',
-			'client_prices.manage',
-			'client_prices.manage_all',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'TECH_SUPPORT', 'ACCOUNTANT'])
+	const canViewAllClientPrices = hasAnyPermission(currentUser, [
+		'client_prices.view_all',
+		'client_prices.manage_all',
+		'prices.client.manage_all',
+	])
 
-	const canViewOwnClientPrices =
-		hasAnyPermission(currentUser, [
-			'client_prices.view_own',
-			'client_prices.manage_own',
-		]) || hasLegacyRole(currentUser, ['MANAGER'])
+	const canViewOwnClientPrices = hasAnyPermission(currentUser, [
+		'client_prices.view_own',
+		'client_prices.manage_own',
+		'prices.client.manage_own',
+	])
 
 	const canViewClientPrices = canViewAllClientPrices || canViewOwnClientPrices
 
-	const canManageAllClientPrices =
-		hasAnyPermission(currentUser, [
-			'prices.manage',
-			'client_prices.manage',
-			'client_prices.manage_all',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+	const canManageAllClientPrices = hasAnyPermission(currentUser, [
+		'client_prices.manage_all',
+		'prices.client.manage_all',
+	])
 
-	const canManageOwnClientPrices =
-		hasAnyPermission(currentUser, ['client_prices.manage_own']) ||
-		hasLegacyRole(currentUser, ['MANAGER'])
+	const canManageOwnClientPrices = hasAnyPermission(currentUser, [
+		'client_prices.manage_own',
+		'prices.client.manage_own',
+	])
 
 	useEffect(() => {
 		if (!canReadPrices) return
@@ -563,12 +532,11 @@ export default function Prices() {
 
 	const currentUserId = Number(currentUser?.id || 0)
 
+	// Совпадает с is_client_owned_by_user() в backend/app/permissions.py.
 	const isOwnClientForPrices = client => {
 		if (!client) return false
 
 		return (
-			Boolean(client.can_edit) ||
-			Boolean(client.can_create_request) ||
 			Number(client.created_by) === currentUserId ||
 			Number(client.responsible_manager_id) === currentUserId
 		)

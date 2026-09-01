@@ -1,33 +1,27 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { Navigate } from 'react-router'
 import { canAccessRoute, getStoredUser } from '../utils/access'
-
-const isTokenExpired = token => {
-	if (!token) return true
-
-	try {
-		const payload = JSON.parse(atob(token.split('.')[1]))
-		if (!payload.exp) return false
-
-		return payload.exp * 1000 < Date.now()
-	} catch {
-		return true
-	}
-}
+import { isTokenExpired, redirectToLogin } from '../api'
 
 export default function ProtectedRoute({ routeKey, children }) {
 	const token = localStorage.getItem('access_token')
+	const isSessionExpired = !token || isTokenExpired(token)
 
-	if (!token || isTokenExpired(token)) {
-		localStorage.removeItem('access_token')
-		localStorage.removeItem('user_data')
+	// Именно window.location, а не <Navigate>: клиентский переход на /login
+	// попадёт в LandingRedirect, тот вернёт на защищённый маршрут,
+	// и получится бесконечный круг. Нужна полная перезагрузка,
+	// чтобы App пересчитал состояние авторизации.
+	useEffect(() => {
+		if (isSessionExpired) {
+			redirectToLogin('session_expired')
+		}
+	}, [isSessionExpired])
 
-		return <Navigate to='/login?reason=session_expired' replace />
+	if (isSessionExpired) {
+		return null
 	}
 
-	const user = getStoredUser()
-
-	if (!canAccessRoute(routeKey, user)) {
+	if (!canAccessRoute(routeKey, getStoredUser())) {
 		return <Navigate to='/access-denied' replace />
 	}
 

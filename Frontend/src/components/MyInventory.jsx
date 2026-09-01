@@ -1,11 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders } from '../api'
-import {
-	getStoredUser,
-	hasAnyPermission,
-	hasLegacyRole,
-	toBool,
-} from '../utils/access'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 
@@ -169,39 +164,15 @@ function HistoryModal({ item, history, loading, onClose }) {
 export default function MyInventory() {
 	const currentUser = getStoredUser()
 
-	const canViewMyInventory =
-		hasAnyPermission(currentUser, [
-			'warehouse.my_inventory.view',
-			'warehouse.inventory.my.view',
-			'warehouse.inventory.view_own',
-			'warehouse.inventory.view',
-			'warehouse.employee_equipment.manage',
-			'my_inventory.view',
-		]) ||
-		toBool(currentUser?.can_be_request_executor) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'WAREHOUSE_MANAGER',
-			'SENIOR_TECHNICIAN',
-			'TECHNICIAN',
-		])
+	// Совпадает с MY_INVENTORY_VIEW_PERMISSION_CODES в warehouse.py.
+	const canViewMyInventory = hasAnyPermission(currentUser, [
+		'warehouse.my_inventory.view',
+		'warehouse.inventory.view_own',
+	])
 
-	const canViewMyInventoryHistory =
-		hasAnyPermission(currentUser, [
-			'warehouse.my_inventory.history.view',
-			'warehouse.inventory.history.view',
-			'warehouse.items.history.view',
-			'warehouse.history.view',
-			'warehouse.my_inventory.view',
-			'warehouse.inventory.my.view',
-		]) ||
-		toBool(currentUser?.can_be_request_executor) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'WAREHOUSE_MANAGER',
-			'SENIOR_TECHNICIAN',
-			'TECHNICIAN',
-		])
+	// Все предметы на этой странице — свои, а историю своего предмета
+	// владелец видит всегда (см. get_warehouse_item_history).
+	const canViewMyInventoryHistory = canViewMyInventory
 
 	const [inventory, setInventory] = useState([])
 	const [loading, setLoading] = useState(false)

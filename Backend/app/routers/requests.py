@@ -10,15 +10,8 @@ from app.schemas import (
 )
 from app.security import get_current_user
 
+from app.routers.prices import resolve_request_price_lines
 from app.permissions import (
-    ADMIN,
-    ROP,
-    MANAGER,
-    TECH_SUPPORT,
-    ACCOUNTANT,
-    SENIOR_TECHNICIAN,
-    TECHNICIAN,
-    WAREHOUSE_MANAGER,
     DATA_SCOPE_ALL,
     DATA_SCOPE_CITY,
     DATA_SCOPE_RESPONSIBLE_CLIENTS,
@@ -40,10 +33,6 @@ from app.permissions import (
     can_view_price_fields,
     can_create_request_for_client,
     is_client_owned_by_user,
-    is_technician,
-    is_senior_technician,
-    is_manager,
-    is_tech_support,
 )
 
 from datetime import datetime, time, timezone, timedelta
@@ -93,69 +82,67 @@ VISIT_MINIMUM_LEAD_MINUTES = {
     VISIT_PRICE_CODE_BUSINESS_TRIP: 300,
 }
 
+# requests.manage и requests.edit_responsible в таблице permissions
+# отсутствуют — проверки с ними не срабатывали ни разу.
+# Оставшиеся синонимы в каталоге есть и работают; они уйдут вместе
+# с чисткой дублей в базе.
+
 REQUEST_VIEW_ALL_PERMISSION_CODES = [
     "requests.view_all",
-    "requests.manage",
 ]
 
 REQUEST_VIEW_PERMISSION_CODES = [
     "requests.view",
-    "requests.manage",
 ]
 
 REQUEST_EDIT_OWN_PERMISSION_CODES = [
     "requests.edit_own",
-    "requests.edit_responsible",
 ]
 
 REQUEST_SCHEDULE_BYPASS_PERMISSION_CODES = [
     "requests.schedule.bypass",
     "requests.schedule.bypass_limits",
-    "requests.manage",
 ]
 
 REQUEST_SCHEDULE_APPROVAL_DECIDE_PERMISSION_CODES = [
     "requests.schedule_approval.decide",
     "requests.schedule.approve",
-    "requests.manage",
 ]
 
 REQUEST_STATUS_OVERRIDE_PERMISSION_CODES = [
     "requests.status.override",
     "requests.status.override_transitions",
-    "requests.manage",
 ]
 
 REQUEST_RESTORE_PERMISSION_CODES = [
     "requests.restore",
-    "trash.manage",
-    "requests.manage",
 ]
 
 REQUEST_TRASH_VIEW_PERMISSION_CODES = [
-    "trash.view",
-    "trash.manage",
-    "requests.restore",
-    "requests.delete_any",
-    "requests.manage",
+    "requests.deleted.view",
 ]
 
 REQUEST_COMPLETE_ANY_PERMISSION_CODES = [
     "requests.complete_any",
-    "requests.manage",
-    "requests.status.manage",
 ]
 
 REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES = [
     "requests.complete_own",
-    "requests.complete_assigned",
-    "requests.self_complete",
-    "requests.status.manage",
 ]
 
 REQUEST_COMMENT_PERMISSION_CODES = [
     "requests.comments.create",
     "requests.comments.manage",
+]
+
+CALENDAR_VIEW_PERMISSION_CODES = [
+    "calendar.view",
+    "requests.calendar.view",
+]
+
+CALENDAR_VIEW_ALL_PERMISSION_CODES = [
+    "calendar.view_all",
+    "requests.calendar.view_all",
 ]
 
 
@@ -172,61 +159,34 @@ def to_bool(value) -> bool:
     return str(value).strip().lower() in ["1", "true", "yes", "y", "да"]
 
 
-def permissions_are_loaded(current_user: dict | None) -> bool:
-    return current_user is not None and isinstance(current_user.get("permissions"), list)
-
-
-def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user or permissions_are_loaded(current_user):
-        return False
-
-    return current_user.get("role") in roles
-
-
 def user_has_any_permission(current_user: dict | None, permission_codes: list[str]) -> bool:
     return is_super_admin(current_user) or has_any_permission(current_user, permission_codes)
 
 
 def user_can_bypass_schedule_rules(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, REQUEST_SCHEDULE_BYPASS_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN],
-    )
+    return user_has_any_permission(current_user, REQUEST_SCHEDULE_BYPASS_PERMISSION_CODES)
 
 
 def user_can_decide_schedule_approval(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, REQUEST_SCHEDULE_APPROVAL_DECIDE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP],
-    )
+    return user_has_any_permission(current_user, REQUEST_SCHEDULE_APPROVAL_DECIDE_PERMISSION_CODES)
 
 
 def user_can_override_request_status_transitions(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, REQUEST_STATUS_OVERRIDE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP],
-    )
+    return user_has_any_permission(current_user, REQUEST_STATUS_OVERRIDE_PERMISSION_CODES)
 
 
 def user_can_view_deleted_requests(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, REQUEST_TRASH_VIEW_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP],
-    )
+    return user_has_any_permission(current_user, REQUEST_TRASH_VIEW_PERMISSION_CODES)
 
 
 def user_can_restore_deleted_requests(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, REQUEST_RESTORE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP],
-    )
+    return user_has_any_permission(current_user, REQUEST_RESTORE_PERMISSION_CODES)
 
 
 def user_can_view_all_request_rows(current_user: dict) -> bool:
     return (
         can_view_all_requests(current_user)
         or user_has_any_permission(current_user, REQUEST_VIEW_ALL_PERMISSION_CODES)
-        or has_legacy_role(current_user, [ADMIN, ROP, ACCOUNTANT, WAREHOUSE_MANAGER, SENIOR_TECHNICIAN, TECH_SUPPORT])
     )
 
 
@@ -255,18 +215,11 @@ def get_effective_request_data_scope(current_user: dict) -> str:
         }:
             return scope
 
-    # Совместимость со старыми current_user без загруженного permissions.
-    if has_legacy_role(current_user, [MANAGER]):
-        return DATA_SCOPE_RESPONSIBLE_CLIENTS
-
-    if has_legacy_role(current_user, [TECHNICIAN]):
-        return DATA_SCOPE_CITY_ASSIGNED
-
     return DATA_SCOPE_NONE
 
 
 def user_can_edit_own_or_responsible_request(current_user: dict, request: dict) -> bool:
-    if not user_has_any_permission(current_user, REQUEST_EDIT_OWN_PERMISSION_CODES) and not has_legacy_role(current_user, [MANAGER]):
+    if not user_has_any_permission(current_user, REQUEST_EDIT_OWN_PERMISSION_CODES):
         return False
 
     return is_client_owned_by_user(
@@ -279,9 +232,6 @@ def user_can_edit_own_or_responsible_request(current_user: dict, request: dict) 
 
 
 def user_can_self_accept_requests(current_user: dict) -> bool:
-    if has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN]):
-        return True
-
     if not to_bool(current_user.get("can_be_request_executor")):
         return False
 
@@ -291,21 +241,23 @@ def user_can_self_accept_requests(current_user: dict) -> bool:
 
 
 def user_can_complete_any_request(current_user: dict) -> bool:
-    return user_has_any_permission(current_user, REQUEST_COMPLETE_ANY_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP, SENIOR_TECHNICIAN],
-    )
+    return user_has_any_permission(current_user, REQUEST_COMPLETE_ANY_PERMISSION_CODES)
 
 
 def user_can_complete_assigned_request(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES)
-        or has_legacy_role(current_user, [TECHNICIAN, SENIOR_TECHNICIAN])
-    )
+    return user_has_any_permission(current_user, REQUEST_COMPLETE_ASSIGNED_PERMISSION_CODES)
 
 
 def user_can_comment_requests(current_user: dict) -> bool:
     return user_has_any_permission(current_user, REQUEST_COMMENT_PERMISSION_CODES)
+
+
+def user_can_view_calendar(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, CALENDAR_VIEW_PERMISSION_CODES)
+
+
+def user_can_view_all_calendar(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, CALENDAR_VIEW_ALL_PERMISSION_CODES)
 
 
 def user_is_limited_executor(current_user: dict) -> bool:
@@ -317,6 +269,30 @@ def user_is_limited_executor(current_user: dict) -> bool:
 
 def almaty_now():
     return datetime.now(ALMATY_TZ).replace(tzinfo=None)
+
+
+def get_request_delete_seconds_left(request: dict) -> int:
+    """
+    Сколько секунд ещё можно удалить свою заявку.
+
+    Источник правды для фронта: раньше окно было продублировано
+    константой в NewRequestNotice.jsx и могло разойтись с сервером.
+    """
+    created_at = request.get("created_at")
+
+    if not created_at:
+        return 0
+
+    if isinstance(created_at, str):
+        try:
+            created_at = datetime.fromisoformat(created_at)
+        except ValueError:
+            return 0
+
+    created_at = created_at.replace(tzinfo=None)
+    elapsed_seconds = (almaty_now() - created_at).total_seconds()
+
+    return max(0, int(REQUEST_DELETE_TIME_LIMIT_SECONDS - elapsed_seconds))
 
 def normalize_scheduled_at(value: datetime | None):
     if value is None:
@@ -518,8 +494,6 @@ def build_schedule_approval_data(
     current_user: dict,
     reason: str | None = None,
 ):
-    role = current_user.get("role")
-
     if is_working_schedule_time(scheduled_at):
         return {
             "status": SCHEDULE_APPROVAL_NOT_REQUIRED,
@@ -605,7 +579,6 @@ def hide_request_prices(requests: list[dict]) -> list[dict]:
 
 
 def attach_request_permissions(request: dict, current_user: dict) -> dict:
-    role = current_user.get("role")
     user_id = int(current_user["id"])
 
     created_by = request.get("created_by")
@@ -628,13 +601,33 @@ def attach_request_permissions(request: dict, current_user: dict) -> dict:
 
     request["can_delete"] = can_delete_any_request(current_user)
 
-    if can_delete_own_request_with_time_limit(current_user) and is_creator:
-        request["can_delete_own_with_time_limit"] = True
-    else:
-        request["can_delete_own_with_time_limit"] = False
+    delete_seconds_left = get_request_delete_seconds_left(request)
+
+    request["can_delete_own_with_time_limit"] = bool(
+        can_delete_own_request_with_time_limit(current_user)
+        and is_creator
+        and str(request.get("status")) == "NEW"
+        and delete_seconds_left > 0
+    )
+
+    request["delete_window_seconds_left"] = (
+        delete_seconds_left
+        if request["can_delete_own_with_time_limit"]
+        else 0
+    )
 
     request["can_view_prices"] = can_view_price_fields(current_user)
     request["can_edit_payment"] = can_edit_payment_info(current_user)
+
+    # Все условия принятия заявки считает сервер: право исполнителя,
+    # область данных, статус, отсутствие исполнителя и согласование времени.
+    request["can_accept"] = bool(
+        user_can_self_accept_requests(current_user)
+        and str(request.get("status")) == "NEW"
+        and request.get("assigned_to") is None
+        and str(request.get("schedule_approval_status") or "")
+        not in [SCHEDULE_APPROVAL_PENDING, SCHEDULE_APPROVAL_REJECTED]
+    )
 
     return request
 
@@ -1006,7 +999,7 @@ def validate_request_executor_ids(cursor, executor_ids: list[int]) -> list[dict]
                 detail=f"Пользователь {executor_id} не найден"
             )
 
-        if user["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN] and not to_bool(user.get("can_be_request_executor")):
+        if not to_bool(user.get("can_be_request_executor")):
             raise HTTPException(
                 status_code=400,
                 detail=f"Пользователь {user['name']} не является исполнителем заявки"
@@ -1251,16 +1244,10 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         detail=f"Машина {vehicle_input.vehicle_id} не принадлежит выбранному клиенту"
                     )
             
+            # Итог всегда считает сервер по строкам расчёта.
+            # Присланный браузером total_price не сохраняем: это было
+            # единственное место, где цена заявки принималась на веру.
             total_price = 0
-
-            if data.price:
-                total_price = float(data.price.total_price or 0)
-
-                if total_price < 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Итоговая цена заявки не может быть отрицательной"
-                    )
 
             platform = data.platform.strip()
 
@@ -1384,42 +1371,30 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
             saved_total_price = total_price
 
             if data.price and data.price.lines:
+                resolved_lines = resolve_request_price_lines(
+                    cursor,
+                    data.price.lines,
+                    data.client_id,
+                    current_user,
+                )
+
                 calculated_total = 0
 
-                for line in data.price.lines:
-                    label = line.label.strip()
-
-                    if not label:
-                        continue
-
-                    quantity = float(line.quantity or 0)
-                    unit_price = float(line.unit_price or 0)
-                    total_line_price = float(line.total_price or 0)
-
-                    if quantity <= 0:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Количество в строке цены должно быть больше 0"
-                        )
-
-                    if unit_price < 0 or total_line_price < 0:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Цена в строке расчёта не может быть отрицательной"
-                        )
-
+                for line in resolved_lines:
                     request_vehicle_id = None
 
-                    if line.vehicle_index:
-                        request_vehicle_id = request_vehicle_id_by_index.get(line.vehicle_index)
+                    if line["vehicle_index"]:
+                        request_vehicle_id = request_vehicle_id_by_index.get(
+                            line["vehicle_index"]
+                        )
 
                         if not request_vehicle_id:
                             raise HTTPException(
                                 status_code=400,
-                                detail=f"Не найден автомобиль заявки для строки цены vehicle_index={line.vehicle_index}"
+                                detail=f"Не найден автомобиль заявки для строки цены vehicle_index={line['vehicle_index']}"
                             )
 
-                    calculated_total += total_line_price
+                    calculated_total += line["total_price"]
 
                     cursor.execute(
                         """
@@ -1441,15 +1416,15 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         (
                             request_id,
                             request_vehicle_id,
-                            line.line_key,
-                            line.code,
-                            label,
-                            quantity,
-                            line.unit or "шт",
-                            unit_price,
-                            total_line_price,
-                            line.source or "base",
-                            bool(line.is_manual),
+                            line["line_key"],
+                            line["code"],
+                            line["label"],
+                            line["quantity"],
+                            line["unit"],
+                            line["unit_price"],
+                            line["total_price"],
+                            line["source"],
+                            line["is_manual"],
                         )
                     )
 
@@ -1787,6 +1762,14 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                     c.company_name,
                     c.phone,
                     c.type AS client_type,
+                    c.payment_type AS client_payment_type,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM request_executors re_current
+                        WHERE re_current.request_id = r.id
+                          AND re_current.user_id = %s
+                    ) AS current_user_is_executor,
 
                     u.name AS deleted_by_name
                 FROM requests r
@@ -1796,10 +1779,26 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                 LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
                 WHERE r.is_deleted = 1
                 ORDER BY r.deleted_at DESC
-                """
+                """,
+                (current_user["id"],)
             )
 
             requests = cursor.fetchall()
+
+            user_city = None
+
+            if user_is_limited_executor(current_user):
+                user_city = get_current_user_city(cursor, current_user)
+
+            requests = [
+                request
+                for request in requests
+                if user_can_access_request(request, current_user, user_city)
+            ]
+
+            if not can_view_price_fields(current_user):
+                requests = hide_request_prices(requests)
+
             return attach_vehicles_to_requests(cursor, requests)
 
     finally:
@@ -2159,19 +2158,32 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
             if not req:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
 
-            if not user_can_access_request(req, current_user):
+            user_city = None
+
+            if user_is_limited_executor(current_user):
+                user_city = get_current_user_city(cursor, current_user)
+
+            if not user_can_access_request(req, current_user, user_city):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для редактирования этой заявки"
                 )
 
+            # Право на оплату — это право на одно поле, а не на всю заявку.
+            # Пока оно входило в can_edit_this_request, бухгалтер мог менять
+            # адрес, город, платформу и дату любой заявки.
             can_edit_this_request = (
                 can_edit_all_requests(current_user)
                 or user_can_edit_own_or_responsible_request(current_user, req)
-                or can_edit_payment_info(current_user)
             )
 
-            if not can_edit_this_request and data.status is None:
+            can_edit_request_payment = can_edit_payment_info(current_user)
+
+            if (
+                not can_edit_this_request
+                and not can_edit_request_payment
+                and data.status is None
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для редактирования этой заявки"
@@ -2371,7 +2383,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
             # payment
             if data.is_paid is not None:
-                if not can_edit_payment_info(current_user):
+                if not can_edit_request_payment:
                     raise HTTPException(
                         status_code=403,
                         detail="Недостаточно прав на изменение оплаты заявки"
@@ -2654,20 +2666,13 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
                         detail="Удалить можно только новую заявку"
                     )
 
-                cursor.execute(
-                    """
-                    SELECT TIMESTAMPDIFF(SECOND, %s, %s) AS age_seconds
-                    """,
-                    (request["created_at"], almaty_now())
-                )
-                age = cursor.fetchone()
-
-                age_seconds = int(age.get("age_seconds") or 0)
-
-                if age_seconds > REQUEST_DELETE_TIME_LIMIT_SECONDS:
+                if get_request_delete_seconds_left(request) <= 0:
                     raise HTTPException(
                         status_code=400,
-                        detail="Удалить свою заявку можно только в течение 2 минут после создания"
+                        detail=(
+                            "Удалить свою заявку можно только в течение "
+                            f"{REQUEST_DELETE_TIME_LIMIT_SECONDS // 60} мин. после создания"
+                        )
                     )
 
                 can_delete = True
@@ -2871,33 +2876,11 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
                     "request_id": request_id
                 }
 
-            # Если technician_id НЕ None — назначаем монтажника
-            cursor.execute(
-                """
-                SELECT
-                    u.role,
-                    COALESCE(r.can_be_request_executor, 0) AS can_be_request_executor
-                FROM users u
-                LEFT JOIN roles r ON r.code = u.role
-                WHERE u.id = %s
-                """,
-                (data.technician_id,)
-            )
-            tech = cursor.fetchone()
-
-            if not tech or (tech["role"] not in [TECHNICIAN, SENIOR_TECHNICIAN] and not to_bool(tech.get("can_be_request_executor"))):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Назначить можно только пользователя, который может быть исполнителем заявки"
-                )
-
-            # Назначать нового монтажника можно только на NEW
-            # или можно переназначать в IN_PROGRESS — если вам это нужно
-            if req["status"] not in ["NEW", "IN_PROGRESS"]:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Назначить монтажника можно только на новую заявку или заявку в работе"
-                )
+            # Если technician_id НЕ None — назначаем монтажника.
+            # Та же проверка, что и в /executors/assign: флаг исполнителя,
+            # подтверждён, активен, не удалён. Раньше здесь проверялись
+            # только роль и флаг — уволенного можно было назначить на заявку.
+            validate_request_executor_ids(cursor, [data.technician_id])
 
             cursor.execute(
                 """
@@ -3531,11 +3514,16 @@ def get_requests_calendar(
     """
     Лёгкий endpoint для календаря заявок.
 
-    Важно:
-    - календарь показывает заявки всех менеджеров;
-    - открытие деталей контролируется can_open_details;
-    - подробный endpoint /requests/{id} всё равно защищён user_can_access_request.
+    Право "Календарь заявок" открывает свои заявки по data_scope роли.
+    Право "Общий календарь заявок" добавляет чужие заявки как занятые слоты,
+    но без данных клиента — детали по-прежнему контролирует can_open_details.
     """
+    if not user_can_view_calendar(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для просмотра календаря заявок",
+        )
+
     range_from = parse_calendar_date(date_from, "date_from")
     range_to = parse_calendar_date(date_to, "date_to")
 
@@ -3674,6 +3662,8 @@ def get_requests_calendar(
 
             result = []
 
+            can_view_foreign_requests = user_can_view_all_calendar(current_user)
+
             for row in rows:
                 can_open_details = user_can_access_request(
                     row,
@@ -3681,9 +3671,8 @@ def get_requests_calendar(
                     user_city,
                 )
 
-                # Ограниченный исполнитель в календаре видит только заявки,
-                # детали которых ему доступны.
-                if user_is_limited_executor(current_user) and not can_open_details:
+                # Без права "Общий календарь заявок" видно только свои заявки.
+                if not can_open_details and not can_view_foreign_requests:
                     continue
 
                 duration_minutes = int(row.get("scheduled_duration_minutes") or 60)
@@ -3695,24 +3684,31 @@ def get_requests_calendar(
                         minutes=duration_minutes
                     )
 
-                client_title = (
-                    row.get("company_name")
-                    or row.get("client_name")
-                    or f"Клиент #{row.get('client_id')}"
-                )
+                vehicles_summary = row.get("vehicles_summary") or ""
+
+                if can_open_details:
+                    client_title = (
+                        row.get("company_name")
+                        or row.get("client_name")
+                        or f"Клиент #{row.get('client_id')}"
+                    )
+                else:
+                    # Чужая заявка видна как занятый слот, без данных клиента.
+                    client_title = "Заявка другого сотрудника"
+                    vehicles_summary = ""
 
                 result.append({
                     "id": row["id"],
-                    "client_id": row["client_id"],
+                    "client_id": row["client_id"] if can_open_details else None,
 
-                    "title": f"{client_title} · {row.get('vehicles_summary') or 'Авто не указано'}",
+                    "title": f"{client_title} · {vehicles_summary or 'Авто не указано'}",
 
                     "work_type": row["work_type"],
                     "visit_type": row["visit_type"],
                     "visit_price_code": row.get("visit_price_code"),
                     "status": row["status"],
                     "city": row["city"],
-                    "address": row["address"],
+                    "address": row["address"] if can_open_details else None,
                     "platform": row["platform"],
 
                     "scheduled_at": row["scheduled_at"],
@@ -3721,17 +3717,21 @@ def get_requests_calendar(
 
                     "schedule_approval_status": row.get("schedule_approval_status"),
 
-                    "client_name": row.get("client_name"),
-                    "company_name": row.get("company_name"),
-                    "vehicles_summary": row.get("vehicles_summary") or "",
+                    "client_name": row.get("client_name") if can_open_details else None,
+                    "company_name": row.get("company_name") if can_open_details else None,
+                    "vehicles_summary": vehicles_summary,
                     "assigned_to_name": row.get("assigned_to_name"),
                     "executors_summary": (
                         row.get("executors_summary")
                         or row.get("assigned_to_name")
                         or ""
                     ),
-                    "responsible_manager_name": row.get("responsible_manager_name"),
-                    "created_by_name": row.get("created_by_name"),
+                    "responsible_manager_name": (
+                        row.get("responsible_manager_name") if can_open_details else None
+                    ),
+                    "created_by_name": (
+                        row.get("created_by_name") if can_open_details else None
+                    ),
 
                     "can_open_details": bool(can_open_details),
                 })
@@ -4075,6 +4075,14 @@ def accept_request(
                 (current_user["id"], request_id)
             )
 
+            # rowcount читаем сразу после UPDATE: любой следующий запрос
+            # его перезапишет, и проверка перестанет ловить гонку.
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Заявку уже успели принять или изменить"
+                )
+
             cursor.execute(
                 """
                 INSERT INTO request_executors (
@@ -4095,12 +4103,6 @@ def accept_request(
                     almaty_now(),
                 )
             )
-
-            if cursor.rowcount == 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Заявку уже успели принять или изменить"
-                )
 
             cursor.execute(
                 """

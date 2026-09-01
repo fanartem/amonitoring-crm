@@ -1,65 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
-import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 import '../styles/Requests.css'
-
-const getTokenPayload = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return {}
-
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-				.join(''),
-		)
-
-		return JSON.parse(jsonPayload)
-	} catch {
-		return {}
-	}
-}
 
 const normalizeUserId = value => {
 	const parsed = Number(value)
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
-
-const getCurrentUserSnapshot = () => {
-	const tokenPayload = getTokenPayload()
-	const storedUser = getStoredUser()
-
-	return {
-		...tokenPayload,
-		...storedUser,
-		role: storedUser?.role || tokenPayload?.role,
-		id:
-			storedUser?.id ??
-			storedUser?.user_id ??
-			tokenPayload?.id ??
-			tokenPayload?.sub,
-	}
-}
-
-const getCurrentUserId = () => {
-	const user = getCurrentUserSnapshot()
-	return normalizeUserId(user?.id)
-}
-
-const SUPPORT_VISIBLE_ROLES = [
-	'ADMIN',
-	'ROP',
-	'MANAGER',
-	'TECH_SUPPORT',
-	'ACCOUNTANT',
-	'WAREHOUSE_MANAGER',
-]
-
-const SUPPORT_EDIT_ROLES = ['ADMIN', 'ROP', 'TECH_SUPPORT']
-const SUPPORT_DELETE_ROLES = ['ADMIN', 'ROP']
 
 const SUPPORT_VIEW_PERMISSION_CODES = [
 	'support_requests.view',
@@ -82,6 +29,7 @@ const SUPPORT_ASSIGN_PERMISSION_CODES = [
 ]
 
 const SUPPORT_STATUS_PERMISSION_CODES = [
+	'support_requests.status.change',
 	'support_requests.status.manage',
 	'support_requests.change_status',
 	'support_requests.manage',
@@ -96,9 +44,6 @@ const SUPPORT_DELETE_PERMISSION_CODES = [
 	'support_requests.delete',
 	'support_requests.manage',
 ]
-
-const canUseSupportPermission = (user, permissionCodes, legacyRoles = []) =>
-	hasAnyPermission(user, permissionCodes) || hasLegacyRole(user, legacyRoles)
 
 const statusLabels = {
 	NEW: 'Новая',
@@ -1384,43 +1329,30 @@ export default function SupportRequests() {
 		only_my: false,
 	})
 
-	const currentUser = getCurrentUserSnapshot()
-	const currentUserId = normalizeUserId(currentUser?.id) ?? getCurrentUserId()
+	const currentUser = getStoredUser()
+	const currentUserId = normalizeUserId(currentUser?.id)
 
-	const canView = canUseSupportPermission(
-		currentUser,
-		SUPPORT_VIEW_PERMISSION_CODES,
-		SUPPORT_VISIBLE_ROLES,
-	)
-	const canCreate = canUseSupportPermission(
+	const canView = hasAnyPermission(currentUser, SUPPORT_VIEW_PERMISSION_CODES)
+	const canCreate = hasAnyPermission(
 		currentUser,
 		SUPPORT_CREATE_PERMISSION_CODES,
-		SUPPORT_VISIBLE_ROLES,
 	)
-	const canEdit = canUseSupportPermission(
-		currentUser,
-		SUPPORT_EDIT_PERMISSION_CODES,
-		SUPPORT_EDIT_ROLES,
-	)
-	const canAssign = canUseSupportPermission(
+	const canEdit = hasAnyPermission(currentUser, SUPPORT_EDIT_PERMISSION_CODES)
+	const canAssign = hasAnyPermission(
 		currentUser,
 		SUPPORT_ASSIGN_PERMISSION_CODES,
-		SUPPORT_EDIT_ROLES,
 	)
-	const canChangeStatus = canUseSupportPermission(
+	const canChangeStatus = hasAnyPermission(
 		currentUser,
 		SUPPORT_STATUS_PERMISSION_CODES,
-		SUPPORT_EDIT_ROLES,
 	)
-	const canComment = canUseSupportPermission(
+	const canComment = hasAnyPermission(
 		currentUser,
 		SUPPORT_COMMENT_PERMISSION_CODES,
-		SUPPORT_VISIBLE_ROLES,
 	)
-	const canDelete = canUseSupportPermission(
+	const canDelete = hasAnyPermission(
 		currentUser,
 		SUPPORT_DELETE_PERMISSION_CODES,
-		SUPPORT_DELETE_ROLES,
 	)
 
 	useEffect(() => {

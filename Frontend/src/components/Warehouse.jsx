@@ -5,7 +5,7 @@ import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 import WarehouseItemModal from './WarehouseItemModal'
 import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
-import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 
 const CATEGORIES = {
 	GPS_TRACKER: 'Трекер',
@@ -159,117 +159,42 @@ export default function Warehouse() {
 	const location = useLocation()
 	const currentUser = getStoredUser()
 
-	const canViewWarehouse =
-		hasAnyPermission(currentUser, [
-			'warehouse.view',
-			'warehouse.manage',
-			'warehouse.items.view',
-			'warehouse.items.manage',
-		]) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'ROP',
-			'MANAGER',
-			'WAREHOUSE_MANAGER',
-			'TECHNICIAN',
-			'SENIOR_TECHNICIAN',
-		])
+	// На бэкенде у склада ровно два гейта:
+	//   require_warehouse_full_read → warehouse.view | warehouse.manage
+	//   require_warehouse_manage    → warehouse.manage
+	// Всё остальное, что было в этом файле (warehouse.items.*, warehouse.import,
+	// warehouse.transfer, warehouse.trash.*, trash.*, warehouse.employee_*),
+	// в каталоге прав отсутствует или не выдано ни одной роли.
+	const canViewWarehouse = hasAnyPermission(currentUser, [
+		'warehouse.view',
+		'warehouse.manage',
+	])
 
-	const canManageWarehouse =
-		hasAnyPermission(currentUser, [
-			'warehouse.manage',
-			'warehouse.items.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	const canManageWarehouse = hasAnyPermission(currentUser, ['warehouse.manage'])
 
-	const canCreateWarehouseItem =
-		hasAnyPermission(currentUser, [
-			'warehouse.items.create',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	// Создание, редактирование, удаление, восстановление, корзина, импорт,
+	// шаблон, перенос между городами и выдача монтажнику закрыты на бэкенде
+	// одним require_warehouse_manage. Отдельные имена оставлены намеренно:
+	// если склад когда-нибудь разведут по правам, менять придётся здесь.
+	const canCreateWarehouseItem = canManageWarehouse
+	const canEditWarehouseItem = canManageWarehouse
+	const canDeleteWarehouseItem = canManageWarehouse
+	const canRestoreWarehouseItem = canManageWarehouse
+	const canViewWarehouseTrash = canManageWarehouse
+	const canImportWarehouse = canManageWarehouse
+	const canTransferWarehouse = canManageWarehouse
+	const canAssignWarehouseToEmployee = canManageWarehouse
 
-	const canEditWarehouseItem =
-		hasAnyPermission(currentUser, [
-			'warehouse.items.edit',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	// Привязка к авто — единственное действие с собственным гейтом:
+	// совпадает с VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES (шаги 142, 193).
+	const canAttachWarehouseItemToVehicle = hasAnyPermission(currentUser, [
+		'vehicles.equipment.manage',
+		'warehouse.vehicle_equipment.manage',
+		'warehouse.manage',
+	])
 
-	const canDeleteWarehouseItem =
-		hasAnyPermission(currentUser, [
-			'warehouse.items.delete',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canRestoreWarehouseItem =
-		hasAnyPermission(currentUser, [
-			'warehouse.items.restore',
-			'warehouse.trash.manage',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canViewWarehouseTrash =
-		hasAnyPermission(currentUser, [
-			'warehouse.trash.view',
-			'warehouse.deleted.view',
-			'warehouse.items.restore',
-			'warehouse.items.delete',
-			'warehouse.items.manage',
-			'warehouse.manage',
-			'trash.view',
-			'trash.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'WAREHOUSE_MANAGER'])
-
-	const canImportWarehouse =
-		hasAnyPermission(currentUser, [
-			'warehouse.import',
-			'warehouse.items.import',
-			'warehouse.items.create',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canTransferWarehouse =
-		hasAnyPermission(currentUser, [
-			'warehouse.transfer',
-			'warehouse.items.transfer',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canAssignWarehouseToEmployee =
-		hasAnyPermission(currentUser, [
-			'warehouse.employee_equipment.manage',
-			'warehouse.employee_inventory.manage',
-			'warehouse.technician_inventory.manage',
-			'warehouse.inventory.manage_all',
-			'warehouse.items.assign',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canAttachWarehouseItemToVehicle =
-		hasAnyPermission(currentUser, [
-			'warehouse.vehicle_equipment.manage',
-			'vehicles.equipment.manage',
-			'vehicles.equipment.attach',
-			'vehicles.manage',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canViewWarehouseHistory =
-		hasAnyPermission(currentUser, [
-			'warehouse.history.view',
-			'warehouse.items.history.view',
-			'warehouse.items.view',
-			'warehouse.view',
-			'warehouse.manage',
-		]) ||
-		canViewWarehouse ||
-		canManageWarehouse
+	// История лежит под тем же гейтом, что и сам список.
+	const canViewWarehouseHistory = canViewWarehouse
 
 	const itemRefs = useRef({})
 	const [highlightedItemId, setHighlightedItemId] = useState(null)

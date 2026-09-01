@@ -8,11 +8,6 @@ from app.schemas import (
     CalculateRequestPrice,
 )
 from app.permissions import (
-    ADMIN,
-    ROP,
-    MANAGER,
-    TECH_SUPPORT,
-    ACCOUNTANT,
     has_any_permission,
     is_super_admin,
     is_client_owned_by_user,
@@ -94,103 +89,42 @@ PRICE_CALCULATE_PERMISSION_CODES = [
     "requests.prices.view",
 ]
 
-PRICE_READ_LEGACY_ROLES = [
-    ADMIN,
-    ROP,
-    MANAGER,
-    TECH_SUPPORT,
-    ACCOUNTANT,
+# Строки расчёта без кода прайса: ручные позиции и доп. датчики.
+PRICE_MANUAL_LINE_PERMISSION_CODES = [
+    "prices.manual_lines",
+    "prices.manage",
 ]
-
-BASE_PRICE_MANAGE_LEGACY_ROLES = [
-    ADMIN,
-    ROP,
-    MANAGER,
-]
-
-CLIENT_PRICE_VIEW_ALL_LEGACY_ROLES = [
-    ADMIN,
-    ROP,
-    TECH_SUPPORT,
-    ACCOUNTANT,
-]
-
-CLIENT_PRICE_MANAGE_ALL_LEGACY_ROLES = [
-    ADMIN,
-    ROP,
-]
-
-CLIENT_PRICE_VIEW_OWN_LEGACY_ROLES = [
-    MANAGER,
-]
-
-CLIENT_PRICE_MANAGE_OWN_LEGACY_ROLES = [
-    MANAGER,
-]
-
-
-def permissions_are_loaded(current_user: dict | None) -> bool:
-    return current_user is not None and isinstance(current_user.get("permissions"), list)
-
-
-def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user or permissions_are_loaded(current_user):
-        return False
-
-    return current_user.get("role") in roles
-
 
 def user_has_any_permission(current_user: dict, permission_codes: list[str]) -> bool:
     return is_super_admin(current_user) or has_any_permission(current_user, permission_codes)
 
 
 def can_read_prices(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, PRICE_READ_PERMISSION_CODES)
-        or has_legacy_role(current_user, PRICE_READ_LEGACY_ROLES)
-    )
+    return user_has_any_permission(current_user, PRICE_READ_PERMISSION_CODES)
 
 
 def can_manage_base_prices_for_user(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, BASE_PRICE_MANAGE_PERMISSION_CODES)
-        or has_legacy_role(current_user, BASE_PRICE_MANAGE_LEGACY_ROLES)
-    )
+    return user_has_any_permission(current_user, BASE_PRICE_MANAGE_PERMISSION_CODES)
 
 
 def can_calculate_prices(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, PRICE_CALCULATE_PERMISSION_CODES)
-        or has_legacy_role(current_user, PRICE_READ_LEGACY_ROLES)
-    )
+    return user_has_any_permission(current_user, PRICE_CALCULATE_PERMISSION_CODES)
 
 
 def can_view_all_client_prices(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, CLIENT_PRICE_VIEW_ALL_PERMISSION_CODES)
-        or has_legacy_role(current_user, CLIENT_PRICE_VIEW_ALL_LEGACY_ROLES)
-    )
+    return user_has_any_permission(current_user, CLIENT_PRICE_VIEW_ALL_PERMISSION_CODES)
 
 
 def can_view_own_client_prices(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, CLIENT_PRICE_VIEW_OWN_PERMISSION_CODES)
-        or has_legacy_role(current_user, CLIENT_PRICE_VIEW_OWN_LEGACY_ROLES)
-    )
+    return user_has_any_permission(current_user, CLIENT_PRICE_VIEW_OWN_PERMISSION_CODES)
 
 
 def can_manage_all_client_prices(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, CLIENT_PRICE_MANAGE_ALL_PERMISSION_CODES)
-        or has_legacy_role(current_user, CLIENT_PRICE_MANAGE_ALL_LEGACY_ROLES)
-    )
+    return user_has_any_permission(current_user, CLIENT_PRICE_MANAGE_ALL_PERMISSION_CODES)
 
 
 def can_manage_own_client_prices_for_user(current_user: dict) -> bool:
-    return (
-        user_has_any_permission(current_user, CLIENT_PRICE_MANAGE_OWN_PERMISSION_CODES)
-        or has_legacy_role(current_user, CLIENT_PRICE_MANAGE_OWN_LEGACY_ROLES)
-    )
+    return user_has_any_permission(current_user, CLIENT_PRICE_MANAGE_OWN_PERMISSION_CODES)
 
 
 def require_price_read(current_user: dict):
@@ -215,9 +149,6 @@ def require_base_price_action(
     detail: str,
 ):
     if user_has_any_permission(current_user, permission_codes):
-        return
-
-    if has_legacy_role(current_user, BASE_PRICE_MANAGE_LEGACY_ROLES):
         return
 
     raise HTTPException(status_code=403, detail=detail)
@@ -280,6 +211,18 @@ def require_client_price_update(client: dict, current_user: dict):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для изменения индивидуальных цен этого клиента"
+        )
+
+
+def can_set_manual_price_lines(current_user: dict) -> bool:
+    return user_has_any_permission(current_user, PRICE_MANUAL_LINE_PERMISSION_CODES)
+
+
+def require_manual_price_lines(current_user: dict):
+    if not can_set_manual_price_lines(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для строк расчёта с ценой, назначенной вручную",
         )
 
 
@@ -385,6 +328,87 @@ def get_effective_price(cursor, price_code: str, client_id: int | None):
         "source": "client_override" if has_override else "base",
     }
 
+
+def resolve_request_price_lines(cursor, lines, client_id, current_user) -> list[dict]:
+    """
+    Приводит строки расчёта заявки к серверным ценам.
+
+    Строка с кодом прайса всегда получает цену из price_items с учётом
+    индивидуальной цены клиента: присланная браузером цена игнорируется.
+    Строка без кода — цена, назначенная человеком, и требует права.
+    """
+    can_manual = can_set_manual_price_lines(current_user)
+
+    resolved = []
+
+    for line in lines:
+        label = str(line.label or "").strip()
+
+        if not label:
+            continue
+
+        quantity = float(line.quantity or 0)
+
+        if quantity <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Количество в строке цены должно быть больше 0",
+            )
+
+        code = str(line.code or "").strip().upper() or None
+
+        if code:
+            item = get_effective_price(cursor, code, client_id)
+
+            if not item:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Цена '{code}' не найдена или отключена",
+                )
+
+            unit_price = item["unit_price"]
+            unit = item["unit"]
+            source = item["source"]
+            is_manual = False
+        else:
+            if not can_manual:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Недостаточно прав для строки расчёта «{label}»: цена назначена вручную",
+                )
+
+            unit_price = float(line.unit_price or 0)
+
+            if unit_price < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Цена в строке расчёта не может быть отрицательной",
+                )
+
+            unit = str(line.unit or "шт")
+            source = str(line.source or "manual").strip().lower()
+
+            if source not in ("manual", "extra_sensor"):
+                source = "manual"
+
+            is_manual = True
+
+        resolved.append({
+            "line_key": line.line_key,
+            "vehicle_index": line.vehicle_index,
+            "code": code,
+            "label": label,
+            "quantity": quantity,
+            "unit": unit,
+            "unit_price": unit_price,
+            "total_price": quantity * unit_price,
+            "source": source,
+            "is_manual": is_manual,
+        })
+
+    return resolved
+
+
 @router.get("")
 def get_price_items(
     active_only: bool = False,
@@ -392,7 +416,6 @@ def get_price_items(
 ):
     """
     Получить список базовых цен.
-    Доступ: ADMIN, MANAGER, ACCOUNTANT.
     """
     require_price_read(current_user)
 
@@ -448,7 +471,6 @@ def create_price_item(
 ):
     """
     Создать новую базовую цену.
-    Доступ: ADMIN, MANAGER.
     """
     require_base_price_create(current_user)
 
@@ -534,7 +556,6 @@ def update_price_item(
 ):
     """
     Редактировать базовую цену.
-    Доступ: ADMIN, MANAGER.
     """
     require_base_price_edit(current_user)
 
@@ -672,7 +693,6 @@ def deactivate_price_item(
     """
     Отключить базовую цену.
     Физически не удаляем, чтобы не ломать будущие расчёты и историю.
-    Доступ: ADMIN, MANAGER.
     """
     require_base_price_delete(current_user)
 
@@ -729,7 +749,6 @@ def restore_price_item(
 ):
     """
     Включить ранее отключённую базовую цену.
-    Доступ: ADMIN, MANAGER.
     """
     require_base_price_restore(current_user)
 
@@ -787,7 +806,6 @@ def get_client_prices(
     """
     Получить цены для конкретного клиента:
     базовая цена + индивидуальная цена + итоговая effective_price.
-    Доступ: ADMIN, MANAGER, ACCOUNTANT.
     """
     require_price_read(current_user)
 
@@ -871,7 +889,6 @@ def update_client_prices(
     Массово задать индивидуальные цены клиента.
     Если цена уже есть — обновит.
     Если нет — создаст.
-    Доступ: ADMIN, MANAGER.
     """
     connection = get_connection()
 
@@ -970,7 +987,6 @@ def delete_client_price_override(
     """
     Сбросить индивидуальную цену клиента по одной позиции.
     После удаления будет использоваться базовая цена.
-    Доступ: ADMIN, MANAGER.
     """
     connection = get_connection()
 
@@ -1035,7 +1051,6 @@ def calculate_request_price(
     """
     Рассчитать стоимость черновика заявки.
     Ничего не сохраняет в БД.
-    Доступ: ADMIN, MANAGER, ACCOUNTANT.
     """
     require_price_calculate(current_user)
 
@@ -1137,6 +1152,12 @@ def calculate_request_price(
 
             # Установка
             if work_type == "INSTALLATION":
+                # Доп. датчики — цена, введённая руками, как и manual_lines.
+                # Проверяем здесь же, иначе калькулятор посчитает заявку,
+                # которую сохранить не получится.
+                if any(vehicle.extra_sensors for vehicle in data.vehicles):
+                    require_manual_price_lines(current_user)
+
                 for index, vehicle in enumerate(data.vehicles, start=1):
                     # GPS-трекер необязателен: бывают заявки только с маяком
                     if vehicle.gps_price_code:
@@ -1360,6 +1381,9 @@ def calculate_request_price(
                         )
 
             # Ручные строки калькулятора
+            if data.manual_lines:
+                require_manual_price_lines(current_user)
+
             for manual_line in data.manual_lines:
                 label = manual_line.label.strip()
 

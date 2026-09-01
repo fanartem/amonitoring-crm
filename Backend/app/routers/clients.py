@@ -8,15 +8,11 @@ from app.schemas import (
     ClientPaymentTypeUpdate,
 )
 from app.security import get_current_user
+from app.routers.vehicles import can_edit_vehicle_for_client
 from app.permissions import (
-    ADMIN,
-    ROP,
-    MANAGER,
-    TECH_SUPPORT,
-    ACCOUNTANT,
-    WAREHOUSE_MANAGER,
     has_any_permission,
     get_data_scope,
+    can_view_price_fields,
     can_edit_client,
     can_change_client_status,
     can_reassign_clients,
@@ -39,12 +35,6 @@ TECHNICAL_ROOT_PARENT_NAMES = {
     'автопарк слежение',
 }
 
-ALLOWED_CLIENT_CREATOR_ROLES = [ADMIN, ROP, MANAGER, TECH_SUPPORT]
-ALLOWED_RESPONSIBLE_ROLES = [MANAGER, ROP, ADMIN]
-
-CLIENT_MONITORING_PASSWORD_VIEW_ROLES = [ADMIN, ROP, TECH_SUPPORT]
-
-CLIENT_ACCESS_SCOPE_RESPONSIBLE_ONLY = "RESPONSIBLE_ONLY"
 CLIENT_DATA_SCOPE_RESPONSIBLE_CLIENTS = "RESPONSIBLE_CLIENTS"
 CLIENT_DATA_SCOPE_OWN = "OWN"
 
@@ -56,7 +46,6 @@ CLIENT_VIEW_PERMISSION_CODES = [
 ]
 
 CLIENT_VIEW_ALL_PERMISSION_CODES = [
-    "clients.view",
     "clients.view_all",
     "clients.manage",
 ]
@@ -81,11 +70,7 @@ CLIENT_RESTORE_PERMISSION_CODES = [
 ]
 
 CLIENT_TRASH_VIEW_PERMISSION_CODES = [
-    "trash.view",
     "clients.trash.view",
-    "clients.deleted.view",
-    "clients.restore",
-    "clients.delete",
     "clients.manage",
 ]
 
@@ -97,7 +82,11 @@ CLIENT_PAYMENT_TYPE_MANAGE_PERMISSION_CODES = [
 
 CLIENT_MONITORING_PASSWORD_VIEW_PERMISSION_CODES = [
     "clients.monitoring_password.view",
-    "clients.credentials.view",
+    "clients.manage",
+]
+
+CLIENT_MONITORING_PASSWORD_MANAGE_PERMISSION_CODES = [
+    "clients.monitoring_credentials.manage",
     "clients.manage",
 ]
 
@@ -109,63 +98,29 @@ ALLOWED_CLIENT_PAYMENT_TYPES = [
     CLIENT_PAYMENT_POSTPAYMENT,
 ]
 
-def permissions_are_loaded(current_user: dict | None) -> bool:
-    return current_user is not None and isinstance(current_user.get("permissions"), list)
-
-
-def has_legacy_role(current_user: dict | None, roles: list[str]) -> bool:
-    if not current_user or permissions_are_loaded(current_user):
-        return False
-
-    return current_user.get("role") in roles
-
 def can_view_clients(current_user: dict) -> bool:
-    return has_any_permission(current_user, CLIENT_VIEW_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP, MANAGER, TECH_SUPPORT, ACCOUNTANT, WAREHOUSE_MANAGER],
-    )
+    return has_any_permission(current_user, CLIENT_VIEW_PERMISSION_CODES)
 
 def can_view_all_clients(current_user: dict) -> bool:
-    return has_any_permission(current_user, CLIENT_VIEW_ALL_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP, TECH_SUPPORT, ACCOUNTANT, WAREHOUSE_MANAGER],
-    )
+    return has_any_permission(current_user, CLIENT_VIEW_ALL_PERMISSION_CODES)
 
 def can_create_client(current_user: dict) -> bool:
-    return has_any_permission(current_user, CLIENT_CREATE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        ALLOWED_CLIENT_CREATOR_ROLES,
-    )
+    return has_any_permission(current_user, CLIENT_CREATE_PERMISSION_CODES)
 
 def can_delete_client(current_user: dict) -> bool:
-    return has_any_permission(current_user, CLIENT_DELETE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP],
-    )
+    return has_any_permission(current_user, CLIENT_DELETE_PERMISSION_CODES)
 
 def can_restore_client(current_user: dict) -> bool:
-    return has_any_permission(current_user, CLIENT_RESTORE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP],
-    )
+    return has_any_permission(current_user, CLIENT_RESTORE_PERMISSION_CODES)
 
 def can_view_deleted_clients(current_user: dict) -> bool:
-    return has_any_permission(current_user, CLIENT_TRASH_VIEW_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP],
-    )
+    return has_any_permission(current_user, CLIENT_TRASH_VIEW_PERMISSION_CODES)
 
 def can_manage_client_payment_type(current_user: dict) -> bool:
-    return has_any_permission(current_user, CLIENT_PAYMENT_TYPE_MANAGE_PERMISSION_CODES) or has_legacy_role(
-        current_user,
-        [ADMIN, ROP],
-    )
+    return has_any_permission(current_user, CLIENT_PAYMENT_TYPE_MANAGE_PERMISSION_CODES)
 
 def is_responsible_only_client_scope(current_user: dict) -> bool:
-    scope = current_user.get("client_access_scope") or get_data_scope(current_user)
-
-    return scope in [
-        CLIENT_ACCESS_SCOPE_RESPONSIBLE_ONLY,
+    return get_data_scope(current_user) in [
         CLIENT_DATA_SCOPE_RESPONSIBLE_CLIENTS,
         CLIENT_DATA_SCOPE_OWN,
     ]
@@ -174,13 +129,20 @@ def can_view_client_monitoring_password(current_user: dict) -> bool:
     return has_any_permission(
         current_user,
         CLIENT_MONITORING_PASSWORD_VIEW_PERMISSION_CODES,
-    ) or has_legacy_role(current_user, CLIENT_MONITORING_PASSWORD_VIEW_ROLES)
+    )
+
+
+def can_manage_client_monitoring_password(current_user: dict) -> bool:
+    return has_any_permission(
+        current_user,
+        CLIENT_MONITORING_PASSWORD_MANAGE_PERMISSION_CODES,
+    )
 
 def can_open_client_details_for_router(client: dict, current_user: dict) -> bool:
     if can_view_all_clients(current_user):
         return True
 
-    if has_any_permission(current_user, CLIENT_VIEW_OWN_PERMISSION_CODES) or has_legacy_role(current_user, [MANAGER]):
+    if has_any_permission(current_user, CLIENT_VIEW_OWN_PERMISSION_CODES):
         return is_client_owned_by_user(client, current_user)
 
     return False
@@ -199,13 +161,20 @@ def apply_client_access_scope_condition(
     table_alias: str = "c",
 ):
     """
-    Ограничение видимости клиентов.
-    RESPONSIBLE_ONLY — пользователь видит только клиентов,
-    где он указан ответственным.
+    Ограничение видимости клиентов для областей
+    RESPONSIBLE_CLIENTS и OWN.
+
+    Условие должно совпадать с is_client_owned_by_user():
+    свой клиент — тот, где пользователь ответственный или создатель.
     """
-    if is_responsible_only_client_scope(current_user):
-        conditions.append(f"{table_alias}.responsible_manager_id = %s")
-        values.append(current_user["id"])
+    if not is_responsible_only_client_scope(current_user):
+        return
+
+    conditions.append(
+        f"({table_alias}.responsible_manager_id = %s OR {table_alias}.created_by = %s)"
+    )
+    values.append(current_user["id"])
+    values.append(current_user["id"])
 
 def ensure_client_visible_by_scope(client: dict, current_user: dict):
     """
@@ -216,12 +185,7 @@ def ensure_client_visible_by_scope(client: dict, current_user: dict):
     if not is_responsible_only_client_scope(current_user):
         return
 
-    responsible_manager_id = client.get("responsible_manager_id")
-
-    if (
-        responsible_manager_id is None
-        or int(responsible_manager_id) != int(current_user["id"])
-    ):
+    if not is_client_owned_by_user(client, current_user):
         raise HTTPException(
             status_code=403,
             detail="Недостаточно прав для просмотра этого клиента"
@@ -325,7 +289,7 @@ def ensure_responsible_user_allowed(cursor, responsible_manager_id: int | None):
     if not user:
         raise HTTPException(status_code=404, detail="Ответственный пользователь не найден")
 
-    if user["role"] not in ALLOWED_RESPONSIBLE_ROLES and not bool(user.get("can_be_responsible_manager")):
+    if not bool(user.get("can_be_responsible_manager")):
         raise HTTPException(
             status_code=400,
             detail="Ответственным за клиента можно назначить только пользователя с правом быть ответственным менеджером"
@@ -338,13 +302,30 @@ def ensure_responsible_user_allowed(cursor, responsible_manager_id: int | None):
         )
 
 def attach_client_permissions(client: dict, current_user: dict) -> dict:
-    client["can_open_details"] = can_open_client_details_for_router(client, current_user)
+    can_open_details = can_open_client_details_for_router(client, current_user)
+
+    client["can_open_details"] = can_open_details
     client["can_edit"] = can_edit_client(client, current_user)
-    client["can_change_status"] = can_change_client_status(current_user)
-    client["can_reassign"] = can_reassign_clients(current_user)
-    client["can_change_payment_type"] = can_manage_client_payment_type(current_user)
+
+    # Действия над конкретным клиентом: право плюс доступ именно к нему.
+    # Фронт после шага 188 опирается только на эти флаги, поэтому они
+    # должны отвечать «можно с этим клиентом», а не «право есть вообще».
+    client["can_change_status"] = (
+        can_change_client_status(current_user) and can_open_details
+    )
+    client["can_reassign"] = (
+        can_reassign_clients(current_user) and can_open_details
+    )
+    client["can_change_payment_type"] = (
+        can_manage_client_payment_type(current_user) and can_open_details
+    )
+    client["can_view_monitoring_password"] = (
+        can_view_client_monitoring_password(current_user) and can_open_details
+    )
+
     client["can_create_request"] = can_create_request_for_client(client, current_user)
-    client["can_view_monitoring_password"] = can_view_client_monitoring_password(current_user)
+    client["can_edit_vehicles"] = can_edit_vehicle_for_client(client, current_user)
+
     return client
 
 def attach_clients_permissions(clients: list[dict], current_user: dict) -> list[dict]:
@@ -809,7 +790,7 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
 
     if (
         normalize_optional_str(getattr(data, "monitoring_password", None))
-        and not can_view_client_monitoring_password(current_user)
+        and not can_manage_client_monitoring_password(current_user)
     ):
         raise HTTPException(
             status_code=403,
@@ -1659,15 +1640,11 @@ def update_client(
 
             update_data = data.dict(exclude_unset=True)
 
-            if (
-                "monitoring_password" in update_data
-                and normalize_optional_str(update_data.get("monitoring_password"))
-                and not can_view_client_monitoring_password(current_user)
-            ):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Недостаточно прав для изменения пароля платформы мониторинга"
-                )
+            # Проверять значение нельзя: пустая строка нормализуется в None,
+            # и поле молча стиралось у любого, кто может редактировать клиента.
+            # Без права поле просто не участвует в обновлении.
+            if not can_manage_client_monitoring_password(current_user):
+                update_data.pop("monitoring_password", None)
 
             for forbidden_field in ["status", "responsible_manager_id"]:
                 if forbidden_field in update_data:
@@ -1785,7 +1762,7 @@ def update_client_status(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, status, is_deleted
+                SELECT id, status, created_by, responsible_manager_id, is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -1867,6 +1844,8 @@ def update_client_payment_type(
                 SELECT
                     id,
                     payment_type,
+                    created_by,
+                    responsible_manager_id,
                     is_deleted
                 FROM clients
                 WHERE id = %s
@@ -1943,7 +1922,7 @@ def update_client_responsible(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, is_deleted
+                SELECT id, created_by, responsible_manager_id, is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -1959,6 +1938,8 @@ def update_client_responsible(
                     status_code=400,
                     detail="Нельзя менять ответственного у клиента из корзины"
                 )
+
+            ensure_client_visible_by_scope(client, current_user)
 
             ensure_responsible_user_allowed(cursor, data.responsible_manager_id)
 
@@ -2011,7 +1992,7 @@ def delete_client(client_id: int, current_user: dict = Depends(get_current_user)
             # Проверяем, существует ли клиент
             cursor.execute(
                 """
-                SELECT id, name, responsible_manager_id, is_deleted
+                SELECT id, name, created_by, responsible_manager_id, is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -2084,7 +2065,7 @@ def restore_client(client_id: int, current_user: dict = Depends(get_current_user
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, name, responsible_manager_id, is_deleted
+                SELECT id, name, created_by, responsible_manager_id, is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -2196,6 +2177,12 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
             requests = cursor.fetchall()
             requests = attach_vehicles_to_requests(cursor, requests)
             requests = attach_executors_to_client_requests(cursor, requests)
+
+            # Тот же принцип, что в requests.py: цену прячет сервер, а не фронт.
+            if not can_view_price_fields(current_user):
+                for request in requests:
+                    request["total_price"] = None
+
             return requests
 
     finally:

@@ -10,12 +10,10 @@ from app.schemas import (
     SupportRequestCommentCreate,
 )
 from app.permissions import (
-    ADMIN,
-    ROP,
-    TECH_SUPPORT,
-    TECHNICIAN,
-    SENIOR_TECHNICIAN,
-    SUPPORT_REQUEST_ASSIGNEE_ROLES,
+    DATA_SCOPE_ALL,
+    get_data_scope,
+    has_any_permission,
+    is_super_admin,
     can_view_support_requests,
     can_create_support_request,
     can_edit_support_request,
@@ -32,12 +30,69 @@ ALMATY_TZ = timezone(timedelta(hours=5))
 SUPPORT_STATUSES = ["NEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"]
 SUPPORT_PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"]
 
+# Исполнителем тикета может быть любой, кто видит раздел техподдержки.
+# Права на назначение и смену статуса — про управление чужими тикетами,
+# они здесь не при чём.
 SUPPORT_REQUEST_ASSIGNEE_PERMISSION_CODES = [
-    "support_requests.assign",
-    "support_requests.status.manage",
-    "support_requests.change_status",
+    "support_requests.view",
     "support_requests.manage",
 ]
+
+
+# Полная видимость тикетов: явное право либо область данных роли.
+SUPPORT_REQUEST_VIEW_ALL_PERMISSION_CODES = [
+    "support_requests.manage",
+]
+
+
+def can_view_all_support_requests(current_user: dict) -> bool:
+    if is_super_admin(current_user):
+        return True
+
+    if has_any_permission(current_user, SUPPORT_REQUEST_VIEW_ALL_PERMISSION_CODES):
+        return True
+
+    return str(get_data_scope(current_user) or "").upper() == DATA_SCOPE_ALL
+
+
+def build_support_scope_sql(current_user: dict) -> tuple[str, list]:
+    """
+    Ограничение выборки тикетов для роли с суженной областью данных.
+    Свой клиент, свой тикет или назначенный на себя.
+    """
+    if can_view_all_support_requests(current_user):
+        return "", []
+
+    sql = """
+        (
+            c.responsible_manager_id = %s
+            OR c.created_by = %s
+            OR sr.created_by = %s
+            OR sr.assigned_to = %s
+        )
+    """
+
+    user_id = current_user["id"]
+
+    return sql, [user_id, user_id, user_id, user_id]
+
+
+def ensure_support_request_access(support_request: dict, current_user: dict):
+    if can_view_all_support_requests(current_user):
+        return
+
+    user_id = int(current_user["id"])
+
+    for field in ["created_by", "assigned_to", "client_responsible_manager_id", "client_created_by"]:
+        value = support_request.get(field)
+
+        if value is not None and int(value) == user_id:
+            return
+
+    raise HTTPException(
+        status_code=403,
+        detail="Недостаточно прав для доступа к этой заявке техподдержки",
+    )
 
 
 def almaty_now():
@@ -91,28 +146,24 @@ def validate_support_priority(priority: str):
 
 
 def build_support_assignee_access_sql() -> tuple[str, list]:
-    legacy_placeholders = ", ".join(["%s"] * len(SUPPORT_REQUEST_ASSIGNEE_ROLES))
     permission_placeholders = ", ".join(["%s"] * len(SUPPORT_REQUEST_ASSIGNEE_PERMISSION_CODES))
 
     sql = f"""
-        (
-            u.role IN ({legacy_placeholders})
-            OR EXISTS (
-                SELECT 1
-                FROM roles assignee_role
-                JOIN role_permissions assignee_rp
-                    ON assignee_rp.role_id = assignee_role.id
-                JOIN permissions assignee_permission
-                    ON assignee_permission.id = assignee_rp.permission_id
-                WHERE assignee_role.code = u.role
-                  AND assignee_role.is_active = 1
-                  AND assignee_permission.is_active = 1
-                  AND assignee_permission.code IN ({permission_placeholders})
-            )
+        EXISTS (
+            SELECT 1
+            FROM roles assignee_role
+            JOIN role_permissions assignee_rp
+                ON assignee_rp.role_id = assignee_role.id
+            JOIN permissions assignee_permission
+                ON assignee_permission.id = assignee_rp.permission_id
+            WHERE assignee_role.code = u.role
+              AND assignee_role.is_active = 1
+              AND assignee_permission.is_active = 1
+              AND assignee_permission.code IN ({permission_placeholders})
         )
     """
 
-    return sql, [*SUPPORT_REQUEST_ASSIGNEE_ROLES, *SUPPORT_REQUEST_ASSIGNEE_PERMISSION_CODES]
+    return sql, [*SUPPORT_REQUEST_ASSIGNEE_PERMISSION_CODES]
 
 
 def user_has_support_assignee_access(cursor, user_id: int) -> bool:
@@ -233,12 +284,6 @@ def validate_support_assignee(cursor, user_id: int | None) -> dict | None:
     if not user:
         raise HTTPException(status_code=404, detail="Исполнитель не найден")
 
-    if user["role"] in [TECHNICIAN, SENIOR_TECHNICIAN]:
-        raise HTTPException(
-            status_code=400,
-            detail="Монтажников нельзя назначать исполнителями заявок техподдержки"
-        )
-
     if not user.get("is_approved"):
         raise HTTPException(
             status_code=400,
@@ -324,6 +369,8 @@ def get_support_request_by_id(cursor, support_request_id: int) -> dict | None:
             c.company_name,
             c.phone AS client_phone,
             c.status AS client_status,
+            c.responsible_manager_id AS client_responsible_manager_id,
+            c.created_by AS client_created_by,
 
             v.brand AS vehicle_brand,
             v.model AS vehicle_model,
@@ -432,16 +479,15 @@ def get_support_request_assignees(
                 FROM users u
                 LEFT JOIN roles r ON r.code = u.role
                 WHERE {assignee_sql}
-                  AND u.role NOT IN (%s, %s)
                   AND u.is_approved = 1
                   AND u.is_active = 1
                   AND u.deleted_at IS NULL
                   AND (r.id IS NULL OR r.is_active = 1)
                 ORDER BY
-                    FIELD(u.role, 'TECH_SUPPORT', 'MANAGER', 'ACCOUNTANT', 'WAREHOUSE_MANAGER', 'ROP', 'ADMIN'),
+                    COALESCE(r.sort_order, 9999) ASC,
                     u.name ASC
                 """,
-                tuple([*assignee_values, TECHNICIAN, SENIOR_TECHNICIAN])
+                tuple(assignee_values)
             )
 
             return cursor.fetchall()
@@ -478,6 +524,12 @@ def get_support_requests(
             if only_assigned_to_me:
                 conditions.append("sr.assigned_to = %s")
                 values.append(current_user["id"])
+
+            scope_sql, scope_values = build_support_scope_sql(current_user)
+
+            if scope_sql:
+                conditions.append(scope_sql)
+                values.extend(scope_values)
 
             if q and q.strip():
                 search = f"%{q.strip()}%"
@@ -580,6 +632,8 @@ def get_support_request_detail(
                     status_code=404,
                     detail="Заявка техподдержки не найдена"
                 )
+
+            ensure_support_request_access(support_request, current_user)
 
             return attach_support_comments_and_history(cursor, support_request)
 
@@ -700,6 +754,8 @@ def update_support_request(
                     status_code=404,
                     detail="Заявка техподдержки не найдена"
                 )
+
+            ensure_support_request_access(support_request, current_user)
 
             update_fields = []
             update_values = []
@@ -925,6 +981,8 @@ def create_support_request_comment(
                     detail="Заявка техподдержки не найдена"
                 )
 
+            ensure_support_request_access(support_request, current_user)
+
             cursor.execute(
                 """
                 INSERT INTO support_request_comments (
@@ -990,6 +1048,8 @@ def delete_support_request(
                     status_code=404,
                     detail="Заявка техподдержки не найдена"
                 )
+
+            ensure_support_request_access(support_request, current_user)
 
             if support_request.get("is_deleted"):
                 raise HTTPException(

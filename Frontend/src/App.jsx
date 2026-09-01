@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router'
 import Clients from './components/Clients'
 import Approvals from './components/Approvals'
-import Home from './components/Home'
 import Entrance from './components/Entrance'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
@@ -21,27 +20,12 @@ import SupportRequests from './components/SupportRequests'
 
 import ProtectedRoute from './components/ProtectedRoute'
 import AccessDenied from './components/AccessDenied'
+import { clearAuthData, isTokenExpired } from './api'
+import { getStoredUser, resolveLandingRoute } from './utils/access'
 
-const isTokenExpired = token => {
-	try {
-		if (!token) return true
-
-		const payload = JSON.parse(atob(token.split('.')[1]))
-
-		if (!payload.exp) return true
-
-		const nowInSeconds = Date.now() / 1000
-
-		return payload.exp < nowInSeconds
-	} catch {
-		return true
-	}
-}
-
-const clearAuthData = () => {
-	localStorage.removeItem('access_token')
-	localStorage.removeItem('user_data')
-}
+// Куда отправлять человека, когда конкретный маршрут не указан.
+// Жёсткий /requests уводил бы сотрудника без requests.view на AccessDenied.
+const LandingRedirect = () => <Navigate to={resolveLandingRoute()} replace />
 
 export default function App() {
 	const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -49,8 +33,11 @@ export default function App() {
 
 	useEffect(() => {
 		const token = localStorage.getItem('access_token')
+		const storedUser = getStoredUser()
 
-		if (!token || isTokenExpired(token)) {
+		// Одного токена мало: без user_data все проверки прав дают false,
+		// и человек оказывается формально вошедшим, но запертым на AccessDenied.
+		if (!token || isTokenExpired(token) || !storedUser?.id) {
 			clearAuthData()
 			setIsAuthenticated(false)
 		} else {
@@ -80,23 +67,11 @@ export default function App() {
 						style={{ display: 'block', overflowY: 'auto', width: '100%' }}
 					>
 						<Routes>
-							<Route path='/' element={<Navigate to='/requests' replace />} />
+							<Route path='/' element={<LandingRedirect />} />
 
-							<Route
-								path='/login'
-								element={<Navigate to='/requests' replace />}
-							/>
+							<Route path='/login' element={<LandingRedirect />} />
 
 							<Route path='/access-denied' element={<AccessDenied />} />
-
-							<Route
-								path='/home'
-								element={
-									<ProtectedRoute routeKey='requests'>
-										<Home />
-									</ProtectedRoute>
-								}
-							/>
 
 							<Route
 								path='/calendar'
@@ -215,7 +190,7 @@ export default function App() {
 								}
 							/>
 
-							<Route path='*' element={<Navigate to='/requests' replace />} />
+							<Route path='*' element={<LandingRedirect />} />
 						</Routes>
 					</section>
 				</main>

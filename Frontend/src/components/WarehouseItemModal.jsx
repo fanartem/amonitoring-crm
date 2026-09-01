@@ -1,11 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE_URL, getJsonAuthHeaders } from '../api'
-import {
-	getStoredUser,
-	hasAnyPermission,
-	hasLegacyRole,
-	toBool,
-} from '../utils/access'
+import { getStoredUser, hasAnyPermission, toBool } from '../utils/access'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 
@@ -25,11 +20,21 @@ const CATEGORIES = {
 
 const IDENTIFIER_TYPES = ['IMEI', 'MAC', 'SERIAL', 'OTHER']
 
+// Статусы, которые можно выставить из карточки позиции склада.
 const STATUSES = {
 	IN_STOCK: 'На складе',
 	RESERVED: 'Резерв',
 	INSTALLED: 'Установлено',
 	WRITTEN_OFF: 'Списано',
+}
+
+// Статусы, которые склад показывает, но не выдаёт: они ставятся
+// из вкладки «Инвентарь» или автоматически по заявке.
+const READONLY_STATUSES = {
+	ASSIGNED_TO_TECH: 'У монтажника',
+	USED: 'Использовано',
+	REPAIR: 'В ремонте',
+	LOST: 'Утеряно',
 }
 
 const CONDITION_STATUSES = {
@@ -47,27 +52,13 @@ export default function WarehouseItemModal({
 	const isEditMode = !!editItem
 	const currentUser = getStoredUser()
 
-	const canCreateWarehouseItem =
-		hasAnyPermission(currentUser, [
-			'warehouse.items.create',
-			'warehouse.create',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	// Бэкенд не различает создание и редактирование позиции склада:
+	// POST и PATCH /warehouse/items оба идут через require_warehouse_manage().
+	const canSaveWarehouseItem = hasAnyPermission(currentUser, [
+		'warehouse.manage',
+	])
 
-	const canEditWarehouseItem =
-		hasAnyPermission(currentUser, [
-			'warehouse.items.edit',
-			'warehouse.edit',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canSaveWarehouseItem = isEditMode
-		? canEditWarehouseItem
-		: canCreateWarehouseItem
-
-	const formLocked = loading => loading || !canSaveWarehouseItem
+	const isFormLocked = isLoading => isLoading || !canSaveWarehouseItem
 
 	const [formData, setFormData] = useState({
 		category: 'GPS_TRACKER',
@@ -262,7 +253,7 @@ export default function WarehouseItemModal({
 
 	if (!isOpen) return null
 
-	const isFormDisabled = formLocked(loading)
+	const isFormDisabled = isFormLocked(loading)
 
 	return (
 		<div className='modal-overlay open'>
@@ -521,7 +512,21 @@ export default function WarehouseItemModal({
 													{label}
 												</option>
 											))}
+
+											{READONLY_STATUSES[formData.status] && (
+												<option value={formData.status} disabled>
+													{READONLY_STATUSES[formData.status]}
+												</option>
+											)}
 										</select>
+
+										{READONLY_STATUSES[formData.status] && (
+											<p className='warehouse-field-hint'>
+												Этот статус нельзя изменить отсюда — оборудование
+												числится за сотрудником или за заявкой. Верните его
+												через вкладку «Инвентарь».
+											</p>
+										)}
 
 										{isLinkedToRequest && (
 											<span className='warehouse-field-hint'>

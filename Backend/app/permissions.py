@@ -130,8 +130,9 @@ BASE_PRICES_MANAGE_PERMISSION_CODES = [
     "prices.manage",
 ]
 
+# client_prices.manage — базовый код раздела, а не «все клиенты».
+# Область задаётся явно: manage_all / manage_own.
 CLIENT_PRICES_MANAGE_ANY_PERMISSION_CODES = [
-    "client_prices.manage",
     "client_prices.manage_all",
     "prices.client.manage_all",
     "prices.manage",
@@ -167,9 +168,11 @@ ATTACHMENT_VIEW_OWN_PERMISSION_CODES = [
     "attachments.view_own",
 ]
 
+# attachments.delete_any и files.delete_any в таблице permissions
+# отсутствуют — проверка по ним не срабатывала ни разу.
 ATTACHMENT_DELETE_ANY_PERMISSION_CODES = [
-    "attachments.delete_any",
-    "files.delete_any",
+    "attachments.delete",
+    "attachments.manage",
 ]
 
 SUPPORT_REQUEST_VIEW_PERMISSION_CODES = [
@@ -265,7 +268,6 @@ def get_user_base_access(cursor, user_id: int) -> dict | None:
             u.is_approved,
             u.is_active,
             u.deleted_at,
-            u.client_access_scope,
 
             r.id AS role_id,
             r.code AS role_code,
@@ -435,6 +437,9 @@ def get_effective_permissions(cursor, user_id: int, user: dict | None = None) ->
     permissions = get_role_permission_codes(cursor, role_code)
     locked_core_permissions = get_locked_core_permission_codes(cursor, role_code)
 
+    allow_codes = set()
+    deny_codes = set()
+
     for override in get_user_permission_overrides(cursor, user_id):
         code = override.get("code")
         effect = override.get("effect")
@@ -443,14 +448,23 @@ def get_effective_permissions(cursor, user_id: int, user: dict | None = None) ->
             continue
 
         if effect == USER_PERMISSION_ALLOW:
-            permissions.add(code)
+            allow_codes.add(code)
 
         elif effect == USER_PERMISSION_DENY:
             # Обязательные права роли нельзя отключить индивидуальным DENY.
             if code not in locked_core_permissions:
-                permissions.discard(code)
+                deny_codes.add(code)
+
+    permissions |= allow_codes
+    permissions -= deny_codes
 
     permissions = expand_permissions_with_dependencies(cursor, permissions)
+
+    # Раскрытие зависимостей может вернуть код, снятый индивидуальным
+    # запретом: vehicles.view_own требует vehicles.view, и DENY на
+    # vehicles.view отменялся сам собой. Явный запрет должен побеждать,
+    # поэтому применяем его ещё раз после раскрытия.
+    permissions -= deny_codes
 
     return sorted(permissions)
 
@@ -899,15 +913,6 @@ def can_manage_request_executors(user: dict) -> bool:
     )
 
 
-SUPPORT_REQUEST_ROLES = [
-    ADMIN,
-    ROP,
-    MANAGER,
-    TECH_SUPPORT,
-    ACCOUNTANT,
-    WAREHOUSE_MANAGER,
-]
-
 SUPPORT_REQUEST_ASSIGNEE_ROLES = [
     ADMIN,
     ROP,
@@ -919,63 +924,38 @@ SUPPORT_REQUEST_ASSIGNEE_ROLES = [
 
 
 def can_view_support_requests(user: dict) -> bool:
-    return has_any_permission(user, SUPPORT_REQUEST_VIEW_PERMISSION_CODES) or has_legacy_role(
-        user,
-        SUPPORT_REQUEST_ROLES,
-    )
+    return has_any_permission(user, SUPPORT_REQUEST_VIEW_PERMISSION_CODES)
 
 
 def can_create_support_request(user: dict) -> bool:
-    return has_any_permission(user, SUPPORT_REQUEST_CREATE_PERMISSION_CODES) or has_legacy_role(
-        user,
-        SUPPORT_REQUEST_ROLES,
-    )
+    return has_any_permission(user, SUPPORT_REQUEST_CREATE_PERMISSION_CODES)
 
 
 def can_edit_support_request(user: dict) -> bool:
-    return has_any_permission(user, SUPPORT_REQUEST_EDIT_PERMISSION_CODES) or has_legacy_role(
-        user,
-        [ADMIN, ROP, TECH_SUPPORT],
-    )
+    return has_any_permission(user, SUPPORT_REQUEST_EDIT_PERMISSION_CODES)
 
 
 def can_assign_support_request(user: dict) -> bool:
-    return has_any_permission(user, SUPPORT_REQUEST_ASSIGN_PERMISSION_CODES) or has_legacy_role(
-        user,
-        [ADMIN, ROP, TECH_SUPPORT],
-    )
+    return has_any_permission(user, SUPPORT_REQUEST_ASSIGN_PERMISSION_CODES)
 
 
 def can_change_support_request_status(user: dict, support_request: dict | None = None) -> bool:
-    role = get_role(user)
-
     if has_any_permission(user, SUPPORT_REQUEST_STATUS_PERMISSION_CODES):
-        return True
-
-    if has_legacy_role(user, [ADMIN, ROP, TECH_SUPPORT]):
         return True
 
     if not support_request:
         return False
 
+    # Назначенный исполнитель ведёт свою заявку сам,
+    # даже если общего права на смену статусов у него нет.
     assigned_to = support_request.get("assigned_to")
 
-    return (
-        assigned_to is not None
-        and int(assigned_to) == int(user["id"])
-        and has_legacy_role(user, SUPPORT_REQUEST_ASSIGNEE_ROLES)
-    )
+    return assigned_to is not None and int(assigned_to) == int(user["id"])
 
 
 def can_delete_support_request(user: dict) -> bool:
-    return has_any_permission(user, SUPPORT_REQUEST_DELETE_PERMISSION_CODES) or has_legacy_role(
-        user,
-        [ADMIN, ROP],
-    )
+    return has_any_permission(user, SUPPORT_REQUEST_DELETE_PERMISSION_CODES)
 
 
 def can_comment_support_request(user: dict) -> bool:
-    return has_any_permission(user, SUPPORT_REQUEST_COMMENT_PERMISSION_CODES) or has_legacy_role(
-        user,
-        SUPPORT_REQUEST_ROLES,
-    )
+    return has_any_permission(user, SUPPORT_REQUEST_COMMENT_PERMISSION_CODES)

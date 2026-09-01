@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import { useLocation, useSearchParams } from 'react-router'
 import '../styles/Requests.css'
@@ -7,50 +7,6 @@ import RequestDetailModal from './RequestDetailModal'
 import { notifyNewRequestCreated } from './notifications/NewRequestNotice'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
 import { getStoredUser, hasAnyPermission } from '../utils/access'
-
-const getUserRole = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(function (c) {
-					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-				})
-				.join(''),
-		)
-		return JSON.parse(jsonPayload).role
-	} catch (error) {
-		return null
-	}
-}
-
-const getCurrentUserId = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(function (c) {
-					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-				})
-				.join(''),
-		)
-
-		const payload = JSON.parse(jsonPayload)
-
-		return Number(payload.id || payload.sub || null)
-	} catch (error) {
-		return null
-	}
-}
 
 const getVisitPriceCodeLabel = code => {
 	if (code === 'ON_SITE_OUTSIDE_CITY') return 'За пределами города'
@@ -166,7 +122,6 @@ export default function Requests() {
 	const [filteredRequests, setFilteredRequests] = useState([])
 	const [technicians, setTechnicians] = useState([])
 	const [techniciansLookup, setTechniciansLookup] = useState([])
-	const [cities, setCities] = useState([])
 
 	const [isCreateModalOpen, setCreateModalOpen] = useState(false)
 	const [selectedRequestId, setSelectedRequestId] = useState(null)
@@ -192,18 +147,19 @@ export default function Requests() {
 	const [showMobileFilters, setShowMobileFilters] = useState(false)
 
 	const user = getStoredUser()
-	const userRole = String(user?.role || getUserRole() || '').toUpperCase()
-	const currentUserIdRaw = user?.id ?? user?.user_id ?? getCurrentUserId()
+	const currentUserIdRaw = user?.id ?? user?.user_id
 	const currentUserId = Number.isFinite(Number(currentUserIdRaw))
 		? Number(currentUserIdRaw)
 		: null
-	const dataScope = String(user?.data_scope || '').toUpperCase()
 	const location = useLocation()
 
-	const hasLegacyRole = roles => roles.includes(userRole)
 	const canByPermission = permissionCodes =>
 		hasAnyPermission(user, permissionCodes)
-	const hasRequestExecutorFlag = Boolean(user?.can_be_request_executor)
+
+	// «Может быть исполнителем заявки» — настраиваемый флаг роли из Settings.
+	// Он и заменяет прежнюю проверку по кодам TECHNICIAN / SENIOR_TECHNICIAN:
+	// назначьте флаг новой роли, и она сразу работает как исполнитель.
+	const isTechnicianUser = Boolean(user?.can_be_request_executor)
 
 	// Пишем текущие фильтры в URL с небольшой задержкой — чтобы не дёргать
 	// history API на каждую нажатую клавишу в текстовых полях поиска.
@@ -236,29 +192,24 @@ export default function Requests() {
 		return () => clearTimeout(timeoutId)
 	}, [filters]) // eslint-disable-line react-hooks/exhaustive-deps
 
-	const isTechnicianUser =
-		hasRequestExecutorFlag ||
-		['TECHNICIAN', 'SENIOR_TECHNICIAN'].includes(userRole)
+	// Ровно тот код, который описывает это право.
+	// prices.view сюда не годится: он приезжает по зависимости вместе
+	// с prices.client.manage_own и открыл бы цены всех заявок тому,
+	// кому выдали только управление ценами своих клиентов.
+	const canViewRequestPrice = canByPermission(['requests.price.view'])
 
-	const canViewAllRequests =
-		canByPermission(['requests.view_all', 'requests.manage']) ||
-		dataScope === 'ALL' ||
-		hasLegacyRole(['ADMIN', 'ROP', 'SENIOR_TECHNICIAN', 'WAREHOUSE_MANAGER'])
+	// Города берём из самих заявок, а не из справочника: фильтр нужен только
+	// тому, кто реально видит больше одного города. Тот же принцип,
+	// что в Calendar.jsx (шаг 107).
+	const cityOptions = useMemo(() => {
+		const uniqueCities = new Set(
+			requests.map(req => String(req.city || '').trim()).filter(Boolean),
+		)
 
-	const canViewRequestPrice =
-		canByPermission([
-			'requests.price.view',
-			'requests.prices.view',
-			'requests.view_price',
-			'requests.view_prices',
-			'prices.view',
-			'requests.payment.manage',
-			'requests.pay',
-			'requests.manage',
-		]) ||
-		hasLegacyRole(['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT', 'ACCOUNTANT'])
+		return [...uniqueCities].sort((a, b) => a.localeCompare(b, 'ru'))
+	}, [requests])
 
-	const canUseCityFilter = canViewAllRequests || !isTechnicianUser
+	const canUseCityFilter = cityOptions.length > 1
 	const canUsePaymentFilter = canViewRequestPrice
 
 	const [myRequestsFirst, setMyRequestsFirst] = useState(isTechnicianUser)
@@ -275,7 +226,6 @@ export default function Requests() {
 
 	useEffect(() => {
 		fetchRequests({ initial: true })
-		fetchCities()
 		fetchTechnicians()
 		fetchTechniciansLookup()
 	}, [])
@@ -291,35 +241,18 @@ export default function Requests() {
 		return () => clearInterval(intervalId)
 	}, [isCreateModalOpen])
 
-	const canCreateRequest =
-		canByPermission(['requests.create', 'requests.manage']) ||
-		hasLegacyRole(['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'])
+	const canCreateRequest = canByPermission(['requests.create'])
 
-	const canViewEquipmentButton =
-		canByPermission([
-			'requests.equipment.view',
-			'requests.equipment.attach',
-			'requests.equipment.manage',
-			'warehouse.employee_equipment.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(['ADMIN', 'WAREHOUSE_MANAGER'])
+	// requests.equipment.view приезжает по зависимости к view_own (менеджер)
+	// и view_assigned (монтажники), поэтому одного кода хватает на всех.
+	// warehouse.manage — для завскладом и РОПа.
+	const canViewEquipmentButton = canByPermission([
+		'requests.equipment.view',
+		'warehouse.manage',
+	])
 
-	const canPayRequests =
-		canByPermission([
-			'requests.payment.manage',
-			'requests.pay',
-			'finance.manage',
-			'prices.manage',
-			'requests.manage',
-		]) || hasLegacyRole(['ADMIN', 'ROP', 'ACCOUNTANT'])
-
-	const canAcceptRequestAsExecutor =
-		isTechnicianUser ||
-		canByPermission([
-			'requests.accept',
-			'requests.accept_own',
-			'requests.accept_assigned',
-		])
+	// Бэкенд принимает is_paid только по requests.payment.manage.
+	const canPayRequests = canByPermission(['requests.payment.manage'])
 
 	useEffect(() => {
 		const openRequestId = location.state?.openRequestId
@@ -486,6 +419,10 @@ export default function Requests() {
 						) {
 							notifyNewRequestCreated({
 								requestId: newestCreatedRequest.id,
+								// Окно удаления диктует сервер (шаг 203).
+								expiresInSeconds:
+									Number(newestCreatedRequest.delete_window_seconds_left) ||
+									undefined,
 							})
 						}
 					}
@@ -521,19 +458,6 @@ export default function Requests() {
 			if (res.ok) setTechniciansLookup(await res.json())
 		} catch (err) {
 			console.error(err)
-		}
-	}
-
-	const fetchCities = async () => {
-		try {
-			const res = await fetch(`${API_BASE_URL}/cities`)
-
-			if (res.ok) {
-				const data = await res.json()
-				setCities(Array.isArray(data) ? data : [])
-			}
-		} catch (err) {
-			console.error('Ошибка загрузки городов:', err)
 		}
 	}
 
@@ -629,114 +553,111 @@ export default function Requests() {
 		INDIVIDUAL: 'Физ. лицо',
 	}
 
-		const technicalRootParentNames = new Set([
-			'тоо "автопарк-слежение"',
-			'тоо «автопарк-слежение»',
-			'автопарк-слежение',
-			'автопарк слежение',
-		])
+	const technicalRootParentNames = new Set([
+		'тоо "автопарк-слежение"',
+		'тоо «автопарк-слежение»',
+		'автопарк-слежение',
+		'автопарк слежение',
+	])
 
-		const normalizeClientHierarchyName = value =>
-			String(value || '')
-				.trim()
-				.toLowerCase()
-				.replace(/\s+/g, ' ')
+	const normalizeClientHierarchyName = value =>
+		String(value || '')
+			.trim()
+			.toLowerCase()
+			.replace(/\s+/g, ' ')
 
-		const getClientEntityDisplayName = ({
-			type,
-			name,
-			companyName,
-			fallback,
-		}) => {
-			if (type === 'TOO' || type === 'IP') {
-				return companyName || name || fallback || 'Не указано'
-			}
-
-			return name || companyName || fallback || 'Не указано'
+	const getClientEntityDisplayName = ({
+		type,
+		name,
+		companyName,
+		fallback,
+	}) => {
+		if (type === 'TOO' || type === 'IP') {
+			return companyName || name || fallback || 'Не указано'
 		}
 
-		const getClientDisplayName = req => {
-			return getClientEntityDisplayName({
-				type: req.client_type || req.type,
-				name: req.client_name,
-				companyName: req.company_name,
-			})
+		return name || companyName || fallback || 'Не указано'
+	}
+
+	const getClientDisplayName = req => {
+		return getClientEntityDisplayName({
+			type: req.client_type || req.type,
+			name: req.client_name,
+			companyName: req.company_name,
+		})
+	}
+
+	const getParentClientInfo = req => {
+		const sourceParentName = String(req.parent_client_source_name || '').trim()
+
+		if (!sourceParentName) return null
+
+		const normalizedParentName = normalizeClientHierarchyName(sourceParentName)
+		const normalizedClientSourceName = normalizeClientHierarchyName(
+			req.client_source_name || getClientDisplayName(req),
+		)
+
+		if (
+			technicalRootParentNames.has(normalizedParentName) ||
+			normalizedParentName === normalizedClientSourceName
+		) {
+			return null
 		}
 
-		const getParentClientInfo = req => {
-			const sourceParentName = String(
-				req.parent_client_source_name || '',
-			).trim()
-
-			if (!sourceParentName) return null
-
-			const normalizedParentName =
-				normalizeClientHierarchyName(sourceParentName)
-			const normalizedClientSourceName = normalizeClientHierarchyName(
-				req.client_source_name || getClientDisplayName(req),
-			)
-
-			if (
-				technicalRootParentNames.has(normalizedParentName) ||
-				normalizedParentName === normalizedClientSourceName
-			) {
-				return null
-			}
-
-			return {
-				typeLabel:
-					clientTypeLabels[req.parent_client_type] ||
-					req.parent_client_type ||
-					'Клиент',
-				name: getClientEntityDisplayName({
-					type: req.parent_client_type,
-					name: req.parent_client_name,
-					companyName: req.parent_client_company_name,
-					fallback: sourceParentName,
-				}),
-			}
+		return {
+			typeLabel:
+				clientTypeLabels[req.parent_client_type] ||
+				req.parent_client_type ||
+				'Клиент',
+			name: getClientEntityDisplayName({
+				type: req.parent_client_type,
+				name: req.parent_client_name,
+				companyName: req.parent_client_company_name,
+				fallback: sourceParentName,
+			}),
 		}
+	}
 
-		const renderRequestClientHierarchy = req => {
-			const parentClient = getParentClientInfo(req)
-			const currentClientType = req.client_type || req.type
+	const renderRequestClientHierarchy = req => {
+		const parentClient = getParentClientInfo(req)
+		const currentClientType = req.client_type || req.type
 
-			return (
-				<div className='request-client-hierarchy'>
+		return (
+			<div className='request-client-hierarchy'>
+				{parentClient && (
+					<div className='request-client-line request-client-parent'>
+						<span className='request-client-type'>
+							{parentClient.typeLabel}
+						</span>
+
+						<span className='request-client-name'>{parentClient.name}</span>
+					</div>
+				)}
+
+				<div
+					className={`request-client-line request-client-current ${
+						parentClient ? 'request-client-subclient' : ''
+					}`}
+				>
 					{parentClient && (
-						<div className='request-client-line request-client-parent'>
-							<span className='request-client-type'>
-								{parentClient.typeLabel}
-							</span>
-
-							<span className='request-client-name'>{parentClient.name}</span>
-						</div>
+						<span className='request-client-branch' aria-hidden='true'>
+							↳
+						</span>
 					)}
 
-					<div
-						className={`request-client-line request-client-current ${
-							parentClient ? 'request-client-subclient' : ''
-						}`}
-					>
-						{parentClient && (
-							<span className='request-client-branch' aria-hidden='true'>
-								↳
-							</span>
-						)}
+					<span className='request-client-type'>
+						{clientTypeLabels[currentClientType] ||
+							currentClientType ||
+							'Клиент'}
+					</span>
 
-						<span className='request-client-type'>
-							{clientTypeLabels[currentClientType] ||
-								currentClientType ||
-								'Клиент'}
-						</span>
-
-						<span className='request-client-name'>
-							{getClientDisplayName(req)}
-						</span>
-					</div>
+					<span className='request-client-name'>
+						{getClientDisplayName(req)}
+					</span>
 				</div>
-			)
-		}
+			</div>
+		)
+	}
 
 	const getVehicleTitle = (vehicle, index) => {
 		const title =
@@ -1131,26 +1052,11 @@ export default function Requests() {
 
 		if (executors.length === 0) return false
 
-		const canCompleteAnyRequest =
-			canByPermission([
-				'requests.status.manage',
-				'requests.change_status',
-				'requests.complete_any',
-				'requests.manage',
-			]) || hasLegacyRole(['ADMIN', 'ROP', 'SENIOR_TECHNICIAN'])
-
-		if (canCompleteAnyRequest) {
+		if (canByPermission(['requests.complete_any'])) {
 			return true
 		}
 
-		const canCompleteOwnRequest =
-			canByPermission([
-				'requests.complete_own',
-				'requests.complete_assigned',
-				'requests.change_own_status',
-			]) || isTechnicianUser
-
-		if (canCompleteOwnRequest) {
+		if (canByPermission(['requests.complete_own'])) {
 			return isCurrentUserExecutor(req)
 		}
 
@@ -1492,9 +1398,9 @@ export default function Requests() {
 								>
 									<option value=''>Все города</option>
 
-									{cities.map(city => (
-										<option key={city.id} value={city.name}>
-											{city.name}
+									{cityOptions.map(cityName => (
+										<option key={cityName} value={cityName}>
+											{cityName}
 										</option>
 									))}
 								</select>
@@ -1971,19 +1877,14 @@ export default function Requests() {
 								</button>
 							)}
 
-							{canAcceptRequestAsExecutor &&
-								req.status === 'NEW' &&
-								!req.assigned_to &&
-								!['PENDING', 'REJECTED'].includes(
-									req.schedule_approval_status,
-								) && (
-									<button
-										className='btn-green'
-										onClick={e => handleAcceptRequest(e, req)}
-									>
-										Принять заявку
-									</button>
-								)}
+							{Boolean(req.can_accept) && (
+								<button
+									className='btn-green'
+									onClick={e => handleAcceptRequest(e, req)}
+								>
+									Принять заявку
+								</button>
+							)}
 
 							{canCompleteRequest(req) && (
 								<button

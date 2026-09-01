@@ -1,21 +1,57 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { getStoredUser, hasAnyPermission } from '../../utils/access'
 import '../../styles/Notifications.css'
 
 const STORAGE_KEY = 'crm_new_request_notice'
 const EVENT_NAME = 'crm:new-request-created'
+// Запасное значение. Настоящее окно приходит с сервера
+// в поле delete_window_seconds_left (см. requests.py).
 const DEFAULT_TTL_SECONDS = 120
 
-const getDefaultMessage = requestId => {
-	if (requestId) {
-		return `Заявка №${requestId} создана. У вас есть 2 минуты, чтобы проверить её и при необходимости удалить.`
+const canDeleteOwnRequest = () =>
+	hasAnyPermission(getStoredUser(), [
+		'requests.delete_own_limited',
+		'requests.delete_any',
+	])
+
+const formatMinutes = totalSeconds => {
+	const minutes = Math.max(1, Math.round(Number(totalSeconds) / 60))
+	const lastTwoDigits = minutes % 100
+	const lastDigit = minutes % 10
+
+	if (lastTwoDigits >= 11 && lastTwoDigits <= 14) return `${minutes} минут`
+	if (lastDigit === 1) return `${minutes} минуту`
+	if (lastDigit >= 2 && lastDigit <= 4) return `${minutes} минуты`
+
+	return `${minutes} минут`
+}
+
+const getDefaultMessage = (requestId, ttlSeconds) => {
+	const requestPart = requestId
+		? `Заявка №${requestId} создана.`
+		: 'Заявка создана.'
+
+	// Обещать удаление можно только тому, у кого есть право удалять.
+	if (!canDeleteOwnRequest()) {
+		return `${requestPart} Проверьте данные — если нашли ошибку, обратитесь к руководителю.`
 	}
 
-	return 'Заявка создана. У вас есть 2 минуты, чтобы проверить её и при необходимости удалить.'
+	return `${requestPart} У вас есть ${formatMinutes(
+		ttlSeconds,
+	)}, чтобы проверить её и при необходимости удалить.`
 }
 
 const readStoredNotice = () => {
 	try {
+		const currentUserId = getStoredUser()?.id
+
+		// Нет вошедшего пользователя — плашке неоткуда взяться
+		// (в том числе на экране входа).
+		if (!currentUserId) {
+			return null
+		}
+
 		const raw = sessionStorage.getItem(STORAGE_KEY)
 
 		if (!raw) return null
@@ -23,6 +59,13 @@ const readStoredNotice = () => {
 		const notice = JSON.parse(raw)
 
 		if (!notice?.expiresAt || Date.now() >= Number(notice.expiresAt)) {
+			sessionStorage.removeItem(STORAGE_KEY)
+			return null
+		}
+
+		// sessionStorage живёт на вкладку, а не на сессию входа:
+		// без этой проверки следующий вошедший увидит чужую заявку.
+		if (Number(notice.userId) !== Number(currentUserId)) {
 			sessionStorage.removeItem(STORAGE_KEY)
 			return null
 		}
@@ -56,14 +99,17 @@ export const notifyNewRequestCreated = ({
 } = {}) => {
 	const now = Date.now()
 	const normalizedRequestId = requestId ? Number(requestId) : null
+	const normalizedTtlSeconds = Number(expiresInSeconds || DEFAULT_TTL_SECONDS)
 
 	const notice = {
 		id: `${now}-${normalizedRequestId || 'request'}`,
 		requestId: normalizedRequestId,
-		message: message || getDefaultMessage(normalizedRequestId),
+		userId: getStoredUser()?.id ?? null,
+		message:
+			message || getDefaultMessage(normalizedRequestId, normalizedTtlSeconds),
 		createdAt: now,
-		expiresAt: now + Number(expiresInSeconds || DEFAULT_TTL_SECONDS) * 1000,
-		ttlSeconds: Number(expiresInSeconds || DEFAULT_TTL_SECONDS),
+		expiresAt: now + normalizedTtlSeconds * 1000,
+		ttlSeconds: normalizedTtlSeconds,
 	}
 
 	saveNotice(notice)

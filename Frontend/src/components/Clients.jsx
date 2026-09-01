@@ -9,7 +9,7 @@ import RequestDetailModal from './RequestDetailModal'
 import AttachmentsPanel from './AttachmentsPanel'
 import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
-import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 
 export default function Clients() {
 	const [clients, setClients] = useState([])
@@ -101,49 +101,35 @@ export default function Clients() {
 	const [showVehicles, setShowVehicles] = useState(false)
 
 	const currentUser = getStoredUser()
-	const userRole = currentUser.role || null
 	const location = useLocation()
 
-	const canViewRequestPrice =
-		hasAnyPermission(currentUser, [
-			'prices.view',
-			'prices.manage',
-			'requests.price.view',
-			'requests.prices.view',
-			'requests.view_price',
-			'requests.view_prices',
-		]) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'ROP',
-			'MANAGER',
-			'TECH_SUPPORT',
-			'ACCOUNTANT',
-			'WAREHOUSE_MANAGER',
-		])
+	// Тот же код, что в Requests.jsx (шаг 179). prices.view сюда не годится:
+	// он приезжает по зависимости вместе с prices.client.manage_own.
+	const canViewRequestPrice = hasAnyPermission(currentUser, [
+		'requests.price.view',
+	])
 
-	const canCreateClient =
-		hasAnyPermission(currentUser, ['clients.create', 'clients.manage']) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'MANAGER', 'TECH_SUPPORT'])
+	const canCreateClient = hasAnyPermission(currentUser, ['clients.create'])
 
-	const canDeleteClient =
-		hasAnyPermission(currentUser, ['clients.delete', 'clients.manage']) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+	const canDeleteClient = hasAnyPermission(currentUser, ['clients.delete'])
 
-	const canSoftDeleteVehicle =
-		hasAnyPermission(currentUser, ['vehicles.delete', 'vehicles.manage']) ||
-		hasLegacyRole(currentUser, ['ADMIN'])
+	const canSoftDeleteVehicle = hasAnyPermission(currentUser, [
+		'vehicles.delete',
+		'vehicles.manage',
+	])
 
+	// Совпадает с VEHICLE_TRASH_VIEW_PERMISSION_CODES в vehicles.py.
 	const canViewVehicleTrash = hasAnyPermission(currentUser, [
-		'vehicles.trash.view_all',
-		'vehicles.trash.view_own',
+		'vehicles.trash.view',
+		'vehicles.deleted.view',
 		'vehicles.restore',
 		'vehicles.delete',
 		'vehicles.manage',
-		'trash.view',
-		'trash.manage',
 	])
 
+	// Совпадает с can_access_client_vehicles в vehicles.py: сначала «все машины»,
+	// иначе — доступ к самому клиенту, который сервер уже посчитал за нас
+	// с учётом области видимости.
 	const canViewVehiclesForClient = client => {
 		if (!client) return false
 
@@ -152,63 +138,28 @@ export default function Clients() {
 				'vehicles.view_all',
 				'vehicles.manage',
 				'clients.view_all',
-				'clients.manage',
 			])
 		) {
 			return true
 		}
 
-		const userId = Number(currentUser?.id)
-
-		const isOwnClient =
-			Number(client.responsible_manager_id) === userId ||
-			Number(client.created_by) === userId
-
-		return (
-			isOwnClient &&
-			hasAnyPermission(currentUser, [
-				'vehicles.view_own',
-				'vehicles.manage_own',
-				'clients.view_own',
-			])
-		)
+		return Boolean(client.can_open_details)
 	}
 
-	const canEditVehicleForClient = client => {
-		if (!client) return false
+	// Сервер считает это по каждому клиенту (can_edit_vehicle_for_client
+	// в vehicles.py) — правило во фронте больше не дублируем.
+	const canEditVehicleForClient = client => Boolean(client?.can_edit_vehicles)
 
-		if (
-			hasAnyPermission(currentUser, ['vehicles.edit_all', 'vehicles.manage'])
-		) {
-			return true
-		}
+	const canRestoreVehicle = hasAnyPermission(currentUser, [
+		'vehicles.restore',
+		'vehicles.manage',
+	])
 
-		const userId = Number(currentUser?.id)
-
-		const isOwnClient =
-			Number(client.responsible_manager_id) === userId ||
-			Number(client.created_by) === userId
-
-		return (
-			isOwnClient &&
-			hasAnyPermission(currentUser, [
-				'vehicles.edit',
-				'vehicles.edit_own',
-				'vehicles.manage_own',
-			])
-		)
-	}
-
-	const canRestoreVehicle =
-		hasAnyPermission(currentUser, ['vehicles.restore', 'vehicles.manage']) ||
-		hasLegacyRole(currentUser, ['ADMIN'])
-
-	const canTransferVehicle =
-		hasAnyPermission(currentUser, [
-			'vehicles.transfer',
-			'vehicles.transfer_client',
-			'vehicles.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'MANAGER'])
+	const canTransferVehicle = hasAnyPermission(currentUser, [
+		'vehicles.transfer',
+		'vehicles.transfer_client',
+		'vehicles.manage',
+	])
 
 	const canAddVehicleToClient = client => {
 		return (
@@ -228,20 +179,13 @@ export default function Clients() {
 		)
 	}
 
-	const canManageDirectVehicleEquipment =
-		hasAnyPermission(currentUser, [
-			'vehicles.equipment.manage',
-			'warehouse.vehicle_equipment.manage',
-			'warehouse.manage',
-			'warehouse.items.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canViewResponsibleFilter =
-		hasAnyPermission(currentUser, [
-			'clients.view_all',
-			'clients.reassign',
-			'clients.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+	// Совпадает с VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES в warehouse.py
+	// и с AttachEquipmentToVehicleModal (шаг 142).
+	const canManageDirectVehicleEquipment = hasAnyPermission(currentUser, [
+		'vehicles.equipment.manage',
+		'warehouse.vehicle_equipment.manage',
+		'warehouse.manage',
+	])
 
 	const canOpenClientDetails = client => Boolean(client?.can_open_details)
 
@@ -251,21 +195,14 @@ export default function Clients() {
 
 	const canReassignClient = client => Boolean(client?.can_reassign)
 
+	// Сервер считает эти флаги по каждому клиенту с учётом области видимости.
+	// Дополнять их глобальной проверкой права нельзя: право есть «вообще»,
+	// а флаг говорит «для этого конкретного клиента».
 	const canChangeClientPaymentType = client =>
-		Boolean(client?.can_change_payment_type) ||
-		hasAnyPermission(currentUser, [
-			'clients.payment_type.manage',
-			'clients.manage',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'ROP'])
+		Boolean(client?.can_change_payment_type)
 
 	const canViewClientMonitoringPassword = client =>
-		Boolean(client?.can_view_monitoring_password) ||
-		hasAnyPermission(currentUser, [
-			'clients.monitoring_password.view',
-			'clients.manage',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'ROP', 'TECH_SUPPORT'])
+		Boolean(client?.can_view_monitoring_password)
 
 	const getClientPaymentTypeLabel = paymentType => {
 		if (paymentType === 'POSTPAYMENT') return 'Постоплата'
@@ -2459,7 +2396,7 @@ export default function Clients() {
 
 	const statusLabels = {
 		NEW: 'В ожидании',
-		IN_PROGRESS: 'В процессе установки',
+		IN_PROGRESS: 'Принято в работу',
 		COMPLETED: 'Работы завершены',
 		CANCELLED: 'Отменено',
 	}

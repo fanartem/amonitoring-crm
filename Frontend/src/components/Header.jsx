@@ -4,7 +4,11 @@ import { NavLink, useNavigate } from 'react-router'
 import logoImg from '../assets/logo.png'
 import '../styles/Header.css'
 import { getWorkTypeLabel } from '../utils/workTypes'
-import { getStoredUser, hasAnyPermission } from '../utils/access'
+import {
+	canAccessRoute,
+	getStoredUser,
+	hasAnyPermission,
+} from '../utils/access'
 
 const NOTIFICATION_SOUND_SRC = '/sounds/notification.wav'
 const NOTIFICATION_SOUND_ENABLED_KEY = 'crm_notification_sound_enabled'
@@ -30,74 +34,38 @@ const getNotificationSoundSettings = () => {
 
 export default function Header() {
 	const user = getStoredUser()
-	const userRole = String(user?.role || '').toUpperCase()
 
-	const isAdmin = userRole === 'ADMIN'
-	const isRop = userRole === 'ROP'
-	const isManager = userRole === 'MANAGER'
-	const isTechSupport = userRole === 'TECH_SUPPORT'
-	const isAccountant = userRole === 'ACCOUNTANT'
-	const isWarehouseManager = userRole === 'WAREHOUSE_MANAGER'
-	const isTechnician = userRole === 'TECHNICIAN'
-	const isSeniorTechnician = userRole === 'SENIOR_TECHNICIAN'
+	// Каждая ветка поиска включается своим правом.
+	// Данные всё равно приходят с бэкенда уже суженными по data_scope.
+	const canSearchClients = hasAnyPermission(user, [
+		'clients.view',
+		'clients.manage',
+	])
 
-	const canSearchClients =
-		hasAnyPermission(user, [
-			'clients.view',
-			'clients.manage',
-			'clients.read',
-		]) ||
-		isAdmin ||
-		isRop ||
-		isManager ||
-		isTechSupport ||
-		isAccountant
+	const canSearchRequests = hasAnyPermission(user, [
+		'requests.view',
+		'requests.view_all',
+	])
 
-	const canSearchRequests =
-		hasAnyPermission(user, [
-			'requests.view',
-			'requests.view_all',
-			'requests.manage',
-			'requests.calendar.view',
-			'requests.calendar.view_all',
-		]) ||
-		isAdmin ||
-		isRop ||
-		isManager ||
-		isTechSupport ||
-		isAccountant ||
-		isTechnician ||
-		isSeniorTechnician
+	const canSearchWarehouse = hasAnyPermission(user, [
+		'warehouse.view',
+		'warehouse.manage',
+	])
 
-	const canSearchWarehouse =
-		hasAnyPermission(user, [
-			'warehouse.view',
-			'warehouse.manage',
-			'warehouse.items.view',
-			'warehouse.items.manage',
-		]) ||
-		isAdmin ||
-		isRop ||
-		isWarehouseManager
+	const canSearchVehicles = hasAnyPermission(user, [
+		'vehicles.view',
+		'vehicles.view_all',
+		'vehicles.view_own',
+		'vehicles.manage',
+	])
 
-	const canSearchVehicles =
-		hasAnyPermission(user, [
-			'vehicles.view',
-			'vehicles.manage',
-			'clients.vehicles.view',
-			'clients.view',
-			'requests.view',
-			'requests.view_all',
-			'requests.manage',
-		]) ||
-		canSearchClients ||
-		canSearchRequests
+	const canSeeNotifications = hasAnyPermission(user, ['notifications.view'])
 
-	const logoTo = canSearchRequests
+	const logoTo = canAccessRoute('requests', user)
 		? '/requests'
-		: canSearchClients
+		: canAccessRoute('clients', user)
 			? '/clients'
-			: canSearchWarehouse
+			: canAccessRoute('warehouse', user)
 				? '/warehouse'
 				: '/settings'
 
@@ -480,6 +448,8 @@ export default function Header() {
 	}, [query, canSearchVehicles])
 
 	useEffect(() => {
+		if (!canSeeNotifications) return
+
 		fetchNotifications()
 
 		const intervalId = setInterval(() => {
@@ -487,7 +457,7 @@ export default function Header() {
 		}, 30000)
 
 		return () => clearInterval(intervalId)
-	}, [])
+	}, [canSeeNotifications])
 
 	const getEquipmentTitle = item => {
 		const parts = []
@@ -896,117 +866,119 @@ export default function Header() {
 					)}
 				</div>
 
-				<div
-					className='notification-bell-wrapper'
-					ref={notificationsRef}
-					title='Уведомления'
-				>
-					<button
-						type='button'
-						className='notification-bell-btn'
-						onClick={() => {
-							setIsNotificationsOpen(prev => !prev)
-							fetchNotifications()
-						}}
+				{canSeeNotifications && (
+					<div
+						className='notification-bell-wrapper'
+						ref={notificationsRef}
+						title='Уведомления'
 					>
-						<svg
-							width='22'
-							height='22'
-							viewBox='0 0 24 24'
-							fill='none'
-							stroke='currentColor'
-							strokeWidth='2'
-							strokeLinecap='round'
-							strokeLinejoin='round'
-							className='bell-icon'
+						<button
+							type='button'
+							className='notification-bell-btn'
+							onClick={() => {
+								setIsNotificationsOpen(prev => !prev)
+								fetchNotifications()
+							}}
 						>
-							<path d='M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9'></path>
-							<path d='M13.73 21a2 2 0 0 1-3.46 0'></path>
-						</svg>
+							<svg
+								width='22'
+								height='22'
+								viewBox='0 0 24 24'
+								fill='none'
+								stroke='currentColor'
+								strokeWidth='2'
+								strokeLinecap='round'
+								strokeLinejoin='round'
+								className='bell-icon'
+							>
+								<path d='M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9'></path>
+								<path d='M13.73 21a2 2 0 0 1-3.46 0'></path>
+							</svg>
 
-						{unreadCount > 0 && (
-							<span className='bell-badge'>
-								{unreadCount > 99 ? '99+' : unreadCount}
-							</span>
+							{unreadCount > 0 && (
+								<span className='bell-badge'>
+									{unreadCount > 99 ? '99+' : unreadCount}
+								</span>
+							)}
+						</button>
+
+						{isNotificationsOpen && (
+							<div className='notifications-dropdown'>
+								<div className='notifications-dropdown-header'>
+									<div>
+										<div className='notifications-title'>Уведомления</div>
+										<div className='notifications-subtitle'>
+											{unreadCount > 0
+												? `Непрочитанных: ${unreadCount}`
+												: 'Нет непрочитанных'}
+										</div>
+									</div>
+
+									<div className='notifications-header-actions'>
+										{unreadCount > 0 && (
+											<button
+												type='button'
+												className='notifications-read-all-btn'
+												onClick={markAllNotificationsAsRead}
+											>
+												Прочитать все
+											</button>
+										)}
+
+										{notifications.some(item => item.is_read) && (
+											<button
+												type='button'
+												className='notifications-clear-read-btn'
+												onClick={deleteReadNotifications}
+											>
+												Очистить прочитанные
+											</button>
+										)}
+									</div>
+								</div>
+
+								<div className='notifications-list'>
+									{notifications.length === 0 ? (
+										<div className='notifications-empty'>
+											Уведомлений пока нет
+										</div>
+									) : (
+										notifications.map(notification => (
+											<button
+												key={notification.id}
+												type='button'
+												className={`notification-item ${
+													notification.is_read ? 'read' : 'unread'
+												}`}
+												onClick={() => handleNotificationClick(notification)}
+											>
+												<div className='notification-item-main'>
+													<div className='notification-item-title'>
+														{notification.title}
+													</div>
+													<div className='notification-item-message'>
+														{notification.message}
+													</div>
+													<div className='notification-item-date'>
+														{notification.created_at
+															? new Date(
+																	notification.created_at,
+																).toLocaleString('ru-RU')
+															: ''}
+													</div>
+												</div>
+
+												{!notification.is_read && (
+													<span className='notification-unread-dot' />
+												)}
+											</button>
+										))
+									)}
+								</div>
+							</div>
 						)}
-					</button>
-
-					{isNotificationsOpen && (
-						<div className='notifications-dropdown'>
-							<div className='notifications-dropdown-header'>
-								<div>
-									<div className='notifications-title'>Уведомления</div>
-									<div className='notifications-subtitle'>
-										{unreadCount > 0
-											? `Непрочитанных: ${unreadCount}`
-											: 'Нет непрочитанных'}
-									</div>
-								</div>
-
-								<div className='notifications-header-actions'>
-									{unreadCount > 0 && (
-										<button
-											type='button'
-											className='notifications-read-all-btn'
-											onClick={markAllNotificationsAsRead}
-										>
-											Прочитать все
-										</button>
-									)}
-
-									{notifications.some(item => item.is_read) && (
-										<button
-											type='button'
-											className='notifications-clear-read-btn'
-											onClick={deleteReadNotifications}
-										>
-											Очистить прочитанные
-										</button>
-									)}
-								</div>
-							</div>
-
-							<div className='notifications-list'>
-								{notifications.length === 0 ? (
-									<div className='notifications-empty'>
-										Уведомлений пока нет
-									</div>
-								) : (
-									notifications.map(notification => (
-										<button
-											key={notification.id}
-											type='button'
-											className={`notification-item ${
-												notification.is_read ? 'read' : 'unread'
-											}`}
-											onClick={() => handleNotificationClick(notification)}
-										>
-											<div className='notification-item-main'>
-												<div className='notification-item-title'>
-													{notification.title}
-												</div>
-												<div className='notification-item-message'>
-													{notification.message}
-												</div>
-												<div className='notification-item-date'>
-													{notification.created_at
-														? new Date(notification.created_at).toLocaleString(
-																'ru-RU',
-															)
-														: ''}
-												</div>
-											</div>
-
-											{!notification.is_read && (
-												<span className='notification-unread-dot' />
-											)}
-										</button>
-									))
-								)}
-							</div>
-						</div>
-					)}
-				</div>
+					</div>
+				)}
 			</div>
 		</header>
 	)

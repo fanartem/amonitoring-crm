@@ -35,42 +35,28 @@ const getErrorMessage = async res => {
 	return text || 'Ошибка сохранения клиента'
 }
 
-const hasLegacyRole = (user, roles) => roles.includes(user?.role)
-
+// Списки совпадают с бэкендом:
+// CLIENTS_STATUS_MANAGE_PERMISSION_CODES и CLIENTS_REASSIGN_PERMISSION_CODES
+// в permissions.py, CLIENT_PAYMENT_TYPE_MANAGE_PERMISSION_CODES
+// и CLIENT_MONITORING_PASSWORD_MANAGE_PERMISSION_CODES в clients.py.
 const canManageClientStatus = user =>
-	hasAnyPermission(user, [
-		'clients.status.manage',
-		'clients.status.edit',
-		'clients.update_status',
-		'clients.edit_status',
-		'clients.manage',
-	]) || hasLegacyRole(user, ['ADMIN', 'ROP', 'ACCOUNTANT'])
+	hasAnyPermission(user, ['clients.status.change', 'clients.manage'])
 
 const canManageResponsibleManager = user =>
-	hasAnyPermission(user, [
-		'clients.responsible_manager.manage',
-		'clients.responsible.manage',
-		'clients.assign_responsible',
-		'clients.edit_responsible',
-		'clients.manage',
-	]) || hasLegacyRole(user, ['ADMIN', 'ROP'])
+	hasAnyPermission(user, ['clients.responsible.reassign', 'clients.manage'])
 
 const canManageClientPaymentType = user =>
 	hasAnyPermission(user, [
 		'clients.payment_type.manage',
 		'clients.payment.manage',
-		'clients.edit_payment',
 		'clients.manage',
-	]) || hasLegacyRole(user, ['ADMIN', 'ROP'])
+	])
 
 const canManageClientMonitoringPassword = user =>
 	hasAnyPermission(user, [
 		'clients.monitoring_credentials.manage',
-		'clients.credentials.manage',
-		'clients.monitoring_password.manage',
-		'clients.edit_monitoring_credentials',
 		'clients.manage',
-	]) || hasLegacyRole(user, ['ADMIN', 'ROP', 'TECH_SUPPORT'])
+	])
 
 function SearchableSelect({
 	value,
@@ -509,14 +495,25 @@ export default function CreateClientModal({
 				phone: formData.phone.trim(),
 				email: formData.email.trim() || null,
 				monitoring_login: formData.monitoring_login.trim() || null,
-				monitoring_password: canSetMonitoringPassword
-					? formData.monitoring_password.trim() || null
-					: undefined,
+				// Пустое поле не должно затирать существующий пароль:
+				// в списке клиентов monitoring_password не приходит вовсе.
+				monitoring_password:
+					canSetMonitoringPassword && formData.monitoring_password.trim()
+						? formData.monitoring_password.trim()
+						: undefined,
 
-				status: canSetClientStatus ? formData.status : undefined,
-				payment_type: canSetPaymentType ? formData.payment_type : 'PREPAYMENT',
+				// При редактировании эти три поля меняются отдельными эндпоинтами —
+				// PATCH /clients/{id} их игнорирует.
+				status: !isEditMode && canSetClientStatus ? formData.status : undefined,
+				payment_type: isEditMode
+					? undefined
+					: canSetPaymentType
+						? formData.payment_type
+						: 'PREPAYMENT',
 				responsible_manager_id:
-					canSetResponsibleManager && formData.responsible_manager_id
+					!isEditMode &&
+					canSetResponsibleManager &&
+					formData.responsible_manager_id
 						? Number(formData.responsible_manager_id)
 						: undefined,
 
@@ -562,6 +559,52 @@ export default function CreateClientModal({
 
 				if (!paymentRes.ok) {
 					throw new Error(await getErrorMessage(paymentRes))
+				}
+			}
+
+			if (
+				isEditMode &&
+				canSetClientStatus &&
+				formData.status !== (editClient.status || 'ACTIVE')
+			) {
+				const statusRes = await fetch(
+					`${API_BASE_URL}/clients/${editClient.id}/status`,
+					{
+						method: 'PATCH',
+						headers: getJsonAuthHeaders(),
+						body: JSON.stringify({
+							status: formData.status,
+						}),
+					},
+				)
+
+				if (!statusRes.ok) {
+					throw new Error(await getErrorMessage(statusRes))
+				}
+			}
+
+			if (
+				isEditMode &&
+				canSetResponsibleManager &&
+				String(formData.responsible_manager_id || '') !==
+					String(editClient.responsible_manager_id || '')
+			) {
+				const responsibleRes = await fetch(
+					`${API_BASE_URL}/clients/${editClient.id}/responsible`,
+					{
+						method: 'PATCH',
+						headers: getJsonAuthHeaders(),
+						body: JSON.stringify({
+							responsible_manager_id: formData.responsible_manager_id
+								? Number(formData.responsible_manager_id)
+								: null,
+							apply_to_subclients: false,
+						}),
+					},
+				)
+
+				if (!responsibleRes.ok) {
+					throw new Error(await getErrorMessage(responsibleRes))
 				}
 			}
 

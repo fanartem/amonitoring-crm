@@ -95,7 +95,6 @@ EMPLOYEE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
 
 MY_INVENTORY_VIEW_PERMISSION_CODES = [
     "warehouse.my_inventory.view",
-    "warehouse.inventory.view_own",
 ]
 
 REQUEST_EQUIPMENT_READ_PERMISSION_CODES = [
@@ -119,6 +118,11 @@ VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES = [
     "warehouse.vehicle_equipment.manage",
     "warehouse.manage",
 ]
+
+# Статусы, означающие «предмет физически на складе».
+# Перевести в них позицию, числящуюся за монтажником, можно только
+# через возврат во вкладке «Инвентарь», иначе склад начинает врать.
+WAREHOUSE_STOCK_STATUSES = ["IN_STOCK", "RESERVED", "INSTALLED"]
 
 VEHICLE_EQUIPMENT_VIEW_PERMISSION_CODES = [
     "vehicles.equipment.view",
@@ -807,10 +811,7 @@ def require_inventory_target_user(cursor, target_user_id: int):
     if not user:
         raise HTTPException(status_code=404, detail="Монтажник не найден")
 
-    if not (
-        to_bool(user.get("can_be_request_executor"))
-        or user.get("role") in ["TECHNICIAN", "SENIOR_TECHNICIAN"]
-    ):
+    if not to_bool(user.get("can_be_request_executor")):
         raise HTTPException(
             status_code=400,
             detail="Инвентарь можно выдавать только пользователю, который может быть исполнителем заявки"
@@ -1164,6 +1165,8 @@ def get_inventory(
 
     try:
         with connection.cursor() as cursor:
+            city_id = apply_warehouse_city_scope(cursor, current_user, city_id)
+
             rows = fetch_inventory_rows(
                 cursor=cursor,
                 user_id=user_id,
@@ -3228,7 +3231,6 @@ def get_warehouse_items(
 ):
     """
     Список оборудования на складе.
-    Доступ: ADMIN, WAREHOUSE_MANAGER, MANAGER.
     """
     require_warehouse_full_read(current_user)
 
@@ -3346,17 +3348,17 @@ def get_warehouse_item_history(
 ):
     """
     История действий по оборудованию.
-    Доступ: роли, которые могут просматривать склад.
-    """
-    require_warehouse_full_read(current_user)
 
+    Владелец видит историю своего предмета из инвентаря всегда.
+    Остальным нужен доступ к складу, а городскому пользователю — свой город.
+    """
     connection = get_connection()
 
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, city_id
+                SELECT id, city_id, assigned_to_user_id
                 FROM warehouse_items
                 WHERE id = %s
                 """,
@@ -3367,14 +3369,22 @@ def get_warehouse_item_history(
             if not item:
                 raise HTTPException(status_code=404, detail="Оборудование не найдено")
 
-            if is_city_scoped_warehouse_user(current_user):
-                user_city_id = resolve_user_city_id(cursor, current_user)
+            is_own_inventory_item = (
+                item.get("assigned_to_user_id") is not None
+                and int(item["assigned_to_user_id"]) == int(current_user["id"])
+            )
 
-                if int(item.get("city_id") or 0) != user_city_id:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Недостаточно прав для просмотра истории оборудования другого города",
-                    )
+            if not is_own_inventory_item:
+                require_warehouse_full_read(current_user)
+
+                if is_city_scoped_warehouse_user(current_user):
+                    user_city_id = resolve_user_city_id(cursor, current_user)
+
+                    if int(item.get("city_id") or 0) != user_city_id:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Недостаточно прав для просмотра истории оборудования другого города",
+                        )
 
             cursor.execute(
                 """
@@ -3442,7 +3452,6 @@ def create_warehouse_item(
 ):
     """
     Добавить оборудование на склад.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
     """
     require_warehouse_manage(current_user)
 
@@ -3547,7 +3556,6 @@ def update_warehouse_item(
 ):
     """
     Редактировать оборудование.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
     """
     require_warehouse_manage(current_user)
 
@@ -3592,6 +3600,29 @@ def update_warehouse_item(
                 "status" in update_data
                 and str(update_data["status"]) != str(item.get("status"))
             )
+
+            if (
+                status_is_really_changed
+                and item.get("assigned_to_user_id")
+                and str(update_data["status"]) in WAREHOUSE_STOCK_STATUSES
+            ):
+                cursor.execute(
+                    "SELECT name FROM users WHERE id = %s",
+                    (item["assigned_to_user_id"],),
+                )
+                assigned_user = cursor.fetchone()
+                assigned_user_name = (
+                    assigned_user["name"] if assigned_user else "сотрудник не найден"
+                )
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Нельзя вернуть оборудование на склад через карточку позиции, "
+                        f"так как оно находится в инвентаре монтажника: {assigned_user_name}. "
+                        "Используйте вкладку «Инвентарь» — возврат на склад делается там."
+                    ),
+                )
 
             if status_is_really_changed:
                 cursor.execute(
@@ -4094,7 +4125,6 @@ def delete_warehouse_item(
 ):
     """
     Soft delete оборудования.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
     """
     require_warehouse_manage(current_user)
 
@@ -4166,7 +4196,6 @@ def delete_warehouse_item(
 def get_deleted_warehouse_items(current_user: dict = Depends(get_current_user)):
     """
     Корзина склада.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
     """
     require_warehouse_manage(current_user)
 
@@ -4197,9 +4226,18 @@ def get_deleted_warehouse_items(current_user: dict = Depends(get_current_user)):
             LEFT JOIN users u ON wi.deleted_by = u.id
             LEFT JOIN cities city ON wi.city_id = city.id
             WHERE wi.is_deleted = 1
-            ORDER BY wi.deleted_at DESC
             """
-            cursor.execute(sql)
+
+            values = []
+            scoped_city_id = apply_warehouse_city_scope(cursor, current_user, None)
+
+            if scoped_city_id:
+                sql += " AND wi.city_id = %s"
+                values.append(scoped_city_id)
+
+            sql += " ORDER BY wi.deleted_at DESC"
+
+            cursor.execute(sql, tuple(values))
             return cursor.fetchall()
     finally:
         connection.close()
@@ -4211,7 +4249,6 @@ def restore_warehouse_item(
 ):
     """
     Восстановить оборудование из корзины.
-    Доступ: ADMIN, WAREHOUSE_MANAGER.
     """
     require_warehouse_manage(current_user)
 
@@ -4280,7 +4317,6 @@ def get_request_equipment(
 ):
     """
     Получить всё оборудование, привязанное к заявке.
-    Доступ: все авторизованные пользователи.
     """
     require_request_equipment_read(current_user)
 
@@ -4334,7 +4370,7 @@ def get_request_equipment(
                     TIMESTAMPDIFF(SECOND, re.attached_at, NOW()) AS detach_age_seconds,
                     DATE_ADD(
                         re.attached_at,
-                        INTERVAL 120 SECOND
+                        INTERVAL %s SECOND
                     ) AS detach_deadline_at,
                     re.note,
 
@@ -4368,7 +4404,10 @@ def get_request_equipment(
                 WHERE re.request_id = %s
                 ORDER BY re.attached_at DESC
                 """,
-                (request_id,)
+                (
+                    REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS,
+                    request_id,
+                )
             )
 
             rows = cursor.fetchall()
@@ -4388,7 +4427,6 @@ def get_available_equipment_for_vehicle_attach(
     """
     Список оборудования для прямой привязки к автомобилю без заявки.
 
-    Доступ: ADMIN / WAREHOUSE_MANAGER.
     Берём только свободное оборудование со склада:
     - status = IN_STOCK
     - assigned_to_user_id IS NULL
@@ -4427,10 +4465,6 @@ def get_available_equipment_for_vehicle_attach(
         conditions.append("wi.category = %s")
         values.append(category)
 
-    if city_id:
-        conditions.append("wi.city_id = %s")
-        values.append(city_id)
-
     if search:
         conditions.append(
             """
@@ -4454,12 +4488,18 @@ def get_available_equipment_for_vehicle_attach(
             like_value,
         ])
 
-    where_clause = " AND ".join(conditions)
-
     connection = get_connection()
 
     try:
         with connection.cursor() as cursor:
+            scoped_city_id = apply_warehouse_city_scope(cursor, current_user, city_id)
+
+            if scoped_city_id:
+                conditions.append("wi.city_id = %s")
+                values.append(scoped_city_id)
+
+            where_clause = " AND ".join(conditions)
+
             cursor.execute(
                 f"""
                 SELECT
@@ -4696,7 +4736,6 @@ def attach_equipment_to_vehicle(
     """
     Прямая привязка оборудования к машине без заявки.
 
-    Доступ: ADMIN / WAREHOUSE_MANAGER.
     Источник: только свободное оборудование со склада IN_STOCK.
     """
     require_vehicle_equipment_manage(current_user)
@@ -6273,7 +6312,7 @@ def get_request_vehicle_equipment(
                     TIMESTAMPDIFF(SECOND, re.attached_at, NOW()) AS detach_age_seconds,
                     DATE_ADD(
                         re.attached_at,
-                        INTERVAL 120 SECOND
+                        INTERVAL %s SECOND
                     ) AS detach_deadline_at,
                     re.note,
 
@@ -6299,7 +6338,10 @@ def get_request_vehicle_equipment(
                 WHERE re.request_vehicle_id = %s
                 ORDER BY re.attached_at DESC
                 """,
-                (request_vehicle_id,)
+                (
+                    REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS,
+                    request_vehicle_id
+                )
             )
 
             rows = cursor.fetchall()

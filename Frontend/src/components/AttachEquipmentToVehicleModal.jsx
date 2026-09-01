@@ -139,15 +139,12 @@ export default function AttachEquipmentToVehicleModal({
 
 	const currentUser = getStoredUser()
 
-	const canAttachDirectVehicleEquipment =
-		hasAnyPermission(currentUser, [
-			'warehouse.vehicle_equipment.manage',
-			'vehicles.equipment.manage',
-			'vehicles.equipment.attach',
-			'vehicles.manage',
-			'warehouse.manage',
-			'warehouse.items.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	// Совпадает с VEHICLE_EQUIPMENT_MANAGE_PERMISSION_CODES в warehouse.py.
+	const canAttachDirectVehicleEquipment = hasAnyPermission(currentUser, [
+		'vehicles.equipment.manage',
+		'warehouse.vehicle_equipment.manage',
+		'warehouse.manage',
+	])
 
 	const maxQuantity = useMemo(() => {
 		return getAvailableQuantity(selectedWarehouseItem)

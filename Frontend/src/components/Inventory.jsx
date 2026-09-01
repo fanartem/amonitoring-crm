@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
-import { getStoredUser, hasAnyPermission, hasLegacyRole } from '../utils/access'
+import { getStoredUser, hasAnyPermission } from '../utils/access'
 import '../styles/Requests.css'
 import '../styles/Warehouse.css'
 
@@ -290,125 +290,39 @@ function HistoryModal({ item, history, onClose }) {
 export default function Inventory() {
 	const currentUser = getStoredUser()
 
-	const canManageInventory =
-		hasAnyPermission(currentUser, [
-			'warehouse.inventory.manage',
-			'warehouse.inventory.manage_all',
-			'warehouse.employee_inventory.manage',
-			'warehouse.employees_inventory.manage',
-			'warehouse.inventory.manage_employees',
-			'warehouse.technician_inventory.manage',
-			'warehouse.technicians_inventory.manage',
-			'warehouse.assigned_inventory.manage',
-			'warehouse.employee_equipment.manage',
-			'warehouse.manage_employee_equipment',
-			'warehouse.manage_technician_inventory',
-			'warehouse.staff_inventory.manage',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) || hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	/*
+		Проверки должны совпадать с backend/app/routers/warehouse.py:
 
-	const canViewInventory =
-		canManageInventory ||
-		hasAnyPermission(currentUser, [
-			'warehouse.inventory.view',
-			'warehouse.inventory.view_all',
-			'warehouse.employee_inventory.view',
-			'warehouse.employees_inventory.view',
-			'warehouse.technician_inventory.view',
-			'warehouse.technician_inventory.manage',
-			'warehouse.items.view',
-			'warehouse.view',
-		]) ||
-		hasLegacyRole(currentUser, [
-			'ADMIN',
-			'WAREHOUSE_MANAGER',
-			'SENIOR_TECHNICIAN',
-		])
+		- список инвентаря  -> require_inventory_full_read()
+		  (INVENTORY_FULL_READ_PERMISSION_CODES, без warehouse.manage — намеренно)
+		- история предмета  -> require_warehouse_full_read()
+		- всё управление    -> require_warehouse_manage()
 
-	const canSeeHistory =
-		canManageInventory ||
-		hasAnyPermission(currentUser, [
-			'warehouse.history.view',
-			'warehouse.items.history.view',
-			'warehouse.items.view',
-			'warehouse.inventory.view',
-			'warehouse.inventory.view_all',
-			'warehouse.view',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+		Скрытые алиасы (warehouse.inventory.view, warehouse.employee_inventory.*,
+		warehouse.history.view) здесь недопустимы: снять их через интерфейс нельзя.
+	*/
+	const canViewInventory = hasAnyPermission(currentUser, [
+		'warehouse.inventory.view_all',
+		'warehouse.inventory.manage_all',
+	])
 
-	const canAddManualInventory =
-		canManageInventory ||
-		hasAnyPermission(currentUser, [
-			'warehouse.inventory.manual_add',
-			'warehouse.inventory.assign',
-			'warehouse.employee_inventory.manage',
-			'warehouse.employee_equipment.manage',
-			'warehouse.items.create',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	const canManageInventory = hasAnyPermission(currentUser, ['warehouse.manage'])
 
-	const canTransferInventoryToUser =
-		canManageInventory ||
-		hasAnyPermission(currentUser, [
-			'warehouse.inventory.transfer',
-			'warehouse.inventory.assign',
-			'warehouse.employee_inventory.manage',
-			'warehouse.employee_equipment.manage',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	const canSeeHistory = hasAnyPermission(currentUser, [
+		'warehouse.view',
+		'warehouse.manage',
+	])
 
-	const canTransferInventoryToStock =
-		canManageInventory ||
-		hasAnyPermission(currentUser, [
-			'warehouse.inventory.transfer_to_stock',
-			'warehouse.inventory.return_to_stock',
-			'warehouse.inventory.transfer',
-			'warehouse.employee_inventory.manage',
-			'warehouse.employee_equipment.manage',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canTransferInventory =
-		canTransferInventoryToUser || canTransferInventoryToStock
-
-	const canEditInventoryItem =
-		canManageInventory ||
-		hasAnyPermission(currentUser, [
-			'warehouse.inventory.edit',
-			'warehouse.items.edit',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canDeleteInventoryItem =
-		canManageInventory ||
-		hasAnyPermission(currentUser, [
-			'warehouse.inventory.delete',
-			'warehouse.items.delete',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
-
-	const canManageInventoryThresholds =
-		canManageInventory ||
-		hasAnyPermission(currentUser, [
-			'warehouse.consumable_thresholds.manage',
-			'warehouse.thresholds.manage',
-			'warehouse.inventory.thresholds.manage',
-			'warehouse.items.manage',
-			'warehouse.manage',
-		]) ||
-		hasLegacyRole(currentUser, ['ADMIN', 'WAREHOUSE_MANAGER'])
+	// Бэкенд не различает эти операции — все они требуют warehouse.manage.
+	// Отдельные имена оставлены, чтобы разметку не переписывать
+	// и чтобы было куда подключить гранулярные права, если решим их оживить.
+	const canAddManualInventory = canManageInventory
+	const canTransferInventoryToUser = canManageInventory
+	const canTransferInventoryToStock = canManageInventory
+	const canTransferInventory = canManageInventory
+	const canEditInventoryItem = canManageInventory
+	const canDeleteInventoryItem = canManageInventory
+	const canManageInventoryThresholds = canManageInventory
 
 	const [inventory, setInventory] = useState([])
 	const [cities, setCities] = useState([])

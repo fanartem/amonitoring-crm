@@ -2,42 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router'
 import { API_BASE_URL, getAuthHeaders } from '../api'
+import { getStoredUser } from '../utils/access'
 import '../styles/Requests.css'
 import '../styles/Reports.css'
-
-const getTokenPayload = () => {
-	try {
-		const token = localStorage.getItem('access_token')
-		if (!token) return null
-		const base64Url = token.split('.')[1]
-		const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-		const jsonPayload = decodeURIComponent(
-			atob(base64)
-				.split('')
-				.map(function (c) {
-					return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-				})
-				.join(''),
-		)
-		return JSON.parse(jsonPayload)
-	} catch (error) {
-		return null
-	}
-}
-
-const getUserRole = () => getTokenPayload()?.role ?? null
-
-// В разных версиях токена id пользователя лежит под разными ключами —
-// перебираем известные варианты, чтобы не завязываться на один формат.
-const getUserId = () => {
-	const payload = getTokenPayload()
-	if (!payload) return null
-
-	const raw = payload.user_id ?? payload.id ?? payload.sub
-	const parsed = Number(raw)
-
-	return Number.isFinite(parsed) ? parsed : null
-}
 
 const toNumber = value => {
 	const parsed = Number(value)
@@ -1503,13 +1470,16 @@ function ClientAutocomplete({ clients, value, onChange }) {
 
 export default function Reports() {
 	const navigate = useNavigate()
-	const tokenRole = getUserRole()
-	const tokenUserId = getUserId()
+	const storedUser = getStoredUser()
 	const [access, setAccess] = useState(null)
 	const [accessLoading, setAccessLoading] = useState(true)
-	const userRole = access?.role ?? tokenRole
-	const userId = access?.user_id != null ? Number(access.user_id) : tokenUserId
+	const userRole = access?.role ?? storedUser?.role ?? null
+	const userId =
+		access?.user_id != null
+			? Number(access.user_id)
+			: Number(storedUser?.id) || null
 	const canViewRequestReports = Boolean(access?.can_view_request_reports)
+	const canViewAllRequestReports = Boolean(access?.can_view_all_request_reports)
 	const canViewWarehouseReports = Boolean(access?.can_view_warehouse_reports)
 	const canViewManagerReports = Boolean(access?.can_view_manager_reports)
 	const canViewReports = Boolean(access?.can_view_reports)
@@ -1558,8 +1528,11 @@ export default function Reports() {
 	})
 
 	const isWarehouseMode = canViewWarehouseReports && reportMode === 'warehouse'
-	const isManagerView = userRole === 'MANAGER'
-	const canSplitPersonal = isManagerView && userId != null
+
+	// Отчёт ограничен своими заявками — значит нужен личный блок.
+	// Это ровно то условие, по которому бэкенд сужает выборку в get_request_rows().
+	const isPersonalReport = canViewRequestReports && !canViewAllRequestReports
+	const canSplitPersonal = isPersonalReport && userId != null
 	const isManagerReportMode = canViewManagerReports && reportMode === 'manager'
 	const selectedManagerIdNum = selectedManagerId
 		? Number(selectedManagerId)
@@ -1988,7 +1961,7 @@ export default function Reports() {
 				)}
 			</div>
 
-			{userRole === 'MANAGER' && (
+			{isPersonalReport && (
 				<div className='reports-scope-note'>
 					Отчёт построен по заявкам, доступным вашей роли: созданные вами и
 					заявки клиентов, где вы ответственный менеджер — не по всей компании.

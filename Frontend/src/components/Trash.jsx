@@ -5,48 +5,20 @@ import { getWorkTypeColor, getWorkTypeLabel } from '../utils/workTypes'
 import '../styles/Requests.css'
 import '../styles/Clients.css'
 
-const LEGACY_REQUEST_TRASH_ROLES = ['ADMIN', 'ROP']
-const LEGACY_CLIENT_TRASH_ROLES = ['ADMIN']
-
-const isLegacyRequestTrashRole = user =>
-	LEGACY_REQUEST_TRASH_ROLES.includes(user?.role)
-
-const isLegacyClientTrashRole = user =>
-	LEGACY_CLIENT_TRASH_ROLES.includes(user?.role)
-
+// Списки должны совпадать с бэкендом:
+// REQUEST_TRASH_VIEW_PERMISSION_CODES и REQUEST_RESTORE_PERMISSION_CODES
+// в requests.py, CLIENT_TRASH_VIEW_PERMISSION_CODES
+// и CLIENT_RESTORE_PERMISSION_CODES в clients.py.
 const canViewRequestTrash = user =>
-	hasAnyPermission(user, [
-		'trash.view',
-		'trash.manage',
-		'requests.restore',
-		'requests.delete_any',
-		'requests.manage',
-	]) || isLegacyRequestTrashRole(user)
+	hasAnyPermission(user, ['requests.deleted.view'])
 
-const canRestoreRequestTrash = user =>
-	hasAnyPermission(user, [
-		'trash.manage',
-		'requests.restore',
-		'requests.manage',
-	]) || isLegacyRequestTrashRole(user)
+const canRestoreRequestTrash = user => hasAnyPermission(user, ['requests.restore'])
 
 const canViewClientTrash = user =>
-	hasAnyPermission(user, [
-		'trash.view',
-		'trash.clients.view',
-		'trash.manage',
-		'clients.deleted.view',
-		'clients.restore',
-		'clients.manage',
-	]) || isLegacyClientTrashRole(user)
+	hasAnyPermission(user, ['clients.trash.view', 'clients.manage'])
 
 const canRestoreClientTrash = user =>
-	hasAnyPermission(user, [
-		'trash.manage',
-		'trash.clients.restore',
-		'clients.restore',
-		'clients.manage',
-	]) || isLegacyClientTrashRole(user)
+	hasAnyPermission(user, ['clients.restore', 'clients.manage'])
 
 const STATUS_LABELS = {
 	NEW: 'В ожидании',

@@ -63,41 +63,27 @@ const CLIENT_PAYMENT_TYPES = {
 	POSTPAYMENT: 'Постоплата',
 }
 
-const LEGACY_PAYMENT_TYPE_ROLES = ['ADMIN', 'ROP']
-const LEGACY_SCHEDULE_BYPASS_ROLES = ['ADMIN']
-const LEGACY_SCHEDULE_APPROVAL_DECIDE_ROLES = ['ADMIN', 'ROP']
-
-const getNormalizedUserRole = user => String(user?.role || '').toUpperCase()
-
-const hasLegacyRole = (user, roles) =>
-	roles.includes(getNormalizedUserRole(user))
-
+// Списки совпадают с бэкендом:
+// CLIENT_PAYMENT_TYPE_MANAGE_PERMISSION_CODES в clients.py,
+// REQUEST_SCHEDULE_BYPASS/APPROVAL_DECIDE_PERMISSION_CODES в requests.py.
 const canManageClientPaymentType = user =>
 	hasAnyPermission(user, [
 		'clients.payment_type.manage',
-		'clients.payment_type.edit',
 		'clients.payment.manage',
-		'clients.payment.edit',
 		'clients.manage',
-		'requests.client_payment.manage',
-		'requests.payment_type.manage',
-		'requests.payment.manage',
-		'requests.manage',
-	]) || hasLegacyRole(user, LEGACY_PAYMENT_TYPE_ROLES)
+	])
 
 const canBypassRequestScheduleRules = user =>
 	hasAnyPermission(user, [
 		'requests.schedule.bypass',
 		'requests.schedule.bypass_limits',
-		'requests.manage',
-	]) || hasLegacyRole(user, LEGACY_SCHEDULE_BYPASS_ROLES)
+	])
 
 const canDecideRequestScheduleApproval = user =>
 	hasAnyPermission(user, [
 		'requests.schedule_approval.decide',
 		'requests.schedule.approve',
-		'requests.manage',
-	]) || hasLegacyRole(user, LEGACY_SCHEDULE_APPROVAL_DECIDE_ROLES)
+	])
 
 function SearchableSelect({
 	value,
@@ -425,11 +411,21 @@ export default function CreateRequestModal({
 	const isEditMode = !!editRequestData
 
 	const user = useMemo(() => getStoredUser(), [])
+
+	// Заявку можно создавать и без права заводить новых клиентов —
+	// тогда доступен только выбор существующего.
+	const canCreateClient = hasAnyPermission(user, [
+		'clients.create',
+		'clients.manage',
+	])
+
 	const canSetPaymentType = canManageClientPaymentType(user)
 	const canBypassScheduleRules = canBypassRequestScheduleRules(user)
 	const canDecideScheduleApproval = canDecideRequestScheduleApproval(user)
 
-	const [clientKind, setClientKind] = useState('new')
+	const [clientKind, setClientKind] = useState(
+		canCreateClient ? 'new' : 'existing',
+	)
 	const [clientsList, setClientsList] = useState([])
 	const [clientVehicles, setClientVehicles] = useState([])
 	const [cities, setCities] = useState([])
@@ -571,7 +567,7 @@ export default function CreateRequestModal({
 				manager_comment: '',
 			})
 		} else {
-			setClientKind('new')
+			setClientKind(canCreateClient ? 'new' : 'existing')
 			setClientVehicles([])
 			setRequestVehicles([createEmptyRequestVehicle()])
 			setFormData(emptyForm)
@@ -1246,7 +1242,7 @@ export default function CreateRequestModal({
 	}
 
 	const handleClose = () => {
-		setClientKind('new')
+		setClientKind(canCreateClient ? 'new' : 'existing')
 		setError('')
 		setMissingFields([])
 		setClientVehicles([])
@@ -2210,7 +2206,7 @@ export default function CreateRequestModal({
 									Данные клиента
 								</div>
 
-								{!isEditMode && (
+								{!isEditMode && canCreateClient && (
 									<div className='request-toggle-row'>
 										<label className='request-radio-pill'>
 											<input

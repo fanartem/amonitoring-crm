@@ -12,8 +12,6 @@ from app.database import get_connection
 from app.permissions import (
     attach_effective_permissions,
     get_user_base_access,
-    has_any_permission,
-    is_super_admin,
 )
 
 load_dotenv()
@@ -59,19 +57,16 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
+        user_id = int(payload["sub"])
 
-        if user_id is None:
-            raise credentials_exception
-
-    except JWTError:
+    except (JWTError, KeyError, TypeError, ValueError):
         raise credentials_exception
 
     connection = get_connection()
 
     try:
         with connection.cursor() as cursor:
-            user = get_user_base_access(cursor, int(user_id))
+            user = get_user_base_access(cursor, user_id)
 
             if user is None:
                 raise credentials_exception
@@ -79,7 +74,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
             if not user["is_approved"]:
                 raise HTTPException(status_code=403, detail="User not approved")
 
-            if user.get("is_active") == 0 or user.get("deleted_at") is not None:
+            if not user.get("is_active") or user.get("deleted_at") is not None:
                 raise credentials_exception
 
             if not user.get("role_code"):
@@ -88,7 +83,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
                     detail="Роль пользователя не найдена в системе доступов"
                 )
 
-            if user.get("role_is_active") == 0:
+            if not user.get("role_is_active"):
                 raise HTTPException(
                     status_code=403,
                     detail="Роль пользователя отключена"
@@ -100,12 +95,3 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
     finally:
         connection.close()
-
-def get_current_admin(current_user: dict = Depends(get_current_user)):
-    if not (
-        is_super_admin(current_user)
-        or has_any_permission(current_user, ["admin.access", "employees.manage", "settings.manage"])
-    ):
-        raise HTTPException(status_code=403, detail="Недостаточно прав администратора")
-
-    return current_user
