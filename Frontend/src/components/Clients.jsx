@@ -113,6 +113,16 @@ export default function Clients() {
 
 	const canDeleteClient = hasAnyPermission(currentUser, ['clients.delete'])
 
+	// Фильтр «Ответственный» и выпадающий список в карточке клиента берут данные
+	// из /users/responsible-managers. Показываем их тем, кто видит чужих клиентов:
+	// роли с областью «свои клиенты» фильтр по ответственному не нужен —
+	// все её клиенты и так её.
+	const canViewResponsibleFilter = hasAnyPermission(currentUser, [
+		'clients.view_all',
+		'clients.responsible.reassign',
+		'clients.manage',
+	])
+
 	const canSoftDeleteVehicle = hasAnyPermission(currentUser, [
 		'vehicles.delete',
 		'vehicles.manage',
@@ -168,12 +178,6 @@ export default function Clients() {
 					'vehicles.create',
 					'vehicles.manage',
 					'clients.manage',
-				]) ||
-				hasLegacyRole(currentUser, [
-					'ADMIN',
-					'ROP',
-					'MANAGER',
-					'TECH_SUPPORT',
 				])) &&
 			String(client?.status || 'ACTIVE') !== 'BLOCKED'
 		)
