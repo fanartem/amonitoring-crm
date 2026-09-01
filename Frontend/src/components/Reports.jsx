@@ -1534,9 +1534,12 @@ export default function Reports() {
 	const isPersonalReport = canViewRequestReports && !canViewAllRequestReports
 	const canSplitPersonal = isPersonalReport && userId != null
 	const isManagerReportMode = canViewManagerReports && reportMode === 'manager'
+	const isManagerView =
+		isPersonalReport && !isManagerReportMode && userId != null
 	const selectedManagerIdNum = selectedManagerId
 		? Number(selectedManagerId)
 		: null
+	
 	const personaId = isManagerView
 		? userId
 		: isManagerReportMode
