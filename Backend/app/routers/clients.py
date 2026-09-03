@@ -1200,6 +1200,7 @@ def load_client_installation_settings_row(cursor, client_id: int) -> dict | None
             has_blocking,
             has_beacon,
             beacon_subscription_months,
+            vin_required,
             created_at,
             updated_at
         FROM client_installation_settings
@@ -1251,6 +1252,11 @@ def build_installation_settings_payload(
             "has_blocking": bool(row.get("has_blocking")),
             "has_beacon": bool(row.get("has_beacon")),
             "beacon_subscription_months": int(row.get("beacon_subscription_months") or 0),
+
+            # Отсутствие значения читаем как «обязателен»: настройка
+            # может только ослабить требование, и только осознанно.
+            "vin_required": bool(row.get("vin_required", 1)),
+
             "updated_at": row.get("updated_at") or row.get("created_at"),
         },
         "sensors": load_client_installation_sensors(cursor, int(row["id"])),
@@ -1339,6 +1345,12 @@ def describe_installation_settings(payload: dict) -> str:
         )
     else:
         parts.append("без датчиков")
+
+    parts.append(
+        "VIN обязателен"
+        if settings.get("vin_required", True)
+        else "VIN необязателен при создании заявки"
+    )
 
     if payload.get("source") == "INHERITED":
         parts.append(f"унаследовано от «{payload.get('inherited_from_client_name')}»")
@@ -3278,6 +3290,11 @@ def update_client_installation_settings(
 
             has_beacon = bool(data.has_beacon)
 
+            # Снятая галочка означает «VIN можно не указывать при создании
+            # заявки», а не «VIN не нужен». Завершить работы без него всё
+            # равно не получится — проверка стоит в /requests/{id}/complete.
+            vin_required = bool(data.vin_required)
+
             # Блокировка и подписка трекера существуют только вместе с трекером.
             has_blocking = bool(data.has_blocking) if gps_price_code else False
 
@@ -3325,10 +3342,11 @@ def update_client_installation_settings(
                     has_blocking,
                     has_beacon,
                     beacon_subscription_months,
+                    vin_required,
                     created_by,
                     updated_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     visit_type = VALUES(visit_type),
                     visit_price_code = VALUES(visit_price_code),
@@ -3338,6 +3356,7 @@ def update_client_installation_settings(
                     has_blocking = VALUES(has_blocking),
                     has_beacon = VALUES(has_beacon),
                     beacon_subscription_months = VALUES(beacon_subscription_months),
+                    vin_required = VALUES(vin_required),
                     updated_by = VALUES(updated_by)
                 """,
                 (
@@ -3350,6 +3369,7 @@ def update_client_installation_settings(
                     1 if has_blocking else 0,
                     1 if has_beacon else 0,
                     beacon_months,
+                    1 if vin_required else 0,
                     current_user["id"],
                     current_user["id"],
                 ),

@@ -31,6 +31,10 @@ const EMPTY_FORM = {
 	has_blocking: false,
 	has_beacon: false,
 	beacon_subscription_months: 1,
+
+	// По умолчанию VIN обязателен: снимают требование точечно
+	// и осознанно, а не по недосмотру при заведении шаблона.
+	vin_required: true,
 }
 
 const formatDateTime = value => {
@@ -138,6 +142,11 @@ export default function ClientInstallationSettingsModal({
 						beacon_subscription_months: Number(
 							loaded.beacon_subscription_months || 0,
 						),
+
+						// Отсутствие поля читаем как «обязателен» — то же
+						// правило, что на бэкенде: молчание значит «как
+						// у всех», а не «можно без VIN».
+						vin_required: loaded.vin_required !== false,
 					})
 				} else {
 					setUpdatedAt(null)
@@ -288,6 +297,7 @@ export default function ClientInstallationSettingsModal({
 				beacon_subscription_months: form.has_beacon
 					? Number(form.beacon_subscription_months || 0)
 					: 0,
+				vin_required: Boolean(form.vin_required),
 				sensors: sensors
 					.filter(sensor => sensor.name.trim())
 					.map(sensor => ({
@@ -374,6 +384,7 @@ export default function ClientInstallationSettingsModal({
 					beacon_subscription_months: Number(
 						loaded.beacon_subscription_months || 0,
 					),
+					vin_required: loaded.vin_required !== false,
 				})
 			} else {
 				setForm({ ...EMPTY_FORM, gps_price_code: trackers[0]?.code || '' })
@@ -556,6 +567,55 @@ export default function ClientInstallationSettingsModal({
 											))}
 										</select>
 									</label>
+
+									<div className='vehicle-field vehicle-full'>
+										<span className='vehicle-label'>
+											VIN при создании заявки
+										</span>
+
+										<div className='client-install-radio-list'>
+											{[
+												{ value: true, label: 'Обязателен' },
+												{ value: false, label: 'Можно указать позже' },
+											].map(option => (
+												<label
+													key={String(option.value)}
+													className={`client-install-radio ${
+														form.vin_required === option.value ? 'active' : ''
+													}`}
+												>
+													<input
+														type='radio'
+														name='vin_required'
+														checked={form.vin_required === option.value}
+														disabled={isReadOnly}
+														onChange={() =>
+															updateForm('vin_required', option.value)
+														}
+													/>
+													{option.label}
+												</label>
+											))}
+										</div>
+
+										{form.vin_required ? (
+											<span className='client-install-hint'>
+												Обычный порядок: без VIN машину в заявку не добавить.
+											</span>
+										) : (
+											<div
+												className='client-install-banner none'
+												style={{ marginTop: 10, marginBottom: 0 }}
+											>
+												<strong>VIN всё равно потребуется</strong>
+												<span>
+													Заявку можно будет создать без VIN, но привязать оборудование и завершить работы
+													без VIN не получится: система не даст. VIN впишет
+													монтажник на месте или ответственный менеджер.
+												</span>
+											</div>
+										)}
+									</div>
 								</div>
 							</div>
 

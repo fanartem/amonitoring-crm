@@ -2344,3 +2344,203 @@
 	z-index: 999;
 	background: rgba(0, 0, 0, 0.4);
 }
+
+/* Машина без VIN: клиент создал заявку до того, как узнал VIN.
+   Заявку с такой машиной нельзя завершить — метка нужна, чтобы это
+   не всплывало только в момент нажатия «Завершить». */
+.request-vehicle-novin {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 1px 7px;
+	border-radius: 20px;
+	background: #fdf0d5;
+	color: #9a6a05;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.2px;
+	vertical-align: middle;
+	white-space: nowrap;
+}
+
+/* ===========================================================================
+   ДОБАВИТЬ В КОНЕЦ frontend/src/styles/Requests.css
+   =========================================================================== */
+
+/* Машина без VIN: клиент создал заявку до того, как узнал VIN.
+   Заявку с такой машиной нельзя завершить — метка нужна, чтобы это
+   не всплывало только в момент нажатия «Завершить».
+   (Если этот блок уже добавлен на шаге 356 — не дублируйте.) */
+.request-vehicle-novin {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 1px 7px;
+	border-radius: 20px;
+	background: #fdf0d5;
+	color: #9a6a05;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.2px;
+	vertical-align: middle;
+	white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Редактирование машины прямо в карточке заявки
+   --------------------------------------------------------------------------- */
+
+.request-vehicle-edit-btn {
+	background: #fff;
+	border: 1px solid #d5dae0;
+	color: #5a8a1f;
+	width: 28px;
+	height: 28px;
+	border-radius: 7px;
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
+	flex-shrink: 0;
+	align-self: flex-start;
+	margin-left: auto;
+	transition: background 0.15s ease;
+}
+
+.request-vehicle-edit-btn:hover {
+	background: #f1f6e9;
+	border-color: #a9c47f;
+}
+
+.vehicle-editor {
+	background: #f7f9f4;
+	border: 1px solid #dde5d2;
+	border-radius: 9px;
+	padding: 12px 14px;
+	margin-top: 10px;
+}
+
+.vehicle-editor-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+	gap: 10px 14px;
+	margin-bottom: 12px;
+}
+
+.vehicle-editor-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.vehicle-editor-vin {
+	margin-top: 2px;
+}
+
+.vehicle-editor-label {
+	font-size: 11px;
+	font-weight: 700;
+	color: #6b7681;
+	text-transform: uppercase;
+	letter-spacing: 0.3px;
+}
+
+.vehicle-editor-input {
+	width: 100%;
+	box-sizing: border-box;
+	border: 1px solid #d5dae0;
+	border-radius: 7px;
+	padding: 7px 10px;
+	font-size: 13px;
+	font-family: inherit;
+	color: #2f3640;
+	background: #fff;
+}
+
+.vehicle-editor-input:focus {
+	outline: none;
+	border-color: #5a8a1f;
+	box-shadow: 0 0 0 3px rgba(90, 138, 31, 0.15);
+}
+
+.vehicle-editor-input:disabled {
+	background: #f2f4f6;
+	color: #8b949e;
+}
+
+.vehicle-editor-input-vin {
+	font-family: 'Consolas', 'Menlo', 'Courier New', monospace;
+	letter-spacing: 1.2px;
+	text-transform: uppercase;
+}
+
+.vehicle-editor-static {
+	font-size: 13px;
+	color: #2f3640;
+	font-weight: 600;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.vehicle-editor-static-note {
+	font-size: 11px;
+	font-weight: 400;
+	color: #9aa4ae;
+}
+
+.vehicle-editor-error {
+	font-size: 12px;
+	color: #c62828;
+	margin-top: 6px;
+	line-height: 1.35;
+}
+
+.vehicle-editor-warning {
+	font-size: 12px;
+	color: #9a6a05;
+	margin-top: 6px;
+	line-height: 1.35;
+}
+
+.vehicle-editor-note {
+	font-size: 12px;
+	color: #6b7681;
+	margin-top: 10px;
+	line-height: 1.4;
+}
+
+.vehicle-editor-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.vehicle-editor-btn {
+	border: 1px solid #d5dae0;
+	background: #fff;
+	color: #2f3640;
+	border-radius: 7px;
+	padding: 7px 15px;
+	font-size: 13px;
+	font-weight: 600;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.vehicle-editor-btn:hover:not(:disabled) {
+	background: #f2f4f6;
+}
+
+.vehicle-editor-btn:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.vehicle-editor-btn.primary {
+	background: #5a8a1f;
+	border-color: #5a8a1f;
+	color: #fff;
+}
+
+.vehicle-editor-btn.primary:hover:not(:disabled) {
+	background: #4d7719;
+}

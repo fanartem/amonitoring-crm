@@ -30,6 +30,7 @@ from app.permissions import (
     can_view_portal_installation_settings,
     can_view_portal_prices,
     client_branch_is_blocked,
+    client_vin_is_required,
     get_user_client_id,
 )
 
@@ -249,6 +250,10 @@ def resolve_portal_request_vehicles(
 
     client_id = int(client["id"])
 
+    # Один раз на всю заявку: обход дерева клиентов в цикле по машинам
+    # был бы запросом на каждое авто.
+    vin_required = client_vin_is_required(cursor, client_id)
+
     vehicle_ids = []
     seen_vins = set()
 
@@ -276,7 +281,10 @@ def resolve_portal_request_vehicles(
                     detail=f"Автомобиль {index}: не найден у выбранной организации",
                 )
 
-            if not str(existing.get("vin") or "").strip():
+            if (
+                not str(existing.get("vin") or "").strip()
+                and vin_required
+            ):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Автомобиль {index}: у машины не указан VIN",
@@ -293,19 +301,23 @@ def resolve_portal_request_vehicles(
 
         vin = normalize_vin(vehicle_input.vin)
 
-        if not vin:
+        # Клиент с выключенной галочкой VIN не знает: машину показывает
+        # поставщик уже монтажнику. Заявку создаём, но завершить её
+        # без VIN не даст /requests/{id}/complete.
+        if not vin and vin_required:
             raise HTTPException(
                 status_code=400,
                 detail=f"Автомобиль {index}: укажите VIN",
             )
 
-        if vin in seen_vins:
+        if vin and vin in seen_vins:
             raise HTTPException(
                 status_code=400,
                 detail=f"VIN {vin} указан у нескольких автомобилей в заявке",
             )
 
-        seen_vins.add(vin)
+        if vin:
+            seen_vins.add(vin)
 
         brand = normalize_vehicle_text(vehicle_input.brand)
         model = normalize_vehicle_text(vehicle_input.model)
@@ -327,24 +339,30 @@ def resolve_portal_request_vehicles(
                     detail=f"Автомобиль {index}: некорректный год выпуска",
                 )
 
-        cursor.execute(
-            """
-            SELECT
-                v.id,
-                v.client_id,
-                v.is_deleted,
-                c.name AS client_name,
-                c.company_name AS client_company_name
-            FROM vehicles v
-            LEFT JOIN clients c ON c.id = v.client_id
-            WHERE v.vin = %s
-              AND v.is_deleted = 0
-            LIMIT 1
-            """,
-            (vin,),
-        )
+        # Проверять занятость нечего, пока VIN нет. Уникальность включится
+        # сама, когда его впишут: uq_vehicles_active_vin считает пустой
+        # VIN как NULL и таких строк допускает сколько угодно.
+        vin_owner = None
 
-        vin_owner = cursor.fetchone()
+        if vin:
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.is_deleted,
+                    c.name AS client_name,
+                    c.company_name AS client_company_name
+                FROM vehicles v
+                LEFT JOIN clients c ON c.id = v.client_id
+                WHERE v.vin = %s
+                  AND v.is_deleted = 0
+                LIMIT 1
+                """,
+                (vin,),
+            )
+
+            vin_owner = cursor.fetchone()
 
         if vin_owner:
             owner_client_id = int(vin_owner["client_id"] or 0)
@@ -394,7 +412,7 @@ def resolve_portal_request_vehicles(
                 brand,
                 model,
                 normalize_plate_number(vehicle_input.plate_number) or "БЕЗГРНЗ",
-                vin,
+                vin or None,
                 year,
                 normalize_vehicle_text(vehicle_input.type) or "Легковая",
             ),
@@ -577,6 +595,13 @@ def get_portal_installation_settings(
                     "visit_type": settings.get("visit_type"),
                     "visit_price_code": settings.get("visit_price_code"),
                     "platform": settings.get("platform"),
+
+                    # По этому полю модалка решает, обязателен ли VIN.
+                    # Отсутствие значения читаем как «обязателен» — то же
+                    # правило, что в client_vin_is_required: молчание
+                    # означает «как у всех», а не «можно без VIN».
+                    "vin_required": bool(settings.get("vin_required", True)),
+
                     "gps_price_code": settings.get("gps_price_code"),
                     "gps_price_name": gps_price_name,
                     "tracker_subscription_months": int(

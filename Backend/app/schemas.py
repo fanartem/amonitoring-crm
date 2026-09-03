@@ -222,6 +222,10 @@ class ClientInstallationSettingsUpdate(BaseModel):
 
     sensors: list["ClientInstallationSensorInput"] = []
 
+    # По умолчанию True: старый фронт, который поля не присылает,
+    # продолжает сохранять обязательный VIN, а не снимает требование молча.
+    vin_required: bool = True
+
 class VehicleCreate(BaseModel):
     client_id: int
     brand: str
@@ -246,6 +250,13 @@ class VehicleClientTransfer(BaseModel):
 class VehicleDeleteRequest(BaseModel):
     delete_reason_type: str
     delete_reason: str
+
+class VehicleVinFill(BaseModel):
+    vin: str
+
+    # Заявка, через которую монтажник получает доступ к машине.
+    # Тем, у кого есть права на клиента, поле не нужно.
+    request_id: int | None = None
 
 class CityCreate(BaseModel):
     name: str

@@ -1,0 +1,401 @@
+/* ===========================================================================
+   Окно завершения работ.
+
+   Классы с префиксом crm- намеренно не пересекаются ни с pm- (портал),
+   ни с существующими стилями заявок: окно вызывается и из списка заявок,
+   и из модалки деталей, и не должно ловить чужие правила по каскаду.
+   =========================================================================== */
+
+.crm-modal-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(15, 23, 42, 0.55);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+	z-index: 4000;
+}
+
+.crm-modal {
+	background: #f4f5f7;
+	border-radius: 14px;
+	width: 100%;
+	max-width: 620px;
+	max-height: 90vh;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	box-shadow: 0 24px 60px rgba(15, 23, 42, 0.3);
+}
+
+/* ---------- Шапка ---------- */
+
+.crm-modal-header {
+	background: #5a8a1f;
+	color: #fff;
+	padding: 16px 20px;
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	flex-shrink: 0;
+}
+
+.crm-modal-title {
+	font-size: 17px;
+	font-weight: 700;
+	line-height: 1.25;
+}
+
+.crm-modal-subtitle {
+	font-size: 13px;
+	opacity: 0.85;
+	margin-top: 3px;
+}
+
+.crm-modal-close {
+	background: rgba(255, 255, 255, 0.16);
+	border: none;
+	color: #fff;
+	width: 30px;
+	height: 30px;
+	border-radius: 8px;
+	font-size: 20px;
+	line-height: 1;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+
+.crm-modal-close:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.28);
+}
+
+.crm-modal-close:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* ---------- Тело ---------- */
+
+.crm-modal-body {
+	padding: 16px 20px;
+	overflow-y: auto;
+	flex: 1;
+}
+
+.crm-complete-section {
+	background: #fff;
+	border: 1px solid #e3e6ea;
+	border-radius: 10px;
+	padding: 14px 16px;
+	margin-bottom: 12px;
+}
+
+.crm-complete-section:last-child {
+	margin-bottom: 0;
+}
+
+.crm-complete-section-title {
+	font-size: 14px;
+	font-weight: 700;
+	color: #2f3640;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.crm-complete-section-count {
+	font-size: 12px;
+	font-weight: 600;
+	color: #7a8590;
+	background: #eef1f4;
+	border-radius: 20px;
+	padding: 2px 9px;
+}
+
+.crm-complete-empty {
+	font-size: 13px;
+	color: #9aa4ae;
+}
+
+/* Пока не приехали свежие данные заявки, кнопки заблокированы —
+   строка объясняет, почему. */
+.crm-complete-loading {
+	font-size: 13px;
+	color: #6b7681;
+	background: #fff;
+	border: 1px solid #e3e6ea;
+	border-radius: 9px;
+	padding: 11px 13px;
+	margin-bottom: 12px;
+}
+
+/* ---------- Строка с полем VIN ---------- */
+
+.crm-complete-vin-row {
+	margin-bottom: 12px;
+}
+
+.crm-complete-vin-row:last-child {
+	margin-bottom: 0;
+}
+
+.crm-complete-vin-label {
+	font-size: 13px;
+	font-weight: 600;
+	color: #4b5560;
+	margin-bottom: 5px;
+}
+
+.crm-input {
+	width: 100%;
+	box-sizing: border-box;
+	border: 1px solid #d5dae0;
+	border-radius: 8px;
+	padding: 9px 11px;
+	font-size: 14px;
+	font-family: inherit;
+	color: #2f3640;
+	background: #fff;
+	letter-spacing: 0.5px;
+}
+
+.crm-input:focus {
+	outline: none;
+	border-color: #5a8a1f;
+	box-shadow: 0 0 0 3px rgba(90, 138, 31, 0.15);
+}
+
+.crm-input:disabled {
+	background: #f2f4f6;
+	color: #8b949e;
+}
+
+.crm-input-error {
+	border-color: #d64545;
+}
+
+/* Поле VIN: моноширинный шрифт и счётчик символов. Монтажник переписывает
+   17 знаков со стекла — счётчик нужен, чтобы не пересчитывать глазами. */
+
+.crm-complete-vin-field {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.crm-input-vin {
+	font-family: 'Consolas', 'Menlo', 'Courier New', monospace;
+	letter-spacing: 1.5px;
+	text-transform: uppercase;
+	padding-right: 74px;
+}
+
+.crm-vin-counter {
+	position: absolute;
+	right: 11px;
+	font-size: 12px;
+	font-weight: 700;
+	color: #9aa4ae;
+	pointer-events: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.crm-vin-counter.ok {
+	color: #4a7318;
+}
+
+.crm-complete-vin-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+	margin-top: 14px;
+	padding-top: 12px;
+	border-top: 1px solid #eef1f4;
+}
+
+.crm-complete-vin-hint {
+	font-size: 12px;
+	color: #7a8590;
+	line-height: 1.4;
+	flex: 1;
+	min-width: 180px;
+}
+
+.crm-field-error {
+	font-size: 12px;
+	color: #c62828;
+	margin-top: 5px;
+	line-height: 1.35;
+}
+
+/* Подсказка, а не ошибка: VIN нестандартной длины у спецтехники —
+   норма, но чаще это опечатка, и сказать об этом стоит. */
+.crm-field-warning {
+	font-size: 12px;
+	color: #9a6a05;
+	margin-top: 5px;
+	line-height: 1.35;
+}
+
+/* ---------- Сводка по машинам ---------- */
+
+.crm-complete-vehicle {
+	border-bottom: 1px solid #eef1f4;
+	padding: 9px 0;
+}
+
+.crm-complete-vehicle:first-of-type {
+	padding-top: 0;
+}
+
+.crm-complete-vehicle:last-child {
+	border-bottom: none;
+	padding-bottom: 0;
+}
+
+.crm-complete-vehicle-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: #2f3640;
+}
+
+.crm-complete-vehicle-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 5px;
+}
+
+.crm-tag {
+	font-size: 11px;
+	font-weight: 700;
+	border-radius: 20px;
+	padding: 3px 9px;
+	letter-spacing: 0.2px;
+}
+
+.crm-tag-ok {
+	background: #e8f3dc;
+	color: #4a7318;
+}
+
+.crm-tag-warn {
+	background: #fdf0d5;
+	color: #9a6a05;
+}
+
+.crm-tag-danger {
+	background: #fce8e8;
+	color: #b32020;
+}
+
+/* ---------- Сообщения ---------- */
+
+.crm-alert {
+	border-radius: 9px;
+	padding: 11px 13px;
+	font-size: 13px;
+	line-height: 1.45;
+	margin-bottom: 12px;
+}
+
+.crm-alert:last-child {
+	margin-bottom: 0;
+}
+
+.crm-alert-warn {
+	background: #fdf6e3;
+	border: 1px solid #f0dca8;
+	color: #7a5a05;
+}
+
+.crm-alert-error {
+	background: #fdeaea;
+	border: 1px solid #f2bcbc;
+	color: #a72020;
+}
+
+.crm-alert-success {
+	background: #eef6e3;
+	border: 1px solid #cfe3b3;
+	color: #4a7318;
+	font-weight: 600;
+}
+
+.crm-alert-title {
+	font-weight: 700;
+	margin-bottom: 4px;
+}
+
+.crm-alert-text {
+	margin-bottom: 6px;
+}
+
+.crm-alert-list {
+	margin: 0 0 8px;
+	padding-left: 18px;
+}
+
+.crm-alert-list li {
+	margin-bottom: 2px;
+}
+
+/* ---------- Подвал ---------- */
+
+.crm-modal-footer {
+	background: #fff;
+	border-top: 1px solid #e3e6ea;
+	padding: 12px 20px;
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+	flex-shrink: 0;
+}
+
+.crm-btn {
+	border: 1px solid #d5dae0;
+	background: #fff;
+	color: #2f3640;
+	border-radius: 8px;
+	padding: 9px 18px;
+	font-size: 14px;
+	font-weight: 600;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.crm-btn:hover:not(:disabled) {
+	background: #f2f4f6;
+}
+
+.crm-btn:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.crm-btn-primary {
+	background: #5a8a1f;
+	border-color: #5a8a1f;
+	color: #fff;
+}
+
+.crm-btn-primary:hover:not(:disabled) {
+	background: #4d7719;
+}
+
+@media (max-width: 600px) {
+	.crm-modal-overlay {
+		padding: 0;
+		align-items: flex-end;
+	}
+
+	.crm-modal {
+		max-width: 100%;
+		max-height: 100vh;
+		border-radius: 0;
+	}
+}

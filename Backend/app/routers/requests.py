@@ -44,7 +44,20 @@ from app.permissions import (
     can_create_portal_comment,
     can_view_portal_subclients,
     get_client_branch_ids,
+
+    # Настраиваемая обязательность VIN. Правило и помощники живут
+    # в permissions.py: тот же вопрос задают portal_requests.py,
+    # vehicles.py и warehouse.py, ответ у всех обязан быть один.
+    can_fill_vehicle_vin,
+    client_vin_is_required,
+    describe_vehicle_without_vin,
+    find_request_vehicles_without_vin,
 )
+
+# Правило «кто может править машины этого клиента» живёт в vehicles.py
+# вместе с самими эндпоинтами машин. Импорт односторонний: vehicles.py
+# роутеры не импортирует, кольца не будет.
+from app.routers.vehicles import can_edit_vehicle_for_client
 
 from datetime import datetime, time, timezone, timedelta
 from app.notification_service import (
@@ -961,6 +974,7 @@ CLIENT_HIDDEN_REQUEST_FIELDS = (
     "created_by",
     "created_by_role",
     "responsible_manager_id",
+    "client_created_by",
     "current_user_is_executor",
 )
 
@@ -1240,6 +1254,9 @@ def attach_portal_request_permissions(
     request["delete_window_seconds_left"] = 0
     request["can_edit_payment"] = False
     request["can_accept"] = False
+    request["can_complete"] = False
+    request["can_edit_vehicles"] = False
+    request["can_fill_vehicle_vin"] = False
 
     request["can_view_prices"] = can_view_portal_prices(current_user)
 
@@ -1340,6 +1357,60 @@ def attach_request_permissions(
         not in [SCHEDULE_APPROVAL_PENDING, SCHEDULE_APPROVAL_REJECTED]
     )
 
+    # Право завершить работы. Считаем здесь по той же причине, что и
+    # can_accept: условий четыре — статус, наличие исполнителя, право
+    # и (для «только своих») принадлежность к исполнителям. Фронт этот
+    # набор повторять не должен, он разойдётся молча.
+    #
+    # Список исполнителей к этому моменту уже приклеен
+    # (attach_executors_to_requests вызывается раньше), но на всякий
+    # случай учитываем и assigned_to.
+    current_user_is_request_executor = (
+        request.get("assigned_to") is not None
+        and int(request["assigned_to"]) == user_id
+    ) or any(
+        executor.get("user_id") is not None
+        and int(executor["user_id"]) == user_id
+        for executor in (request.get("executors") or [])
+    )
+
+    request["can_complete"] = bool(
+        str(request.get("status")) == "IN_PROGRESS"
+        and request.get("assigned_to") is not None
+        and (
+            user_can_complete_any_request(current_user)
+            or (
+                user_can_complete_assigned_request(current_user)
+                and current_user_is_request_executor
+            )
+        )
+    )
+
+    # Машины заявки. Флаги считаем здесь, потому что «редактирование машин
+    # своих клиентов» зависит от создателя и ответственного менеджера
+    # КЛИЕНТА — этих полей у фронта нет и быть не должно.
+    #
+    # can_edit_vehicles     — открыть карточку машины на полное редактирование;
+    # can_fill_vehicle_vin  — только вписать недостающий VIN. Второе есть
+    #                         у монтажника, у которого прав на клиента нет
+    #                         вовсе: доступ ему даёт сама заявка.
+    request_client = {
+        "id": request.get("client_id"),
+        "type": request.get("client_type"),
+        "name": request.get("client_name"),
+        "company_name": request.get("company_name"),
+        "status": request.get("client_status"),
+        "created_by": request.get("client_created_by"),
+        "responsible_manager_id": request.get("responsible_manager_id"),
+    }
+
+    request["can_edit_vehicles"] = bool(
+        request.get("client_id")
+        and can_edit_vehicle_for_client(request_client, current_user)
+    )
+
+    request["can_fill_vehicle_vin"] = can_fill_vehicle_vin(current_user)
+
     # Заявка подклиента, доступная через родителя: показываем, но
     # ничего менять по ней нельзя.
     is_inherited_access = request_is_inherited_from_subclient(
@@ -1360,6 +1431,9 @@ def attach_request_permissions(
         request["delete_window_seconds_left"] = 0
         request["can_edit_payment"] = False
         request["can_accept"] = False
+        request["can_complete"] = False
+        request["can_edit_vehicles"] = False
+        request["can_fill_vehicle_vin"] = False
 
     return request
 
@@ -1994,7 +2068,13 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         detail=f"Машина {vehicle_input.vehicle_id} находится в корзине"
                     )
 
-                if not vehicle.get("vin") or not str(vehicle.get("vin")).strip():
+                # Требование VIN настраивается по клиенту. Это не отмена
+                # требования: без VIN нельзя будет завершить работы —
+                # проверка стоит в /requests/{id}/complete.
+                if (
+                    (not vehicle.get("vin") or not str(vehicle.get("vin")).strip())
+                    and client_vin_is_required(cursor, int(client["id"]))
+                ):
                     raise HTTPException(
                         status_code=400,
                         detail=f"У машины {vehicle_input.vehicle_id} не указан VIN. Нельзя создать заявку без VIN"
@@ -2473,6 +2553,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     c.status AS client_status,
                     c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
+                    c.created_by AS client_created_by,
 
                     responsible.name AS responsible_manager_name
 
@@ -4152,6 +4233,131 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                     detail="Недостаточно прав для завершения заявки"
                 )
 
+            # ----------------------------------------------------------------
+            # Проверки перед завершением работ.
+            #
+            # Порядок важен: без VIN оборудование всё равно не привязать,
+            # и монтажник должен увидеть сначала «нет VIN», а не «нет
+            # оборудования» — иначе он полезет привязывать и упрётся
+            # во вторую стену.
+            # ----------------------------------------------------------------
+
+            # 1. VIN — для всех видов работ.
+            #
+            # Клиент вроде ФортеБанка создаёт заявку без VIN: машину
+            # показывает поставщик уже на месте. Здесь эта отсрочка
+            # заканчивается — монтажник стоит у машины и VIN видит.
+            vehicles_without_vin = find_request_vehicles_without_vin(cursor, request_id)
+
+            if vehicles_without_vin:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM request_vehicles
+                    WHERE request_id = %s
+                    ORDER BY id ASC
+                    """,
+                    (request_id,),
+                )
+
+                # Позиция машины в заявке, а не в списке «без VIN»:
+                # иначе третье авто назвалось бы первым.
+                position_by_request_vehicle_id = {
+                    int(row["id"]): index
+                    for index, row in enumerate(cursor.fetchall() or [], start=1)
+                }
+
+                missing_vin_names = ", ".join(
+                    describe_vehicle_without_vin(
+                        vehicle,
+                        position_by_request_vehicle_id.get(
+                            int(vehicle["request_vehicle_id"])
+                        ),
+                    )
+                    for vehicle in vehicles_without_vin
+                )
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Нельзя завершить работы, пока не указан VIN: "
+                        f"{missing_vin_names}. Впишите VIN в карточке заявки "
+                        "или обратитесь к ответственному менеджеру."
+                    ),
+                )
+
+            # 2. Оборудование — только для установки (решение Р43).
+            #
+            # Требуем хотя бы одну единицу на КАЖДУЮ машину: установка
+            # делается по машинам, и заявка на три авто с оборудованием,
+            # привязанным к одной, — это потерянные два трекера.
+            #
+            # Снятие, диагностика и перепрошивка сюда не попадают:
+            # там оборудования может не быть вовсе.
+            if str(req.get("work_type") or "") == "INSTALLATION":
+                cursor.execute(
+                    """
+                    SELECT
+                        rv.id AS request_vehicle_id,
+                        v.brand,
+                        v.model,
+                        v.plate_number,
+                        v.vin,
+                        COUNT(re.id) AS equipment_count
+                    FROM request_vehicles rv
+                    LEFT JOIN vehicles v ON v.id = rv.vehicle_id
+                    LEFT JOIN request_equipment re
+                        ON re.request_vehicle_id = rv.id
+                    WHERE rv.request_id = %s
+                    GROUP BY
+                        rv.id,
+                        v.brand,
+                        v.model,
+                        v.plate_number,
+                        v.vin
+                    HAVING COUNT(re.id) = 0
+                    ORDER BY rv.id ASC
+                    """,
+                    (request_id,),
+                )
+
+                vehicles_without_equipment = cursor.fetchall() or []
+
+                if vehicles_without_equipment:
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM request_vehicles
+                        WHERE request_id = %s
+                        ORDER BY id ASC
+                        """,
+                        (request_id,),
+                    )
+
+                    position_by_request_vehicle_id = {
+                        int(row["id"]): index
+                        for index, row in enumerate(cursor.fetchall() or [], start=1)
+                    }
+
+                    missing_equipment_names = ", ".join(
+                        describe_vehicle_without_vin(
+                            vehicle,
+                            position_by_request_vehicle_id.get(
+                                int(vehicle["request_vehicle_id"])
+                            ),
+                        )
+                        for vehicle in vehicles_without_equipment
+                    )
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Нельзя завершить установку: не привязано "
+                            f"оборудование к машинам — {missing_equipment_names}. "
+                            "Привяжите оборудование в карточке заявки."
+                        ),
+                    )
+
             cursor.execute(
                 """
                 UPDATE requests
@@ -4929,6 +5135,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     c.status AS client_status,
                     c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
+                    c.created_by AS client_created_by,
                     c.parent_client_id,
                     responsible.name AS responsible_manager_name,
 

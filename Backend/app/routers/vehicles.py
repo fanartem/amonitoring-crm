@@ -1,14 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from app.database import get_connection
-from app.schemas import VehicleCreate, VehicleUpdate, VehicleClientTransfer, VehicleDeleteRequest
+from app.schemas import (
+    VehicleCreate,
+    VehicleUpdate,
+    VehicleClientTransfer,
+    VehicleDeleteRequest,
+    VehicleVinFill,
+)
 from app.security import get_current_user
 from app.permissions import (
+    add_client_history,
     can_create_request_for_client,
+    can_fill_vehicle_vin,
     can_open_client_details,
+    client_vin_is_required,
     has_any_permission,
     is_client_owned_by_user,
     require_employee_user,
+    vehicle_vin_is_empty,
 )
 
 import re
@@ -579,73 +589,83 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
             # 2. Только после проверки прав нормализуем и проверяем VIN.
             vin = normalize_vin(data.vin)
 
-            if not vin:
+            # Требование VIN настраивается по клиенту: у части клиентов
+            # машину показывает поставщик, и на момент заведения VIN
+            # не знает никто. Это не отмена требования, а перенос его
+            # на завершение работ — см. /requests/{id}/complete.
+            if not vin and client_vin_is_required(cursor, int(client["id"])):
                 raise HTTPException(
                     status_code=400,
                     detail="VIN обязателен при создании машины"
                 )
 
-            cursor.execute(
-                """
-                SELECT
-                    v.id,
-                    v.client_id,
-                    v.brand,
-                    v.model,
-                    v.plate_number,
-                    c.type AS client_type,
-                    c.name AS client_name,
-                    c.company_name AS client_company_name,
-                    c.status AS client_status,
-                    c.created_by AS client_created_by,
-                    c.responsible_manager_id AS client_responsible_manager_id,
-                    c.is_deleted AS client_is_deleted
-                FROM vehicles v
-                LEFT JOIN clients c ON v.client_id = c.id
-                WHERE v.vin = %s
-                  AND v.is_deleted = 0
-                LIMIT 1
-                """,
-                (vin,)
-            )
+            # Проверять занятость нечего, пока VIN нет. Уникальность включится
+            # сама, когда его впишут: индекс uq_vehicles_active_vin считает
+            # пустой VIN как NULL и таких строк допускает сколько угодно.
+            previous_deleted_vehicle_with_same_vin = None
 
-            existing_vehicle = cursor.fetchone()
+            if vin:
+                cursor.execute(
+                    """
+                    SELECT
+                        v.id,
+                        v.client_id,
+                        v.brand,
+                        v.model,
+                        v.plate_number,
+                        c.type AS client_type,
+                        c.name AS client_name,
+                        c.company_name AS client_company_name,
+                        c.status AS client_status,
+                        c.created_by AS client_created_by,
+                        c.responsible_manager_id AS client_responsible_manager_id,
+                        c.is_deleted AS client_is_deleted
+                    FROM vehicles v
+                    LEFT JOIN clients c ON v.client_id = c.id
+                    WHERE v.vin = %s
+                      AND v.is_deleted = 0
+                    LIMIT 1
+                    """,
+                    (vin,)
+                )
 
-            if existing_vehicle:
-                existing_client = build_client_from_vehicle_row(existing_vehicle)
+                existing_vehicle = cursor.fetchone()
 
-                if not can_reveal_client_identity(existing_client, current_user):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=FOREIGN_VIN_MESSAGE,
+                if existing_vehicle:
+                    existing_client = build_client_from_vehicle_row(existing_vehicle)
+
+                    if not can_reveal_client_identity(existing_client, current_user):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=FOREIGN_VIN_MESSAGE,
+                        )
+
+                    client_name = (
+                        existing_vehicle.get("client_company_name")
+                        or existing_vehicle.get("client_name")
+                        or f"ID клиента {existing_vehicle.get('client_id')}"
                     )
 
-                client_name = (
-                    existing_vehicle.get("client_company_name")
-                    or existing_vehicle.get("client_name")
-                    or f"ID клиента {existing_vehicle.get('client_id')}"
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Автомобиль с VIN {vin} уже существует у клиента: {client_name}"
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        client_id
+                    FROM vehicles
+                    WHERE vin = %s
+                    AND is_deleted = 1
+                    ORDER BY deleted_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (vin,)
                 )
 
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Автомобиль с VIN {vin} уже существует у клиента: {client_name}"
-                )
-
-            cursor.execute(
-                """
-                SELECT
-                    id,
-                    client_id
-                FROM vehicles
-                WHERE vin = %s
-                AND is_deleted = 1
-                ORDER BY deleted_at DESC, id DESC
-                LIMIT 1
-                """,
-                (vin,)
-            )
-
-            previous_deleted_vehicle_with_same_vin = cursor.fetchone()
+                previous_deleted_vehicle_with_same_vin = cursor.fetchone()
 
             sql = """
             INSERT INTO vehicles (client_id, brand, model, plate_number, vin, year, type)
@@ -659,7 +679,9 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
                     normalize_vehicle_text(data.brand),
                     normalize_vehicle_text(data.model),
                     normalize_plate_number(data.plate_number),
-                    vin,
+                    # Именно None, а не пустая строка: active_vin считает
+                    # пустым и то, и другое, но NULL честнее читается в базе.
+                    vin or None,
                     data.year,
                     normalize_vehicle_text(data.type),
                 )
@@ -698,7 +720,7 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
                 "vehicle_id": new_vehicle_id,
                 "linked_deleted_vehicles_count": 1 if previous_deleted_vehicle_with_same_vin else 0,
             }
-        
+
     except HTTPException:
         connection.rollback()
         raise
@@ -1920,30 +1942,45 @@ def update_vehicle(
                 new_vin = normalize_vin(update_data["vin"])
 
                 if not new_vin:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="VIN обязателен. Нельзя сохранить машину без VIN"
+                    # Стереть указанный VIN нельзя никому: на нём держатся
+                    # история и связь с оборудованием. А машине, у которой
+                    # его и не было, просто нечего менять — молча пропускаем
+                    # поле, чтобы форма не падала на пустом значении.
+                    cursor.execute(
+                        "SELECT vin FROM vehicles WHERE id = %s LIMIT 1",
+                        (vehicle_id,),
                     )
 
-                cursor.execute(
-                    """
-                    SELECT id
-                    FROM vehicles
-                    WHERE vin = %s
-                    AND id != %s
-                    AND is_deleted = 0
-                    """,
-                    (new_vin, vehicle_id)
-                )
-                existing_vehicle = cursor.fetchone()
+                    current_vin_row = cursor.fetchone()
 
-                if existing_vehicle:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Автомобиль с VIN {new_vin} уже существует"
+                    if not vehicle_vin_is_empty(current_vin_row):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="VIN обязателен. Нельзя стереть уже указанный VIN"
+                        )
+
+                    update_data.pop("vin")
+
+                if new_vin:
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM vehicles
+                        WHERE vin = %s
+                        AND id != %s
+                        AND is_deleted = 0
+                        """,
+                        (new_vin, vehicle_id)
                     )
+                    existing_vehicle = cursor.fetchone()
 
-                update_data["vin"] = new_vin
+                    if existing_vehicle:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Автомобиль с VIN {new_vin} уже существует"
+                        )
+
+                    update_data["vin"] = new_vin
 
             allowed_fields = ["brand", "model", "plate_number", "vin", "year", "type"]
 
@@ -1982,6 +2019,297 @@ def update_vehicle(
             }
 
     except HTTPException:
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+@router.post("/{vehicle_id}/vin")
+def fill_vehicle_vin(
+    vehicle_id: int,
+    data: VehicleVinFill,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Вписать недостающий VIN.
+
+    Зачем отдельный эндпоинт, а не PATCH /vehicles/{id}: тот требует права
+    редактировать машины клиента, которого монтажник обычно не видит вовсе —
+    у него область данных «назначенные заявки». Здесь доступ даёт сама
+    заявка: ты её исполнитель, машина в ней, VIN пустой — вписывай.
+
+    Три ограничения, и все три важны:
+      - только ПУСТОЙ VIN. Перебить указанный нельзя даже администратору
+        через этот эндпоинт: для исправления ошибок есть PATCH с полным
+        правом и с проверкой дублей;
+      - только по СВОЕЙ заявке, если прав на клиента нет;
+      - VIN проходит ту же проверку занятости, что и при создании машины.
+        Именно здесь всплывает дубль, который мы не смогли поймать раньше:
+        пока VIN не знали, сравнивать было нечего.
+    """
+    if not can_fill_vehicle_vin(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для указания VIN",
+        )
+
+    vin = normalize_vin(data.vin)
+
+    if not vin:
+        raise HTTPException(status_code=400, detail="Укажите VIN")
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+                    v.vin,
+                    v.is_deleted,
+
+                    c.type AS client_type,
+                    c.name AS client_name,
+                    c.company_name AS client_company_name,
+                    c.status AS client_status,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id AS client_responsible_manager_id,
+                    c.is_deleted AS client_is_deleted
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.id = %s
+                LIMIT 1
+                """,
+                (vehicle_id,),
+            )
+
+            vehicle = cursor.fetchone()
+
+            if not vehicle:
+                raise HTTPException(status_code=404, detail="Машина не найдена")
+
+            if vehicle["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя изменить машину из корзины",
+                )
+
+            if not vehicle_vin_is_empty(vehicle):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "У этой машины VIN уже указан. "
+                        "Исправить его может только менеджер."
+                    ),
+                )
+
+            client = build_client_from_vehicle_row(vehicle)
+
+            # Первый путь: обычные права на машины этого клиента.
+            has_client_access = can_edit_vehicle_for_client(client, current_user)
+
+            # Второй путь: своя заявка. Нужен монтажнику, который клиента
+            # не видит, но стоит у его машины.
+            if not has_client_access:
+                if not data.request_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для изменения этой машины",
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT r.id
+                    FROM requests r
+                    INNER JOIN request_vehicles rv
+                        ON rv.request_id = r.id
+                       AND rv.vehicle_id = %s
+                    WHERE r.id = %s
+                      AND r.is_deleted = 0
+                      AND (
+                            r.assigned_to = %s
+                            OR EXISTS (
+                                SELECT 1
+                                FROM request_executors re
+                                WHERE re.request_id = r.id
+                                  AND re.user_id = %s
+                            )
+                      )
+                    LIMIT 1
+                    """,
+                    (
+                        vehicle_id,
+                        int(data.request_id),
+                        current_user["id"],
+                        current_user["id"],
+                    ),
+                )
+
+                if not cursor.fetchone():
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для изменения этой машины",
+                    )
+
+            # Занятость VIN. Правила те же, что при создании машины:
+            # чужого клиента по имени не называем.
+            cursor.execute(
+                """
+                SELECT
+                    v.id,
+                    v.client_id,
+                    v.brand,
+                    v.model,
+                    v.plate_number,
+
+                    c.type AS client_type,
+                    c.name AS client_name,
+                    c.company_name AS client_company_name,
+                    c.status AS client_status,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id AS client_responsible_manager_id,
+                    c.is_deleted AS client_is_deleted
+                FROM vehicles v
+                LEFT JOIN clients c ON v.client_id = c.id
+                WHERE v.vin = %s
+                  AND v.is_deleted = 0
+                  AND v.id <> %s
+                LIMIT 1
+                """,
+                (vin, vehicle_id),
+            )
+
+            existing_vehicle = cursor.fetchone()
+
+            if existing_vehicle:
+                # Дубль внутри одного клиента — самый частый случай:
+                # машину завели дважды, пока VIN был неизвестен.
+                if (
+                    vehicle.get("client_id")
+                    and existing_vehicle.get("client_id")
+                    and int(existing_vehicle["client_id"]) == int(vehicle["client_id"])
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"У этого клиента уже есть машина с VIN {vin}. "
+                            "Похоже, автомобиль завели дважды — сообщите менеджеру, "
+                            "чтобы он объединил записи."
+                        ),
+                    )
+
+                existing_client = build_client_from_vehicle_row(existing_vehicle)
+
+                if not can_reveal_client_identity(existing_client, current_user):
+                    raise HTTPException(status_code=400, detail=FOREIGN_VIN_MESSAGE)
+
+                existing_client_name = get_client_display_name(existing_client)
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Автомобиль с VIN {vin} уже числится за клиентом: "
+                        f"{existing_client_name}"
+                    ),
+                )
+
+            # Тот же VIN мог обслуживаться раньше под удалённой записью.
+            # Связываем их, как это делает создание машины.
+            cursor.execute(
+                """
+                SELECT id, client_id
+                FROM vehicles
+                WHERE vin = %s
+                  AND is_deleted = 1
+                  AND id <> %s
+                ORDER BY deleted_at DESC, id DESC
+                LIMIT 1
+                """,
+                (vin, vehicle_id),
+            )
+
+            previous_deleted_vehicle = cursor.fetchone()
+
+            cursor.execute(
+                """
+                UPDATE vehicles
+                SET vin = %s
+                WHERE id = %s
+                  AND (vin IS NULL OR TRIM(vin) = '')
+                """,
+                (vin, vehicle_id),
+            )
+
+            # rowcount читаем сразу: VIN мог вписать другой исполнитель
+            # секунду назад, и переписывать его поверх нельзя.
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="VIN этой машины уже указан. Обновите страницу.",
+                )
+
+            if previous_deleted_vehicle:
+                cursor.execute(
+                    """
+                    INSERT IGNORE INTO vehicle_vin_links (
+                        vin,
+                        old_vehicle_id,
+                        new_vehicle_id,
+                        old_client_id,
+                        new_client_id,
+                        created_by,
+                        created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (
+                        vin,
+                        previous_deleted_vehicle["id"],
+                        vehicle_id,
+                        previous_deleted_vehicle.get("client_id"),
+                        vehicle.get("client_id"),
+                        current_user["id"],
+                    ),
+                )
+
+            # В журнал клиента: менеджер должен видеть, что VIN появился,
+            # и кто его вписал. Без этой записи «машина без VIN» тихо
+            # превращается в обычную, и следов не остаётся.
+            if vehicle.get("client_id"):
+                vehicle_title = (
+                    f"{vehicle.get('brand') or ''} {vehicle.get('model') or ''}".strip()
+                    or f"машина #{vehicle_id}"
+                )
+
+                add_client_history(
+                    cursor,
+                    client_id=int(vehicle["client_id"]),
+                    user_id=current_user["id"],
+                    action="VEHICLE_VIN_SET",
+                    field_name="vehicle_vin",
+                    old_value=None,
+                    new_value=vin,
+                    comment=f"Указан VIN: {vehicle_title}",
+                )
+
+            connection.commit()
+
+            return {
+                "message": "VIN сохранён",
+                "vehicle_id": vehicle_id,
+                "vin": vin,
+                "linked_deleted_vehicles_count": 1 if previous_deleted_vehicle else 0,
+            }
+
+    except HTTPException:
+        connection.rollback()
         raise
     except Exception as e:
         connection.rollback()

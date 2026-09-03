@@ -4,6 +4,7 @@ import { useLocation, useSearchParams } from 'react-router'
 import '../styles/Requests.css'
 import CreateRequestModal from './CreateRequestModal'
 import RequestDetailModal from './RequestDetailModal'
+import CompleteRequestModal from './CompleteRequestModal'
 import { notifyNewRequestCreated } from './notifications/NewRequestNotice'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
 import { getStoredUser, hasAnyPermission } from '../utils/access'
@@ -128,6 +129,11 @@ export default function Requests() {
 	const [editRequestData, setEditRequestData] = useState(null)
 	const [activeDropdown, setActiveDropdown] = useState(null)
 	const [detailModalTab, setDetailModalTab] = useState('info')
+
+	// Держим id, а не саму заявку: пока окно завершения открыто, список
+	// продолжает обновляться каждые 10 секунд, и окно должно видеть
+	// свежие данные — например VIN, который вписал второй исполнитель.
+	const [completingRequestId, setCompletingRequestId] = useState(null)
 
 	// Фильтры хранятся и в URL (query-параметры) — так отфильтрованный вид
 	// можно скинуть ссылкой, и он переживает обновление страницы/кнопку "назад".
@@ -1046,50 +1052,18 @@ export default function Requests() {
 		}
 	}
 
-	const canCompleteRequest = req => {
-		if (req.status !== 'IN_PROGRESS') return false
+	// Право завершить заявку считает сервер и отдаёт флагом can_complete
+	// (attach_request_permissions). Раньше тот же расчёт дублировался
+	// здесь по кодам прав — и молча расходился бы с бэкендом при первой
+	// же правке списка кодов.
 
-		const executors = getRequestExecutors(req)
-
-		if (executors.length === 0) return false
-
-		if (canByPermission(['requests.complete_any'])) {
-			return true
-		}
-
-		if (canByPermission(['requests.complete_own'])) {
-			return isCurrentUserExecutor(req)
-		}
-
-		return false
-	}
-
-	const handleCompleteRequest = async (e, req) => {
+	// Завершение больше не делается одним confirm: сначала надо убедиться,
+	// что у всех машин есть VIN, а на установке — привязано оборудование.
+	// Всё это показывает и решает CompleteRequestModal.
+	const handleCompleteRequest = (e, req) => {
 		e.stopPropagation()
-
-		if (
-			!window.confirm(
-				`Завершить заявку №${req.id}? После подтверждения статус изменится на "Работы завершены".`,
-			)
-		) {
-			return
-		}
-
-		try {
-			const res = await fetch(`${API_BASE_URL}/requests/${req.id}/complete`, {
-				method: 'PATCH',
-				headers: getJsonAuthHeaders(),
-			})
-
-			if (!res.ok) {
-				const errData = await res.json().catch(() => null)
-				throw new Error(errData?.detail || 'Ошибка при завершении заявки')
-			}
-
-			fetchRequests()
-		} catch (err) {
-			alert(`Ошибка: ${err.message}`)
-		}
+		setActiveDropdown(null)
+		setCompletingRequestId(Number(req.id))
 	}
 
 	const handleDeleteRequest = async (e, reqId) => {
@@ -1250,6 +1224,11 @@ export default function Requests() {
 	const activeFiltersCount = Object.entries(filters).filter(
 		([key, value]) => key !== 'sort_mode' && Boolean(value),
 	).length
+
+	// Заявка для окна завершения берётся из текущего списка, а не из
+	// замороженной копии: обновился список — обновилось и окно.
+	const completingRequest =
+		requests.find(req => Number(req.id) === Number(completingRequestId)) || null
 
 	return (
 		<div className='requests-page-container'>
@@ -1583,6 +1562,15 @@ export default function Requests() {
 													{getVehicleTitle(vehicle, index)}
 												</span>
 
+												{!String(vehicle.vin || '').trim() && (
+													<span
+														className='request-vehicle-novin'
+														title='VIN укажет монтажник на месте. Без него заявку не завершить.'
+													>
+														VIN не указан
+													</span>
+												)}
+
 												{Array.isArray(vehicle.equipment) &&
 													vehicle.equipment.length > 0 && (
 														<span className='request-equipment-badges'>
@@ -1887,7 +1875,7 @@ export default function Requests() {
 								</button>
 							)}
 
-							{canCompleteRequest(req) && (
+							{Boolean(req.can_complete) && (
 								<button
 									className='btn-complete-request'
 									onClick={e => handleCompleteRequest(e, req)}
@@ -1940,6 +1928,22 @@ export default function Requests() {
 				}}
 				onUpdated={() => fetchRequests()}
 				onEditClick={handleOpenEditFromDetail}
+			/>
+
+			<CompleteRequestModal
+				isOpen={Boolean(completingRequest)}
+				request={completingRequest}
+				onClose={() => setCompletingRequestId(null)}
+				onUpdated={() => fetchRequests()}
+				onCompleted={() => {
+					setCompletingRequestId(null)
+					fetchRequests()
+				}}
+				onOpenEquipment={req => {
+					setCompletingRequestId(null)
+					setDetailModalTab('equipment')
+					setSelectedRequestId(req.id)
+				}}
 			/>
 		</div>
 	)

@@ -1458,3 +1458,157 @@ def can_change_own_portal_password(user: dict | None) -> bool:
 
 def can_create_portal_comment(user: dict | None) -> bool:
     return has_portal_permission(user, PORTAL_COMMENT_CREATE_PERMISSION_CODES)
+
+# ============================================================================
+# Обязательность VIN по клиенту.
+#
+# Смысл настройки: VIN не становится необязательным, он становится
+# обязательным ПОЗЖЕ. Клиент вроде ФортеБанка на момент создания заявки
+# VIN не знает — машину показывает поставщик уже монтажнику. Но завершить
+# работы без VIN нельзя никому: проверка стоит в /requests/{id}/complete.
+# ============================================================================
+
+VEHICLE_VIN_FILL_PERMISSION_CODES = [
+    "vehicles.vin.fill",
+    "vehicles.manage",
+]
+
+
+def can_fill_vehicle_vin(user: dict | None) -> bool:
+    """
+    Право вписать недостающий VIN.
+
+    Само право не разрешает менять уже указанный VIN и не открывает
+    чужие заявки — это проверяет роутер. Здесь только «есть ли право
+    вообще» и «это сотрудник».
+
+    Клиентская учётка сюда не попадает никогда: VIN — это то, чего
+    клиент как раз и не знает, а если бы знал, вписал бы при создании.
+    """
+    if not is_employee_user(user):
+        return False
+
+    return has_any_permission(user, VEHICLE_VIN_FILL_PERMISSION_CODES)
+
+
+def client_vin_is_required(cursor, client_id: int | None) -> bool:
+    """
+    Обязателен ли VIN при создании заявки для этого клиента.
+
+    Правило наследования повторяет resolve_client_installation_settings
+    из clients.py: берём параметры ближайшего по цепочке клиента,
+    У КОТОРОГО ОНИ ЗАДАНЫ, и читаем его галочку. Не «ближайшего, где
+    галочка снята» — иначе настройка деда перебивала бы настройку отца.
+
+    Параметров нет нигде по цепочке — VIN обязателен. Отсутствие
+    настройки не должно ослаблять требование: молчание значит «как
+    у всех», а не «можно без VIN».
+    """
+    if not client_id:
+        return True
+
+    cursor.execute(
+        """
+        WITH RECURSIVE client_chain AS (
+            SELECT
+                c.id,
+                c.parent_client_id,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+
+            UNION ALL
+
+            SELECT
+                p.id,
+                p.parent_client_id,
+                chain.depth + 1
+            FROM clients p
+            INNER JOIN client_chain chain
+                ON p.id = chain.parent_client_id
+            WHERE p.is_deleted = 0
+              AND chain.depth < %s
+        )
+        SELECT cis.vin_required
+        FROM client_chain
+        INNER JOIN client_installation_settings cis
+            ON cis.client_id = client_chain.id
+        ORDER BY client_chain.depth ASC
+        LIMIT 1
+        """,
+        (int(client_id), CLIENT_PORTAL_TREE_MAX_DEPTH),
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return True
+
+    return to_bool(row.get("vin_required"))
+
+
+def vehicle_vin_is_empty(vehicle: dict | None) -> bool:
+    """
+    Пустой VIN — это NULL или строка из пробелов.
+
+    Одна функция на все проверки: в vehicles.vin ровно эти два варианта
+    и означают «ещё не знаем». Подставных значений там нет и быть
+    не должно — уникальный индекс на active_vin их не переживёт.
+    """
+    if not vehicle:
+        return True
+
+    return not str(vehicle.get("vin") or "").strip()
+
+
+def find_request_vehicles_without_vin(cursor, request_id: int) -> list[dict]:
+    """
+    Машины заявки, у которых VIN не указан.
+
+    Нужна и при завершении работ, и при привязке оборудования, поэтому
+    лежит рядом с правилом, а не в одном из роутеров.
+    """
+    cursor.execute(
+        """
+        SELECT
+            rv.id AS request_vehicle_id,
+            v.id AS vehicle_id,
+            v.brand,
+            v.model,
+            v.plate_number,
+            v.vin
+        FROM request_vehicles rv
+        INNER JOIN vehicles v ON v.id = rv.vehicle_id
+        WHERE rv.request_id = %s
+          AND (v.vin IS NULL OR TRIM(v.vin) = '')
+        ORDER BY rv.id ASC
+        """,
+        (int(request_id),),
+    )
+
+    return cursor.fetchall() or []
+
+
+def describe_vehicle_without_vin(vehicle: dict, index: int | None = None) -> str:
+    """
+    Как назвать машину без VIN в сообщении об ошибке.
+
+    Госномера у такой машины обычно тоже нет — остаются марка, модель
+    и порядковый номер в заявке. Этого достаточно, чтобы монтажник понял,
+    о какой из трёх одинаковых Camry идёт речь.
+    """
+    title = f"{vehicle.get('brand') or ''} {vehicle.get('model') or ''}".strip()
+    plate = str(vehicle.get("plate_number") or "").strip()
+
+    parts = []
+
+    if index is not None:
+        parts.append(f"авто {index}")
+
+    if title:
+        parts.append(title)
+
+    if plate:
+        parts.append(plate)
+
+    return " · ".join(parts) or "автомобиль"

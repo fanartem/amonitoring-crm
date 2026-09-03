@@ -4,6 +4,8 @@ import '../styles/Requests.css'
 
 import RequestEquipmentPanel from './RequestEquipmentPanel'
 import AttachmentsPanel from './AttachmentsPanel'
+import CompleteRequestModal from './CompleteRequestModal'
+import RequestVehicleEditor from './RequestVehicleEditor'
 import { getWorkTypeLabel } from '../utils/workTypes'
 import { getStoredUser, hasAnyPermission } from '../utils/access'
 
@@ -107,6 +109,12 @@ export default function RequestDetailModal({
 	const [error, setError] = useState('')
 	const [scheduleApprovalComment, setScheduleApprovalComment] = useState('')
 	const [scheduleApprovalLoading, setScheduleApprovalLoading] = useState(false)
+	const [isCompleteModalOpen, setCompleteModalOpen] = useState(false)
+	const [acceptLoading, setAcceptLoading] = useState(false)
+	const [editingVehicleId, setEditingVehicleId] = useState(null)
+
+	// Нужен, чтобы поймать именно УХОД с вкладки оборудования.
+	const previousTabRef = useRef(initialTab)
 
 	const currentUser = getStoredUser()
 
@@ -129,6 +137,22 @@ export default function RequestDetailModal({
 
 	const canEditRequest = Boolean(request?.can_edit)
 	const canChangeRequestStatus = Boolean(request?.can_change_status)
+
+	// Оба флага считает сервер (attach_request_permissions): здесь те же
+	// условия, что и в списке заявок, и расходиться они не должны.
+	const canAcceptRequest = Boolean(request?.can_accept)
+	const canCompleteRequest = Boolean(request?.can_complete)
+
+	// Права на машины заявки тоже считает сервер: у «редактирования машин
+	// своих клиентов» условие завязано на создателя и ответственного
+	// менеджера клиента, а этих полей у фронта нет.
+	const canEditVehicles = Boolean(request?.can_edit_vehicles)
+	const canFillVehicleVin = Boolean(request?.can_fill_vehicle_vin)
+
+	// Карандаш у машины: либо полное редактирование, либо только
+	// недостающий VIN — и второе лишь у машины, где его нет.
+	const canOpenVehicleEditor = vehicle =>
+		canEditVehicles || (canFillVehicleVin && !String(vehicle?.vin || '').trim())
 
 	const isRemovalRequest = request?.work_type === 'REMOVAL'
 
@@ -162,15 +186,18 @@ export default function RequestDetailModal({
 
 	useEffect(() => {
 		const handleKeyDown = e => {
-			if (e.key === 'Escape') onClose()
+			// Escape при открытом окне завершения должен закрывать его, а не
+			// модалку под ним — иначе монтажник теряет введённые VIN.
+			if (e.key === 'Escape' && !isCompleteModalOpen) onClose()
 		}
 		if (isOpen) window.addEventListener('keydown', handleKeyDown)
 		return () => window.removeEventListener('keydown', handleKeyDown)
-	}, [isOpen, onClose])
+	}, [isOpen, onClose, isCompleteModalOpen])
 
 	useEffect(() => {
 		if (isOpen && requestId) {
 			setActiveTab(initialTab)
+			setEditingVehicleId(null)
 			fetchRequestDetails()
 			fetchComments()
 			fetchTechnicians()
@@ -208,6 +235,20 @@ export default function RequestDetailModal({
 			setActiveTab('info')
 		}
 	}, [activeTab, canUseEquipmentTab])
+
+	// Оборудование привязывают на своей вкладке, а карточка машины живёт
+	// на «Информации». При возврате перечитываем заявку — иначе на экране
+	// остаётся состояние на момент открытия модалки, и «Завершить работы»
+	// ругается на оборудование, которое минуту назад привязали.
+	useEffect(() => {
+		const previousTab = previousTabRef.current
+
+		previousTabRef.current = activeTab
+
+		if (previousTab === 'equipment' && activeTab !== 'equipment' && requestId) {
+			fetchRequestDetails()
+		}
+	}, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
 	const fetchRequestDetails = async () => {
 		setLoading(true)
@@ -276,21 +317,20 @@ export default function RequestDetailModal({
 	const handleStatusChange = async e => {
 		const newStatus = e.target.value
 
-		try {
-			let res
+		// Завершение идёт только через окно завершения: там проверяются VIN
+		// и оборудование и там же их можно дозаполнить. Прямой PATCH просто
+		// вернул бы отказ, а исправить его было бы негде.
+		if (newStatus === 'COMPLETED') {
+			setCompleteModalOpen(true)
+			return
+		}
 
-			if (newStatus === 'COMPLETED') {
-				res = await fetch(`${API_BASE_URL}/requests/${requestId}/complete`, {
-					method: 'PATCH',
-					headers: getJsonAuthHeaders(),
-				})
-			} else {
-				res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
-					method: 'PATCH',
-					headers: getJsonAuthHeaders(),
-					body: JSON.stringify({ status: newStatus }),
-				})
-			}
+		try {
+			const res = await fetch(`${API_BASE_URL}/requests/${requestId}`, {
+				method: 'PATCH',
+				headers: getJsonAuthHeaders(),
+				body: JSON.stringify({ status: newStatus }),
+			})
 
 			if (!res.ok) {
 				const data = await res.json().catch(() => null)
@@ -302,6 +342,31 @@ export default function RequestDetailModal({
 			onUpdated()
 		} catch (err) {
 			alert(err.message)
+		}
+	}
+
+	const handleAcceptRequest = async () => {
+		if (!window.confirm('Принять эту заявку в работу?')) return
+
+		try {
+			setAcceptLoading(true)
+
+			const res = await fetch(`${API_BASE_URL}/requests/${requestId}/accept`, {
+				method: 'POST',
+				headers: getJsonAuthHeaders(),
+			})
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null)
+				throw new Error(data?.detail || 'Ошибка при принятии заявки')
+			}
+
+			await fetchRequestDetails()
+			onUpdated()
+		} catch (err) {
+			alert(err.message)
+		} finally {
+			setAcceptLoading(false)
 		}
 	}
 
@@ -872,23 +937,72 @@ export default function RequestDetailModal({
 																		</span>
 																	</div>
 																)}
+
+																{canOpenVehicleEditor(vehicle) &&
+																	editingVehicleId !==
+																		Number(vehicle.vehicle_id) && (
+																		<button
+																			type='button'
+																			className='request-vehicle-edit-btn'
+																			title={
+																				canEditVehicles
+																					? 'Изменить данные машины'
+																					: 'Указать VIN'
+																			}
+																			onClick={() =>
+																				setEditingVehicleId(
+																					Number(vehicle.vehicle_id),
+																				)
+																			}
+																		>
+																			✎
+																		</button>
+																	)}
 															</div>
 
-															<div className='request-vehicle-grid'>
-																<div className='info-row'>
-																	<span className='info-key'>Год выпуска</span>
-																	<span className='info-val'>
-																		{vehicle.year || '—'}
-																	</span>
-																</div>
+															{editingVehicleId ===
+															Number(vehicle.vehicle_id) ? (
+																<RequestVehicleEditor
+																	vehicle={vehicle}
+																	requestId={requestId}
+																	canEditVehicle={canEditVehicles}
+																	canFillVin={canFillVehicleVin}
+																	onCancel={() => setEditingVehicleId(null)}
+																	onSaved={() => {
+																		setEditingVehicleId(null)
+																		fetchRequestDetails()
+																		onUpdated()
+																	}}
+																/>
+															) : (
+																<div className='request-vehicle-grid'>
+																	<div className='info-row'>
+																		<span className='info-key'>
+																			Год выпуска
+																		</span>
+																		<span className='info-val'>
+																			{vehicle.year || '—'}
+																		</span>
+																	</div>
 
-																<div className='info-row vin-value'>
-																	<span className='info-key'>VIN-код</span>
-																	<span className='info-val'>
-																		{vehicle.vin || '—'}
-																	</span>
+																	<div className='info-row vin-value'>
+																		<span className='info-key'>VIN-код</span>
+
+																		{String(vehicle.vin || '').trim() ? (
+																			<span className='info-val'>
+																				{vehicle.vin}
+																			</span>
+																		) : (
+																			<span
+																				className='info-val request-vehicle-novin'
+																				title='VIN укажет монтажник при завершении работ'
+																			>
+																				VIN не указан
+																			</span>
+																		)}
+																	</div>
 																</div>
-															</div>
+															)}
 
 															{request.work_type === 'INSTALLATION' && (
 																<div className='request-extra-sensors-detail'>
@@ -1405,6 +1519,31 @@ export default function RequestDetailModal({
 							)}
 						</div>
 
+						{(canAcceptRequest || canCompleteRequest) && (
+							<div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+								{canAcceptRequest && (
+									<button
+										type='button'
+										className='btn-green'
+										onClick={handleAcceptRequest}
+										disabled={acceptLoading}
+									>
+										{acceptLoading ? 'Принимаем…' : 'Принять заявку'}
+									</button>
+								)}
+
+								{canCompleteRequest && (
+									<button
+										type='button'
+										className='btn-complete-request'
+										onClick={() => setCompleteModalOpen(true)}
+									>
+										Завершить работы
+									</button>
+								)}
+							</div>
+						)}
+
 						<div
 							style={{
 								display: 'flex',
@@ -1556,6 +1695,32 @@ export default function RequestDetailModal({
 						</div>
 					</div>
 				)}
+
+				{/* Внутри окна деталей намеренно: у .modal-overlay клик закрывает
+					модалку, а .custom-detail-window его останавливает. Снаружи
+					любой клик по окну завершения закрывал бы детали под ним. */}
+				<CompleteRequestModal
+					isOpen={isCompleteModalOpen}
+					request={request}
+					onClose={() => setCompleteModalOpen(false)}
+					onUpdated={() => {
+						fetchRequestDetails()
+						onUpdated()
+					}}
+					onCompleted={() => {
+						setCompleteModalOpen(false)
+						fetchRequestDetails()
+						onUpdated()
+					}}
+					onOpenEquipment={
+						canUseEquipmentTab
+							? () => {
+									setCompleteModalOpen(false)
+									setActiveTab('equipment')
+								}
+							: undefined
+					}
+				/>
 			</div>
 		</div>
 	)

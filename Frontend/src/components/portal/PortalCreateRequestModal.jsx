@@ -460,6 +460,11 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 	const needsApprovalReason = !isWorkingScheduleTime(dateValue, timeValue)
 	const needsCompanyFields = COMPANY_TYPES.includes(newClient.type)
 
+	// Отсутствие флага читаем как «обязателен» — ровно так же, как это
+	// делает сервер: молчание настроек значит «как у всех», а не «можно
+	// без VIN».
+	const vinRequired = contract?.vin_required !== false
+
 	const chosenVehicleIds = rows
 		.filter(row => row.mode === 'existing' && row.vehicle)
 		.map(row => Number(row.vehicle.id))
@@ -546,10 +551,15 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 
 			const vin = row.vin.trim().toUpperCase()
 
-			if (!vin) return `ТС ${number}: укажите VIN`
-			if (seenVins.has(vin)) return `VIN ${vin} указан дважды`
+			if (!vin && vinRequired) return `ТС ${number}: укажите VIN`
 
-			seenVins.add(vin)
+			// Пустой VIN — это ещё не значение, повторов среди пустых не бывает.
+			// Проверяем на дубль только то, что действительно вписали.
+			if (vin) {
+				if (seenVins.has(vin)) return `VIN ${vin} указан дважды`
+
+				seenVins.add(vin)
+			}
 
 			if (!row.brand.trim() || !row.model.trim()) {
 				return `ТС ${number}: укажите марку и модель`
@@ -1093,6 +1103,14 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 							</div>
 
 							<div className='pm-section-body'>
+								{!vinRequired && (
+									<div className='pm-banner info'>
+										По вашему договору VIN можно указать позже. Заявка примется
+										без него, но завершить работы и привязать оборудование без
+										VIN нельзя — монтажник впишет его на месте.
+									</div>
+								)}
+
 								{rows.map((row, index) => (
 									<div key={row.key} className='pm-card'>
 										<div className='pm-card-head'>
@@ -1146,7 +1164,8 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 											<>
 												<div className='pm-field'>
 													<label className='pm-label'>
-														VIN<span className='req'>*</span>
+														VIN
+														{vinRequired && <span className='req'>*</span>}
 													</label>
 
 													<input
@@ -1157,8 +1176,19 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 																vin: e.target.value.toUpperCase(),
 															})
 														}
-														placeholder='17 символов'
+														placeholder={
+															vinRequired
+																? '17 символов'
+																: '17 символов — можно оставить пустым'
+														}
 													/>
+
+													{!vinRequired && (
+														<div className='pm-hint'>
+															Если VIN пока неизвестен, оставьте поле пустым —
+															монтажник впишет его на месте.
+														</div>
+													)}
 												</div>
 
 												<div className='pm-grid pm-field'>

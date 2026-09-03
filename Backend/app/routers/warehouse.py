@@ -10,6 +10,7 @@ from app.permissions import (
     is_super_admin,
     is_client_user,
     require_employee_user,
+    vehicle_vin_is_empty,
     get_data_scope,
     DATA_SCOPE_CITY,
     DATA_SCOPE_CITY_ASSIGNED,
@@ -51,6 +52,20 @@ router = APIRouter(
 )
 
 REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS = 120
+
+# Привязка оборудования — это запись «трекер с серийником X стоит
+# в машине Y». Если у машины нет VIN, привязывать не к чему: машина
+# ещё не определена. А если VIN потом впишут неверно, неверной окажется
+# и вся история оборудования.
+#
+# Правило одинаковое для одной машины и для десяти: исключение
+# «можно, если авто в заявке одно» ничего не экономит — VIN всё равно
+# придётся вписать до завершения работ, в тот же визит.
+VEHICLE_WITHOUT_VIN_MESSAGE = (
+    "Сначала укажите VIN автомобиля, потом привязывайте оборудование. "
+    "Без VIN машина в системе не определена, и оборудование не к чему "
+    "привязать."
+)
 
 ALLOWED_CATEGORIES = [
     "GPS_TRACKER",
@@ -4816,6 +4831,14 @@ def attach_equipment_to_vehicle(
                     detail="Нельзя привязать оборудование к машине клиента из корзины"
                 )
 
+            # То же правило, что и при привязке через заявку: без VIN
+            # машина не определена, вешать на неё оборудование нельзя.
+            if vehicle_vin_is_empty(vehicle):
+                raise HTTPException(
+                    status_code=400,
+                    detail=VEHICLE_WITHOUT_VIN_MESSAGE,
+                )
+
             cursor.execute(
                 """
                 SELECT
@@ -5912,7 +5935,8 @@ def attach_equipment_to_request_vehicle(
 
                     v.brand,
                     v.model,
-                    v.plate_number
+                    v.plate_number,
+                    v.vin
                 FROM request_vehicles rv
                 INNER JOIN requests r ON rv.request_id = r.id
                 LEFT JOIN clients c ON r.client_id = c.id
@@ -5939,6 +5963,15 @@ def attach_equipment_to_request_vehicle(
                 raise HTTPException(
                     status_code=403,
                     detail="Добавлять оборудование можно только в назначенную вам заявку"
+                )
+
+            # Клиент с выключенной галочкой VIN создаёт заявку без него:
+            # машину показывает поставщик уже монтажнику. Здесь отсрочка
+            # заканчивается — оборудование вешается на конкретную машину.
+            if vehicle_vin_is_empty(request_vehicle):
+                raise HTTPException(
+                    status_code=400,
+                    detail=VEHICLE_WITHOUT_VIN_MESSAGE,
                 )
 
             request_id = request_vehicle["request_id"]
