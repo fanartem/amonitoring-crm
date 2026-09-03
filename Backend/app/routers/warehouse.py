@@ -8,6 +8,8 @@ from app.security import get_current_user
 from app.permissions import (
     has_any_permission,
     is_super_admin,
+    is_client_user,
+    require_employee_user,
     get_data_scope,
     DATA_SCOPE_CITY,
     DATA_SCOPE_CITY_ASSIGNED,
@@ -26,7 +28,27 @@ from app.schemas import (
     VehicleEquipmentDetach,
 )
 
-router = APIRouter(prefix="/warehouse", tags=["Warehouse"])
+def ensure_employee_access(current_user: dict = Depends(get_current_user)):
+    """
+    Склад целиком — внутренний модуль.
+
+    Проверка висит на роутере, а не на каждом эндпоинте: тогда любой
+    новый маршрут, который здесь появится завтра, окажется закрыт
+    для клиентских учёток по умолчанию, а не по памяти автора.
+    """
+    require_employee_user(
+        current_user,
+        detail="Раздел склада доступен только сотрудникам",
+    )
+
+    return current_user
+
+
+router = APIRouter(
+    prefix="/warehouse",
+    tags=["Warehouse"],
+    dependencies=[Depends(ensure_employee_access)],
+)
 
 REQUEST_EQUIPMENT_DETACH_TIME_LIMIT_SECONDS = 120
 
@@ -148,6 +170,14 @@ def to_bool(value) -> bool:
 
 
 def user_has_any_permission(current_user: dict, permission_codes: list[str]) -> bool:
+    # Вторая линия на случай, если проверку с роутера когда-нибудь снимут.
+    # Через эту функцию проходят ВСЕ складские права без исключения:
+    # can_manage_warehouse, can_read_warehouse_full, can_read_inventory_full,
+    # can_view_my_inventory, права по оборудованию заявок и машин.
+    # Клиентская учётка не получает здесь ни одного из них.
+    if is_client_user(current_user):
+        return False
+
     return is_super_admin(current_user) or has_any_permission(current_user, permission_codes)
 
 

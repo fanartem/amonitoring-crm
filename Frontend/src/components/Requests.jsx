@@ -933,6 +933,7 @@ export default function Requests() {
 		TECHNICIAN: 'Монтажник',
 		ACCOUNTANT: 'Бухгалтер',
 		WAREHOUSE_MANAGER: 'Зав. складом',
+		CLIENT_PORTAL: 'Клиент',
 	}
 
 	const roleClasses = {

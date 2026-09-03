@@ -8,6 +8,7 @@ from app.permissions import (
     can_open_client_details,
     has_any_permission,
     is_client_owned_by_user,
+    require_employee_user,
 )
 
 import re
@@ -16,7 +17,28 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.styles import Font, PatternFill, Alignment
 
-router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
+def ensure_employee_access(current_user: dict = Depends(get_current_user)):
+    """
+    Раздел машин — внутренний: глобальный поиск по всей базе, корзина,
+    история VIN, перенос между клиентами, импорт из Excel.
+
+    Кабинет получает список своих машин отдельным портальным эндпоинтом
+    с явным набором полей. Здесь два запроса делают SELECT *, и отдавать
+    такой ответ клиенту нельзя: любая новая колонка уехала бы к нему сама.
+    """
+    require_employee_user(
+        current_user,
+        detail="Раздел машин доступен только сотрудникам",
+    )
+
+    return current_user
+
+
+router = APIRouter(
+    prefix="/vehicles",
+    tags=["Vehicles"],
+    dependencies=[Depends(ensure_employee_access)],
+)
 
 ALLOWED_VEHICLE_DELETE_REASON_TYPES = [
     "EQUIPMENT_REMOVED",
@@ -171,6 +193,89 @@ def get_client_display_name(client: dict) -> str:
         client.get("company_name")
         or client.get("name")
         or f"ID клиента {client.get('id')}"
+    )
+
+
+# Та же глубина, что и в clients.py / requests.py.
+CLIENT_TREE_MAX_DEPTH = 10
+
+
+def find_blocking_client(cursor, client_id: int) -> dict | None:
+    """
+    Ближайший заблокированный клиент в цепочке «сам клиент → родители».
+
+    Блокировка наследуется вниз, поэтому заблокированный родитель
+    закрывает работу с машинами всей ветке подклиентов.
+
+    Реализовано здесь, а не импортом из clients.py: clients.py уже
+    импортирует can_edit_vehicle_for_client из этого модуля.
+    """
+    cursor.execute(
+        """
+        WITH RECURSIVE client_chain AS (
+            SELECT
+                c.id,
+                c.parent_client_id,
+                c.name,
+                c.company_name,
+                c.status,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+
+            UNION ALL
+
+            SELECT
+                p.id,
+                p.parent_client_id,
+                p.name,
+                p.company_name,
+                p.status,
+                chain.depth + 1
+            FROM clients p
+            INNER JOIN client_chain chain
+                ON p.id = chain.parent_client_id
+            WHERE p.is_deleted = 0
+              AND chain.depth < %s
+        )
+        SELECT id, name, company_name, status, depth
+        FROM client_chain
+        WHERE status = 'BLOCKED'
+        ORDER BY depth ASC
+        LIMIT 1
+        """,
+        (client_id, CLIENT_TREE_MAX_DEPTH),
+    )
+
+    return cursor.fetchone()
+
+
+def ensure_client_branch_not_blocked(
+    cursor,
+    client_id: int,
+    own_detail: str,
+    parent_detail_prefix: str,
+):
+    blocking_client = find_blocking_client(cursor, client_id)
+
+    if not blocking_client:
+        return
+
+    if int(blocking_client["depth"]) == 0:
+        raise HTTPException(status_code=400, detail=own_detail)
+
+    blocking_client_name = (
+        blocking_client.get("company_name")
+        or blocking_client.get("name")
+        or f"ID {blocking_client.get('id')}"
+    )
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"{parent_detail_prefix}: заблокирован родительский клиент "
+            f"«{blocking_client_name}»"
+        ),
     )
 
 
@@ -362,6 +467,26 @@ def ensure_can_access_client_vehicles(client: dict, current_user: dict):
         )
 
 
+FOREIGN_VIN_MESSAGE = (
+    "Автомобиль с этим VIN уже зарегистрирован в системе. "
+    "Обратитесь к вашему менеджеру."
+)
+
+
+def can_reveal_client_identity(client: dict, current_user: dict) -> bool:
+    """
+    Можно ли назвать этого клиента по имени в тексте ошибки или в ответе.
+
+    Правило то же, что и для доступа к его машинам: не видишь карточку —
+    не узнаёшь название компании. Иначе перебором VIN выгружается
+    клиентская база, причём без единого «запрещённого» запроса.
+    """
+    if not client or not client.get("id"):
+        return False
+
+    return can_access_client_vehicles(client, current_user)
+
+
 def can_edit_vehicle_for_client(client: dict, current_user: dict) -> bool:
     if has_any_permission(current_user, VEHICLE_EDIT_ALL_PERMISSION_CODES):
         return True
@@ -444,11 +569,12 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
                     detail="Недостаточно прав для добавления машины этому клиенту"
                 )
 
-            if client.get("status") == "BLOCKED":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Нельзя добавить машину заблокированному клиенту"
-                )
+            ensure_client_branch_not_blocked(
+                cursor,
+                int(client["id"]),
+                "Нельзя добавить машину заблокированному клиенту",
+                "Нельзя добавить машину",
+            )
 
             # 2. Только после проверки прав нормализуем и проверяем VIN.
             vin = normalize_vin(data.vin)
@@ -467,8 +593,13 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
                     v.brand,
                     v.model,
                     v.plate_number,
+                    c.type AS client_type,
                     c.name AS client_name,
-                    c.company_name AS client_company_name
+                    c.company_name AS client_company_name,
+                    c.status AS client_status,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id AS client_responsible_manager_id,
+                    c.is_deleted AS client_is_deleted
                 FROM vehicles v
                 LEFT JOIN clients c ON v.client_id = c.id
                 WHERE v.vin = %s
@@ -481,6 +612,14 @@ def create_vehicle(data: VehicleCreate, current_user: dict = Depends(get_current
             existing_vehicle = cursor.fetchone()
 
             if existing_vehicle:
+                existing_client = build_client_from_vehicle_row(existing_vehicle)
+
+                if not can_reveal_client_identity(existing_client, current_user):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=FOREIGN_VIN_MESSAGE,
+                    )
+
                 client_name = (
                     existing_vehicle.get("client_company_name")
                     or existing_vehicle.get("client_name")
@@ -835,6 +974,9 @@ def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
                     c.name AS client_name,
                     c.company_name,
                     c.type AS client_type,
+                    c.status AS client_status,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id AS client_responsible_manager_id,
                     c.is_deleted AS client_is_deleted
                 FROM vehicles v
                 LEFT JOIN clients c ON v.client_id = c.id
@@ -847,10 +989,35 @@ def check_vehicle_vin(vin: str, current_user: dict = Depends(get_current_user)):
 
             vehicle = cursor.fetchone()
 
+            if not vehicle:
+                return {
+                    "exists": False,
+                    "vin": normalized_vin,
+                    "vehicle": None,
+                    "is_foreign_client": False,
+                    "message": None,
+                }
+
+            existing_client = build_client_from_vehicle_row(vehicle)
+
+            # Чужой клиент: подтверждаем только факт занятости VIN.
+            # Ни имени, ни ID, ни марки — иначе эндпоинт превращается
+            # в справочник «чей это автомобиль» по номеру кузова.
+            if not can_reveal_client_identity(existing_client, current_user):
+                return {
+                    "exists": True,
+                    "vin": normalized_vin,
+                    "vehicle": None,
+                    "is_foreign_client": True,
+                    "message": FOREIGN_VIN_MESSAGE,
+                }
+
             return {
-                "exists": vehicle is not None,
+                "exists": True,
                 "vin": normalized_vin,
-                "vehicle": vehicle
+                "vehicle": vehicle,
+                "is_foreign_client": False,
+                "message": None,
             }
 
     finally:
@@ -1215,11 +1382,12 @@ def import_vehicles_preview(
                         detail="Клиент не найден"
                     )
 
-                if client.get("status") == "BLOCKED":
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Нельзя импортировать машины для заблокированного клиента"
-                    )
+                ensure_client_branch_not_blocked(
+                    cursor,
+                    int(client["id"]),
+                    "Нельзя импортировать машины для заблокированного клиента",
+                    "Нельзя импортировать машины",
+                )
 
                 if not can_create_request_for_client(client, current_user):
                     raise HTTPException(
@@ -1386,7 +1554,12 @@ def import_vehicles_preview(
                     v.type,
 
                     c.name AS client_name,
-                    c.company_name AS client_company_name
+                    c.company_name AS client_company_name,
+                    c.type AS client_type,
+                    c.status AS client_status,
+                    c.created_by AS client_created_by,
+                    c.responsible_manager_id AS client_responsible_manager_id,
+                    c.is_deleted AS client_is_deleted
                 FROM vehicles v
                 LEFT JOIN clients c ON v.client_id = c.id
                 WHERE v.vin IN ({placeholders})
@@ -1468,16 +1641,29 @@ def import_vehicles_preview(
                     })
                     continue
 
-                other_client_name = (
-                    existing_vehicle.get("client_company_name")
-                    or existing_vehicle.get("client_name")
-                    or f"ID клиента {existing_vehicle.get('client_id')}"
-                )
+                other_client = build_client_from_vehicle_row(existing_vehicle)
+
+                if can_reveal_client_identity(other_client, current_user):
+                    other_client_name = (
+                        existing_vehicle.get("client_company_name")
+                        or existing_vehicle.get("client_name")
+                        or f"ID клиента {existing_vehicle.get('client_id')}"
+                    )
+
+                    warning_message = (
+                        f"VIN {row['vin']} уже привязан к другому клиенту: "
+                        f"{other_client_name}. Машина пропущена."
+                    )
+                else:
+                    warning_message = (
+                        f"VIN {row['vin']} уже зарегистрирован в системе за другим "
+                        "клиентом. Машина пропущена, обратитесь к вашему менеджеру."
+                    )
 
                 warnings.append({
                     "row": row["row"],
                     "vin": row["vin"],
-                    "message": f"VIN {row['vin']} уже привязан к другому клиенту: {other_client_name}. Машина пропущена."
+                    "message": warning_message,
                 })
 
             return {
@@ -1939,11 +2125,12 @@ def transfer_vehicle_to_client(
                     detail="Недостаточно прав для переноса машины к выбранному клиенту"
                 )
 
-            if new_client.get("status") == "BLOCKED":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Нельзя перенести машину к заблокированному клиенту"
-                )
+            ensure_client_branch_not_blocked(
+                cursor,
+                int(new_client["id"]),
+                "Нельзя перенести машину к заблокированному клиенту",
+                "Нельзя перенести машину",
+            )
 
             cursor.execute(
                 """

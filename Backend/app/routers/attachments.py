@@ -3,7 +3,7 @@ import uuid
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 
 from app.database import get_connection
@@ -14,6 +14,8 @@ from app.permissions import (
     has_any_permission,
     is_super_admin,
     is_client_owned_by_user,
+    is_client_user,
+    is_employee_user,
     can_delete_attachment,
 )
 
@@ -171,6 +173,22 @@ def attachment_is_owner(attachment: dict, current_user: dict) -> bool:
     )
 
 
+def attachment_is_internal(attachment: dict) -> bool:
+    """
+    Внутренний файл виден только сотрудникам.
+
+    Отсутствие поля в выборке трактуем как «внутренний»: если кто-то
+    добавит новый SELECT и забудет колонку, файл спрячется, а не утечёт.
+    """
+    if attachment is None:
+        return True
+
+    if "is_internal" not in attachment:
+        return True
+
+    return to_bool(attachment.get("is_internal"))
+
+
 def get_attachment_age_seconds(attachment: dict) -> int:
     return int(attachment.get("age_seconds") or 0)
 
@@ -194,6 +212,15 @@ def can_manage_attachment_by_permission(attachment: dict, current_user: dict) ->
 
 def user_can_view_attachment(attachment: dict, current_user: dict) -> bool:
     entity_type = normalize_entity_type(attachment.get("entity_type"))
+
+    # 0. Клиентская учётная запись не видит внутренние файлы никогда —
+    # даже с attachments.view_all. Свои собственные загрузки видит всегда:
+    # клиент не должен терять доступ к тому, что сам же и принёс.
+    if is_client_user(current_user):
+        if attachment_is_internal(attachment) and not attachment_is_owner(
+            attachment, current_user
+        ):
+            return False
 
     # 1. Право работать с файлами этой сущности вообще.
     if not user_has_any_permission(
@@ -246,6 +273,17 @@ def user_can_update_attachment(attachment: dict, current_user: dict) -> bool:
     return attachment_is_owner(attachment, current_user) and attachment_is_within_time_limit(attachment)
 
 
+def user_can_mark_attachment_internal(attachment: dict, current_user: dict) -> bool:
+    """
+    Галочка «внутренний файл» — инструмент сотрудника.
+    Клиент её не видит и снять не может, иначе смысл признака теряется.
+    """
+    if not is_employee_user(current_user):
+        return False
+
+    return user_can_update_attachment(attachment, current_user)
+
+
 def user_can_delete_attachment(attachment: dict, current_user: dict) -> bool:
     entity_type = normalize_entity_type(attachment.get("entity_type"))
     within_time_limit = attachment_is_within_time_limit(attachment)
@@ -270,8 +308,12 @@ def user_can_delete_attachment(attachment: dict, current_user: dict) -> bool:
 
 def attach_attachment_permissions(attachment: dict, current_user: dict) -> dict:
     attachment["is_deleted"] = to_bool(attachment.get("is_deleted"))
+    attachment["is_internal"] = attachment_is_internal(attachment)
     attachment["can_download"] = user_can_view_attachment(attachment, current_user)
     attachment["can_rename"] = user_can_update_attachment(attachment, current_user)
+    attachment["can_mark_internal"] = user_can_mark_attachment_internal(
+        attachment, current_user
+    )
     attachment["can_delete"] = user_can_delete_attachment(attachment, current_user)
 
     return attachment
@@ -370,6 +412,7 @@ def user_can_access_request_entity(
         """
         SELECT
             r.id,
+            r.client_id,
             r.city,
             r.assigned_to,
             r.is_paid,
@@ -434,7 +477,7 @@ def ensure_attachment_entity_access(
             status_code=403,
             detail="Недостаточно прав для доступа к файлам этой карточки",
         )
-    
+
 
 @router.get("/entity/{entity_type}/{entity_id}")
 def get_attachments(
@@ -478,6 +521,7 @@ def get_attachments(
                     a.file_path,
                     a.content_type,
                     a.file_size,
+                    a.is_internal,
                     a.uploaded_by,
                     u.name AS uploaded_by_name,
                     u.role AS uploaded_by_role,
@@ -515,6 +559,7 @@ def upload_attachment(
     entity_type: str,
     entity_id: int,
     file: UploadFile = File(...),
+    is_internal: bool = Form(default=False),
     current_user: dict = Depends(get_current_user),
 ):
     entity_type = normalize_entity_type(entity_type)
@@ -525,6 +570,10 @@ def upload_attachment(
             status_code=403,
             detail="Недостаточно прав для загрузки файла"
         )
+
+    # Клиент не помечает файлы внутренними: он и так видит только то,
+    # что ему открыли, а свой файл прятать от нас смысла нет.
+    is_internal_flag = bool(is_internal) if is_employee_user(current_user) else False
 
     connection = get_connection()
 
@@ -571,9 +620,10 @@ def upload_attachment(
                     file_path,
                     content_type,
                     file_size,
+                    is_internal,
                     uploaded_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     entity_type,
@@ -584,6 +634,7 @@ def upload_attachment(
                     str(file_path),
                     file.content_type,
                     file_size,
+                    1 if is_internal_flag else 0,
                     current_user["id"],
                 )
             )
@@ -595,7 +646,9 @@ def upload_attachment(
                 "message": "Файл загружен",
                 "attachment_id": attachment_id,
                 "display_name": original_filename,
+                "is_internal": is_internal_flag,
                 "can_rename": True,
+                "can_mark_internal": is_employee_user(current_user),
                 "can_delete": True,
             }
 
@@ -635,6 +688,7 @@ def download_attachment(
                     a.display_name,
                     a.file_path,
                     a.content_type,
+                    a.is_internal,
                     a.uploaded_by,
                     u.role AS uploaded_by_role,
                     TIMESTAMPDIFF(SECOND, a.uploaded_at, NOW()) AS age_seconds,
@@ -688,10 +742,26 @@ def update_attachment(
     data: AttachmentUpdate,
     current_user: dict = Depends(get_current_user),
 ):
-    new_name = data.display_name.strip()
+    update_data = data.dict(exclude_unset=True)
 
-    if not new_name:
-        raise HTTPException(status_code=400, detail="Название файла не может быть пустым")
+    new_name = None
+
+    if "display_name" in update_data:
+        new_name = str(update_data.get("display_name") or "").strip()
+
+        if not new_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Название файла не может быть пустым",
+            )
+
+    next_is_internal = None
+
+    if "is_internal" in update_data and update_data.get("is_internal") is not None:
+        next_is_internal = bool(update_data["is_internal"])
+
+    if new_name is None and next_is_internal is None:
+        raise HTTPException(status_code=400, detail="Нет данных для обновления")
 
     connection = get_connection()
 
@@ -703,6 +773,8 @@ def update_attachment(
                     id,
                     entity_type,
                     entity_id,
+                    display_name,
+                    is_internal,
                     uploaded_by,
                     uploaded_at,
                     TIMESTAMPDIFF(SECOND, uploaded_at, NOW()) AS age_seconds,
@@ -724,6 +796,14 @@ def update_attachment(
                     detail="Переименовать файл может пользователь с правом управления файлами либо автор файла в течение 2 минут после загрузки"
                 )
 
+            if next_is_internal is not None and not user_can_mark_attachment_internal(
+                attachment, current_user
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для изменения видимости файла",
+                )
+
             ensure_attachment_entity_access(
                 cursor,
                 attachment["entity_type"],
@@ -731,21 +811,52 @@ def update_attachment(
                 current_user,
             )
 
+            updates = []
+            values = []
+
+            if new_name is not None and new_name != attachment.get("display_name"):
+                updates.append("display_name = %s")
+                values.append(new_name)
+
+            if (
+                next_is_internal is not None
+                and next_is_internal != attachment_is_internal(attachment)
+            ):
+                updates.append("is_internal = %s")
+                values.append(1 if next_is_internal else 0)
+
+            if not updates:
+                return {
+                    "message": "Изменений нет",
+                    "attachment_id": attachment_id,
+                    "display_name": attachment.get("display_name"),
+                    "is_internal": attachment_is_internal(attachment),
+                }
+
+            values.append(attachment_id)
+
             cursor.execute(
-                """
+                f"""
                 UPDATE attachments
-                SET display_name = %s
+                SET {', '.join(updates)}
                 WHERE id = %s
                 """,
-                (new_name, attachment_id)
+                tuple(values)
             )
 
             connection.commit()
 
             return {
-                "message": "Название файла обновлено",
+                "message": "Файл обновлён",
                 "attachment_id": attachment_id,
-                "display_name": new_name
+                "display_name": (
+                    new_name if new_name is not None else attachment.get("display_name")
+                ),
+                "is_internal": (
+                    next_is_internal
+                    if next_is_internal is not None
+                    else attachment_is_internal(attachment)
+                ),
             }
 
     except HTTPException:
@@ -773,6 +884,7 @@ def delete_attachment(
                     id,
                     entity_type,
                     entity_id,
+                    is_internal,
                     uploaded_by,
                     uploaded_at,
                     TIMESTAMPDIFF(SECOND, uploaded_at, NOW()) AS age_seconds,

@@ -1072,19 +1072,40 @@ def delete_client_price_override(
     finally:
         connection.close()
 
-@router.post("/calculate-request")
-def calculate_request_price(
-    data: CalculateRequestPrice,
-    current_user: dict = Depends(get_current_user)
-):
+def ensure_manual_price_lines_allowed(allow_manual_lines: bool):
     """
-    Рассчитать стоимость черновика заявки.
-    Ничего не сохраняет в БД.
-    """
-    require_price_calculate(current_user)
+    То же сообщение, что у require_manual_price_lines, но по флагу.
 
-    work_type = data.work_type.upper()
-    visit_type = data.visit_type.upper()
+    Флаг нужен, потому что расчёт зовут из двух мест с разными правилами:
+    сотрудник вводит цену датчика руками — и ему нужно право; кабинет
+    берёт датчики из параметров установки договора — там цену назначил
+    менеджер, а не клиент, и спрашивать право у клиента бессмысленно.
+    """
+    if not allow_manual_lines:
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для строк расчёта с ценой, назначенной вручную",
+        )
+
+
+def build_request_price_lines(
+    cursor,
+    data: CalculateRequestPrice,
+    *,
+    allow_manual_lines: bool,
+) -> list[dict]:
+    """
+    Строки расчёта заявки по параметрам.
+
+    Вынесено из /prices/calculate-request без изменения логики: клиентский
+    кабинет обязан считать цену тем же кодом, что и CRM. Второй расчёт
+    разошёлся бы с первым при первой же правке прайса.
+
+    Клиента здесь не проверяем: у кабинета и у сотрудника разные правила
+    доступа к клиенту, и каждый вызывающий проверяет их сам.
+    """
+    work_type = str(data.work_type or "").upper()
+    visit_type = str(data.visit_type or "").upper()
 
     allowed_work_types = ["INSTALLATION", "REMOVAL", "DIAGNOSTIC", "REFLASHING"]
     allowed_visit_types = ["IN_OFFICE", "ON_SITE"]
@@ -1096,6 +1117,337 @@ def calculate_request_price(
         raise HTTPException(status_code=400, detail="Некорректный формат работ")
 
     lines = []
+
+    # Транспортные расходы
+    if visit_type == "ON_SITE":
+        visit_code = (data.visit_price_code or "ON_SITE_CITY").strip().upper()
+
+        if visit_code not in ALLOWED_VISIT_PRICE_CODES:
+            raise HTTPException(
+                status_code=400,
+                detail="Некорректный тип выезда",
+            )
+
+        if visit_code == "BUSINESS_TRIP_KM":
+            km = float(data.visit_km or 0)
+
+            if km <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Для командировки укажите километраж больше 0"
+                )
+
+            item = get_effective_price(cursor, "BUSINESS_TRIP_KM", data.client_id)
+
+            if item:
+                add_price_line(
+                    lines,
+                    code=item["code"],
+                    label=item["name"],
+                    quantity=km,
+                    unit_price=item["unit_price"],
+                    unit=item["unit"],
+                    source=item["source"],
+                    vehicle_index=None,
+                )
+        else:
+            item = get_effective_price(cursor, visit_code, data.client_id)
+
+            if item:
+                add_price_line(
+                    lines,
+                    code=item["code"],
+                    label=item["name"],
+                    quantity=1,
+                    unit_price=item["unit_price"],
+                    unit=item["unit"],
+                    source=item["source"],
+                    vehicle_index=None,
+                )
+
+    # Установка
+    if work_type == "INSTALLATION":
+        # Доп. датчики — цена, введённая руками, как и manual_lines.
+        # Проверяем здесь же, иначе калькулятор посчитает заявку,
+        # которую сохранить не получится.
+        if any(vehicle.extra_sensors for vehicle in data.vehicles):
+            ensure_manual_price_lines_allowed(allow_manual_lines)
+
+        for index, vehicle in enumerate(data.vehicles, start=1):
+            # GPS-трекер необязателен: бывают заявки только с маяком
+            if vehicle.gps_price_code:
+                gps_item = get_effective_price(
+                    cursor,
+                    vehicle.gps_price_code,
+                    data.client_id
+                )
+
+                if not gps_item:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Цена GPS '{vehicle.gps_price_code}' не найдена или отключена"
+                    )
+
+                add_price_line(
+                    lines,
+                    code=gps_item["code"],
+                    label=f"Авто {index}: {gps_item['name']}",
+                    quantity=1,
+                    unit_price=gps_item["unit_price"],
+                    unit=gps_item["unit"],
+                    source=gps_item["source"],
+                    vehicle_index=index,
+                )
+
+                # Подписка трекера отдельной строкой
+                tracker_months = int(vehicle.tracker_subscription_months or 0)
+
+                if tracker_months < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Количество месяцев подписки трекера не может быть отрицательным"
+                    )
+
+                if tracker_months > 0:
+                    subscription_item = get_effective_price(
+                        cursor,
+                        "SUBSCRIPTION_TRACKER_MONTH",
+                        data.client_id
+                    )
+
+                    if subscription_item:
+                        add_price_line(
+                            lines,
+                            code=subscription_item["code"],
+                            label=f"Авто {index}: {subscription_item['name']}",
+                            quantity=tracker_months,
+                            unit_price=subscription_item["unit_price"],
+                            unit=subscription_item["unit"],
+                            source=subscription_item["source"],
+                            vehicle_index=index,
+                        )
+
+            # Маяк + подписка маяка
+            if vehicle.has_beacon:
+                beacon_item = get_effective_price(
+                    cursor,
+                    "BEACON_TAT100",
+                    data.client_id
+                )
+
+                if beacon_item:
+                    add_price_line(
+                        lines,
+                        code=beacon_item["code"],
+                        label=f"Авто {index}: {beacon_item['name']}",
+                        quantity=1,
+                        unit_price=beacon_item["unit_price"],
+                        unit=beacon_item["unit"],
+                        source=beacon_item["source"],
+                        vehicle_index=index,
+                    )
+
+                beacon_months = int(vehicle.beacon_subscription_months or 0)
+
+                if beacon_months < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Количество месяцев подписки маяка не может быть отрицательным"
+                    )
+
+                if beacon_months > 0:
+                    beacon_subscription_item = get_effective_price(
+                        cursor,
+                        "SUBSCRIPTION_BEACON_MONTH",
+                        data.client_id
+                    )
+
+                    if beacon_subscription_item:
+                        add_price_line(
+                            lines,
+                            code=beacon_subscription_item["code"],
+                            label=f"Авто {index}: {beacon_subscription_item['name']}",
+                            quantity=beacon_months,
+                            unit_price=beacon_subscription_item["unit_price"],
+                            unit=beacon_subscription_item["unit"],
+                            source=beacon_subscription_item["source"],
+                            vehicle_index=index,
+                        )
+
+            # Услуга установки GPS: с блокировкой или без блокировки.
+            # Важно: GPS_NO_BLOCK добавляем только если выбран GPS-трекер.
+            # Иначе заявка "только маяк" тоже получила бы цену установки GPS.
+            if vehicle.gps_price_code:
+                install_service_code = (
+                    "ENGINE_BLOCKING_INSTALL"
+                    if vehicle.has_blocking
+                    else "GPS_NO_BLOCK"
+                )
+
+                install_service_item = get_effective_price(
+                    cursor,
+                    install_service_code,
+                    data.client_id
+                )
+
+                if install_service_item:
+                    add_price_line(
+                        lines,
+                        code=install_service_item["code"],
+                        label=f"Авто {index}: {install_service_item['name']}",
+                        quantity=1,
+                        unit_price=install_service_item["unit_price"],
+                        unit=install_service_item["unit"],
+                        source=install_service_item["source"],
+                        vehicle_index=index,
+                    )
+
+            # Дополнительные датчики из формы авто
+            for sensor in vehicle.extra_sensors:
+                sensor_name = sensor.name.strip()
+
+                if not sensor_name:
+                    continue
+
+                sensor_price = float(sensor.price or 0)
+
+                if sensor_price < 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Цена дополнительного датчика не может быть отрицательной"
+                    )
+
+                add_price_line(
+                    lines,
+                    code=None,
+                    label=f"Авто {index}: {sensor_name}",
+                    quantity=1,
+                    unit_price=sensor_price,
+                    unit="шт",
+                    source="extra_sensor",
+                    vehicle_index=index,
+                )
+
+    # Снятие
+    elif work_type == "REMOVAL":
+        removal_item = get_effective_price(
+            cursor,
+            "REMOVAL_BASE",
+            data.client_id
+        )
+
+        vehicle_count = max(len(data.vehicles), 1)
+
+        if removal_item:
+            for index in range(1, vehicle_count + 1):
+                add_price_line(
+                    lines,
+                    code=removal_item["code"],
+                    label=f"Авто {index}: {removal_item['name']}",
+                    quantity=1,
+                    unit_price=removal_item["unit_price"],
+                    unit=removal_item["unit"],
+                    source=removal_item["source"],
+                    vehicle_index=index,
+                )
+
+    # Диагностика
+    elif work_type == "DIAGNOSTIC":
+        if data.has_power_restore:
+            restore_item = get_effective_price(
+                cursor,
+                "POWER_RESTORE",
+                data.client_id
+            )
+
+            if restore_item:
+                add_price_line(
+                    lines,
+                    code=restore_item["code"],
+                    label=restore_item["name"],
+                    quantity=1,
+                    unit_price=restore_item["unit_price"],
+                    unit=restore_item["unit"],
+                    source=restore_item["source"],
+                    vehicle_index=None,
+                )
+
+    # Перепрошивка
+    elif work_type == "REFLASHING":
+        reflashing_item = get_effective_price(
+            cursor,
+            "REFLASHING_BASE",
+            data.client_id
+        )
+
+        vehicle_count = max(len(data.vehicles), 1)
+
+        if reflashing_item:
+            for index in range(1, vehicle_count + 1):
+                add_price_line(
+                    lines,
+                    code=reflashing_item["code"],
+                    label=f"Авто {index}: {reflashing_item['name']}",
+                    quantity=1,
+                    unit_price=reflashing_item["unit_price"],
+                    unit=reflashing_item["unit"],
+                    source=reflashing_item["source"],
+                    vehicle_index=index,
+                )
+
+    # Ручные строки калькулятора
+    if data.manual_lines:
+        ensure_manual_price_lines_allowed(allow_manual_lines)
+
+    for manual_line in data.manual_lines:
+        label = manual_line.label.strip()
+
+        if not label:
+            continue
+
+        quantity = float(manual_line.quantity or 0)
+        unit_price = float(manual_line.unit_price or 0)
+
+        if quantity <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Количество в ручной строке должно быть больше 0"
+            )
+
+        if unit_price < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Цена в ручной строке не может быть отрицательной"
+            )
+
+        add_price_line(
+            lines,
+            code=None,
+            label=label,
+            quantity=quantity,
+            unit_price=unit_price,
+            unit="шт",
+            source="manual",
+            vehicle_index=None,
+        )
+
+    return lines
+
+
+@router.post("/calculate-request")
+def calculate_request_price(
+    data: CalculateRequestPrice,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Рассчитать стоимость черновика заявки.
+    Ничего не сохраняет в БД.
+
+    Сам расчёт живёт в build_request_price_lines — той же функции,
+    которой считает клиентский кабинет. Здесь остались только проверки
+    прав сотрудника и доступа к клиенту.
+    """
+    require_price_calculate(current_user)
 
     connection = get_connection()
 
@@ -1125,325 +1477,18 @@ def calculate_request_price(
                         status_code=400,
                         detail="Клиент находится в корзине"
                     )
-                
+
                 if not can_access_client_prices(client, current_user):
                     raise HTTPException(
                         status_code=403,
                         detail="Недостаточно прав для расчёта цен этого клиента"
                     )
 
-            # Транспортные расходы
-            if visit_type == "ON_SITE":
-                visit_code = (data.visit_price_code or "ON_SITE_CITY").strip().upper()
-
-                if visit_code not in ALLOWED_VISIT_PRICE_CODES:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Некорректный тип выезда",
-                    )
-
-                if visit_code == "BUSINESS_TRIP_KM":
-                    km = float(data.visit_km or 0)
-
-                    if km <= 0:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Для командировки укажите километраж больше 0"
-                        )
-
-                    item = get_effective_price(cursor, "BUSINESS_TRIP_KM", data.client_id)
-
-                    if item:
-                        add_price_line(
-                            lines,
-                            code=item["code"],
-                            label=item["name"],
-                            quantity=km,
-                            unit_price=item["unit_price"],
-                            unit=item["unit"],
-                            source=item["source"],
-                            vehicle_index=None,
-                        )
-                else:
-                    item = get_effective_price(cursor, visit_code, data.client_id)
-
-                    if item:
-                        add_price_line(
-                            lines,
-                            code=item["code"],
-                            label=item["name"],
-                            quantity=1,
-                            unit_price=item["unit_price"],
-                            unit=item["unit"],
-                            source=item["source"],
-                            vehicle_index=None,
-                        )
-
-            # Установка
-            if work_type == "INSTALLATION":
-                # Доп. датчики — цена, введённая руками, как и manual_lines.
-                # Проверяем здесь же, иначе калькулятор посчитает заявку,
-                # которую сохранить не получится.
-                if any(vehicle.extra_sensors for vehicle in data.vehicles):
-                    require_manual_price_lines(current_user)
-
-                for index, vehicle in enumerate(data.vehicles, start=1):
-                    # GPS-трекер необязателен: бывают заявки только с маяком
-                    if vehicle.gps_price_code:
-                        gps_item = get_effective_price(
-                            cursor,
-                            vehicle.gps_price_code,
-                            data.client_id
-                        )
-
-                        if not gps_item:
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Цена GPS '{vehicle.gps_price_code}' не найдена или отключена"
-                            )
-
-                        add_price_line(
-                            lines,
-                            code=gps_item["code"],
-                            label=f"Авто {index}: {gps_item['name']}",
-                            quantity=1,
-                            unit_price=gps_item["unit_price"],
-                            unit=gps_item["unit"],
-                            source=gps_item["source"],
-                            vehicle_index=index,
-                        )
-
-                        # Подписка трекера отдельной строкой
-                        tracker_months = int(vehicle.tracker_subscription_months or 0)
-
-                        if tracker_months < 0:
-                            raise HTTPException(
-                                status_code=400,
-                                detail="Количество месяцев подписки трекера не может быть отрицательным"
-                            )
-
-                        if tracker_months > 0:
-                            subscription_item = get_effective_price(
-                                cursor,
-                                "SUBSCRIPTION_TRACKER_MONTH",
-                                data.client_id
-                            )
-
-                            if subscription_item:
-                                add_price_line(
-                                    lines,
-                                    code=subscription_item["code"],
-                                    label=f"Авто {index}: {subscription_item['name']}",
-                                    quantity=tracker_months,
-                                    unit_price=subscription_item["unit_price"],
-                                    unit=subscription_item["unit"],
-                                    source=subscription_item["source"],
-                                    vehicle_index=index,
-                                )
-
-                    # Маяк + подписка маяка
-                    if vehicle.has_beacon:
-                        beacon_item = get_effective_price(
-                            cursor,
-                            "BEACON_TAT100",
-                            data.client_id
-                        )
-
-                        if beacon_item:
-                            add_price_line(
-                                lines,
-                                code=beacon_item["code"],
-                                label=f"Авто {index}: {beacon_item['name']}",
-                                quantity=1,
-                                unit_price=beacon_item["unit_price"],
-                                unit=beacon_item["unit"],
-                                source=beacon_item["source"],
-                                vehicle_index=index,
-                            )
-
-                        beacon_months = int(vehicle.beacon_subscription_months or 0)
-
-                        if beacon_months < 0:
-                            raise HTTPException(
-                                status_code=400,
-                                detail="Количество месяцев подписки маяка не может быть отрицательным"
-                            )
-
-                        if beacon_months > 0:
-                            beacon_subscription_item = get_effective_price(
-                                cursor,
-                                "SUBSCRIPTION_BEACON_MONTH",
-                                data.client_id
-                            )
-
-                            if beacon_subscription_item:
-                                add_price_line(
-                                    lines,
-                                    code=beacon_subscription_item["code"],
-                                    label=f"Авто {index}: {beacon_subscription_item['name']}",
-                                    quantity=beacon_months,
-                                    unit_price=beacon_subscription_item["unit_price"],
-                                    unit=beacon_subscription_item["unit"],
-                                    source=beacon_subscription_item["source"],
-                                    vehicle_index=index,
-                                )
-
-                    # Услуга установки GPS: с блокировкой или без блокировки.
-                    # Важно: GPS_NO_BLOCK добавляем только если выбран GPS-трекер.
-                    # Иначе заявка "только маяк" тоже получила бы цену установки GPS.
-                    if vehicle.gps_price_code:
-                        install_service_code = (
-                            "ENGINE_BLOCKING_INSTALL"
-                            if vehicle.has_blocking
-                            else "GPS_NO_BLOCK"
-                        )
-
-                        install_service_item = get_effective_price(
-                            cursor,
-                            install_service_code,
-                            data.client_id
-                        )
-
-                        if install_service_item:
-                            add_price_line(
-                                lines,
-                                code=install_service_item["code"],
-                                label=f"Авто {index}: {install_service_item['name']}",
-                                quantity=1,
-                                unit_price=install_service_item["unit_price"],
-                                unit=install_service_item["unit"],
-                                source=install_service_item["source"],
-                                vehicle_index=index,
-                            )
-
-                    # Дополнительные датчики из формы авто
-                    for sensor in vehicle.extra_sensors:
-                        sensor_name = sensor.name.strip()
-
-                        if not sensor_name:
-                            continue
-
-                        sensor_price = float(sensor.price or 0)
-
-                        if sensor_price < 0:
-                            raise HTTPException(
-                                status_code=400,
-                                detail="Цена дополнительного датчика не может быть отрицательной"
-                            )
-
-                        add_price_line(
-                            lines,
-                            code=None,
-                            label=f"Авто {index}: {sensor_name}",
-                            quantity=1,
-                            unit_price=sensor_price,
-                            unit="шт",
-                            source="extra_sensor",
-                            vehicle_index=index,
-                        )
-
-            # Снятие
-            elif work_type == "REMOVAL":
-                removal_item = get_effective_price(
-                    cursor,
-                    "REMOVAL_BASE",
-                    data.client_id
-                )
-
-                vehicle_count = max(len(data.vehicles), 1)
-
-                if removal_item:
-                    for index in range(1, vehicle_count + 1):
-                        add_price_line(
-                            lines,
-                            code=removal_item["code"],
-                            label=f"Авто {index}: {removal_item['name']}",
-                            quantity=1,
-                            unit_price=removal_item["unit_price"],
-                            unit=removal_item["unit"],
-                            source=removal_item["source"],
-                            vehicle_index=index,
-                        )
-
-            # Диагностика
-            elif work_type == "DIAGNOSTIC":
-                if data.has_power_restore:
-                    restore_item = get_effective_price(
-                        cursor,
-                        "POWER_RESTORE",
-                        data.client_id
-                    )
-
-                    if restore_item:
-                        add_price_line(
-                            lines,
-                            code=restore_item["code"],
-                            label=restore_item["name"],
-                            quantity=1,
-                            unit_price=restore_item["unit_price"],
-                            unit=restore_item["unit"],
-                            source=restore_item["source"],
-                            vehicle_index=None,
-                        )
-
-            # Перепрошивка
-            elif work_type == "REFLASHING":
-                reflashing_item = get_effective_price(
-                    cursor,
-                    "REFLASHING_BASE",
-                    data.client_id
-                )
-
-                vehicle_count = max(len(data.vehicles), 1)
-
-                if reflashing_item:
-                    for index in range(1, vehicle_count + 1):
-                        add_price_line(
-                            lines,
-                            code=reflashing_item["code"],
-                            label=f"Авто {index}: {reflashing_item['name']}",
-                            quantity=1,
-                            unit_price=reflashing_item["unit_price"],
-                            unit=reflashing_item["unit"],
-                            source=reflashing_item["source"],
-                            vehicle_index=index,
-                        )
-
-            # Ручные строки калькулятора
-            if data.manual_lines:
-                require_manual_price_lines(current_user)
-
-            for manual_line in data.manual_lines:
-                label = manual_line.label.strip()
-
-                if not label:
-                    continue
-
-                quantity = float(manual_line.quantity or 0)
-                unit_price = float(manual_line.unit_price or 0)
-
-                if quantity <= 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Количество в ручной строке должно быть больше 0"
-                    )
-
-                if unit_price < 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Цена в ручной строке не может быть отрицательной"
-                    )
-
-                add_price_line(
-                    lines,
-                    code=None,
-                    label=label,
-                    quantity=quantity,
-                    unit_price=unit_price,
-                    unit="шт",
-                    source="manual",
-                    vehicle_index=None,
-                )
+            lines = build_request_price_lines(
+                cursor,
+                data,
+                allow_manual_lines=can_set_manual_price_lines(current_user),
+            )
 
             total_price = sum(line["total_price"] for line in lines)
 

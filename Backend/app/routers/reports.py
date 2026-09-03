@@ -3,10 +3,38 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.database import get_connection
 from app.security import get_current_user
-from app.permissions import has_any_permission
+from app.permissions import (
+    has_any_permission,
+    is_super_admin,
+    is_client_user,
+    require_employee_user,
+    get_data_scope,
+    DATA_SCOPE_CITY,
+    DATA_SCOPE_CITY_ASSIGNED,
+)
 
 
-router = APIRouter(prefix="/reports", tags=["Reports"])
+def ensure_employee_access(current_user: dict = Depends(get_current_user)):
+    """
+    Отчёты по своей природе сводят данные всех клиентов сразу.
+    Клиентской учётной записи здесь делать нечего ни в одном разрезе.
+
+    Проверка на роутере, а не в эндпоинтах: новый отчёт, добавленный
+    завтра, окажется закрыт по умолчанию.
+    """
+    require_employee_user(
+        current_user,
+        detail="Отчёты доступны только сотрудникам",
+    )
+
+    return current_user
+
+
+router = APIRouter(
+    prefix="/reports",
+    tags=["Reports"],
+    dependencies=[Depends(ensure_employee_access)],
+)
 
 
 WORK_TYPE_LABELS = {
@@ -122,10 +150,18 @@ WAREHOUSE_RETURN_ACTIONS = {
 }
 
 
+def user_has_any_permission(current_user: dict, permission_codes: list[str]) -> bool:
+    # Вторая линия на случай снятия зависимости с роутера.
+    if is_client_user(current_user):
+        return False
+
+    return has_any_permission(current_user, permission_codes)
+
+
 def can_view_request_reports(current_user: dict) -> bool:
     # reports.view — общий корень дерева отчётов, он есть у всех,
     # у кого открыт хоть один отчёт. Здесь нужен конкретный код.
-    return has_any_permission(current_user, [
+    return user_has_any_permission(current_user, [
         "reports.requests.view",
         "reports.requests.view_own",
         "reports.requests.view_all",
@@ -134,34 +170,30 @@ def can_view_request_reports(current_user: dict) -> bool:
 
 
 def can_view_all_request_reports(current_user: dict) -> bool:
-    return has_any_permission(current_user, [
+    return user_has_any_permission(current_user, [
         "reports.requests.view_all",
         "reports.manage",
     ])
 
 
 def can_view_manager_reports(current_user: dict) -> bool:
-    return (
-        has_any_permission(current_user, [
-            "reports.managers.view",
-            "reports.manage",
-        ])
-    )
+    return user_has_any_permission(current_user, [
+        "reports.managers.view",
+        "reports.manage",
+    ])
 
 
 def can_view_warehouse_reports(current_user: dict) -> bool:
-    return (
-        has_any_permission(current_user, [
-            "reports.warehouse.view",
-            "reports.manage",
-            "warehouse.reports.view",
-            "warehouse.manage",
-        ])
-    )
+    return user_has_any_permission(current_user, [
+        "reports.warehouse.view",
+        "reports.manage",
+        "warehouse.reports.view",
+        "warehouse.manage",
+    ])
 
 
 def can_view_report_money(current_user: dict) -> bool:
-    return has_any_permission(current_user, [
+    return user_has_any_permission(current_user, [
         "reports.money.view",
         "reports.manage",
     ])
@@ -180,6 +212,45 @@ def require_request_reports(current_user: dict):
 def require_warehouse_reports(current_user: dict):
     if not can_view_warehouse_reports(current_user):
         raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра отчётов по складу")
+
+
+CITY_SCOPED_DATA_SCOPES = [DATA_SCOPE_CITY, DATA_SCOPE_CITY_ASSIGNED]
+
+
+def is_city_scoped_reports_user(current_user: dict) -> bool:
+    """
+    Те же правила, что в warehouse.py: область роли сужает склад до
+    одного города, а управление складом или отчётами снимает ограничение.
+    """
+    if is_super_admin(current_user):
+        return False
+
+    if user_has_any_permission(current_user, ["warehouse.manage", "reports.manage"]):
+        return False
+
+    return get_data_scope(current_user) in CITY_SCOPED_DATA_SCOPES
+
+
+def resolve_reports_user_city_id(cursor, current_user: dict) -> int | None:
+    user_city = str(current_user.get("city") or "").strip()
+
+    if not user_city:
+        return None
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM cities
+        WHERE is_active = 1
+          AND LOWER(TRIM(name)) = LOWER(TRIM(%s))
+        LIMIT 1
+        """,
+        (user_city,),
+    )
+
+    row = cursor.fetchone()
+
+    return int(row["id"]) if row else None
 
 
 def to_float(value) -> float:
@@ -1232,6 +1303,22 @@ def get_warehouse_reports(
 
     try:
         with connection.cursor() as cursor:
+            # Городская роль не может переопределить город параметром запроса —
+            # то же правило, что и на вкладке «Склад».
+            if is_city_scoped_reports_user(current_user):
+                scoped_city_id = resolve_reports_user_city_id(cursor, current_user)
+
+                if scoped_city_id is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "В вашем профиле не указан город или он отсутствует "
+                            "в справочнике. Обратитесь к администратору."
+                        ),
+                    )
+
+                city_id = scoped_city_id
+
             items = fetch_warehouse_items(cursor, city_id)
             movements = fetch_warehouse_movements(cursor, date_from, date_to, city_id)
 

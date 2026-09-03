@@ -9,8 +9,14 @@ import RequestDetailModal from './RequestDetailModal'
 import AttachmentsPanel from './AttachmentsPanel'
 import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
 import ClientInstallationSettingsModal from './ClientInstallationSettingsModal'
+import PortalUsersModal from './PortalUsersModal'
+import ClientHistoryModal from './ClientHistoryModal'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
 import { getStoredUser, hasAnyPermission } from '../utils/access'
+
+// Та же глубина, что и CLIENT_TREE_MAX_DEPTH на бэкенде.
+// Нужна только как страховка от кольца в данных.
+const CLIENT_SEARCH_MAX_DEPTH = 10
 
 export default function Clients() {
 	const [clients, setClients] = useState([])
@@ -50,6 +56,13 @@ export default function Clients() {
 
 	const [selectedClient, setSelectedClient] = useState(null)
 	const [clientRequests, setClientRequests] = useState([])
+
+	// Этап 2: заявки подклиентов в карточке родителя.
+	// По умолчанию выключено — карточка выглядит как раньше.
+	const [includeSubclientRequests, setIncludeSubclientRequests] =
+		useState(false)
+	const includeSubclientRequestsRef = useRef(false)
+
 	const [showMonitoringPassword, setShowMonitoringPassword] = useState(false)
 	const [clientVehicles, setClientVehicles] = useState([])
 	const [isVehiclesLoading, setIsVehiclesLoading] = useState(false)
@@ -62,6 +75,8 @@ export default function Clients() {
 	const [attachEquipmentVehicle, setAttachEquipmentVehicle] = useState(null)
 	const [installationSettingsClient, setInstallationSettingsClient] =
 		useState(null)
+	const [portalUsersClient, setPortalUsersClient] = useState(null)
+	const [historyClient, setHistoryClient] = useState(null)
 
 	const [responsibleManagers, setResponsibleManagers] = useState([])
 	const [clientActionLoading, setClientActionLoading] = useState(false)
@@ -115,6 +130,19 @@ export default function Clients() {
 	const canCreateClient = hasAnyPermission(currentUser, ['clients.create'])
 
 	const canDeleteClient = hasAnyPermission(currentUser, ['clients.delete'])
+
+	// Совпадает с PORTAL_USERS_VIEW_PERMISSION_CODES в portal_users.py.
+	// Право на просмотр открывает кнопку, а можно ли что-то менять —
+	// решает сам бэкенд и отдаёт признаком can_manage в модалке.
+	const canViewPortalUsers = hasAnyPermission(currentUser, [
+		'clients.portal_users.view',
+		'clients.portal_users.manage',
+	])
+
+	// Совпадает с CLIENT_HISTORY_VIEW_PERMISSION_CODES в permissions.py.
+	const canViewClientHistory = hasAnyPermission(currentUser, [
+		'clients.history.view',
+	])
 
 	// Фильтр «Ответственный» и выпадающий список в карточке клиента берут данные
 	// из /users/responsible-managers. Показываем их тем, кто видит чужих клиентов:
@@ -174,6 +202,48 @@ export default function Clients() {
 		'vehicles.manage',
 	])
 
+	// --- Этап 2: иерархия клиентов ---
+
+	// Блокировка наследуется вниз. Сервер отдаёт effective_status:
+	// он равен BLOCKED и когда заблокирован сам клиент, и когда заблокирован
+	// любой его родитель по цепочке.
+	const getClientEffectiveStatus = client =>
+		String(client?.effective_status || client?.status || 'ACTIVE')
+
+	const isClientBlockedByParent = client => Boolean(client?.is_blocked_by_parent)
+
+	const getClientOwnRequestCount = client =>
+		Number(client?.own_request_count ?? client?.request_count ?? 0)
+
+	const getClientTotalRequestCount = client =>
+		Number(
+			client?.total_request_count ??
+				client?.own_request_count ??
+				client?.request_count ??
+				0,
+		)
+
+	const getClientOwnVehicleCount = client =>
+		Number(client?.own_vehicle_count ?? client?.vehicle_count ?? 0)
+
+	const getClientTotalVehicleCount = client =>
+		Number(
+			client?.total_vehicle_count ??
+				client?.own_vehicle_count ??
+				client?.vehicle_count ??
+				0,
+		)
+
+	// «12 / 47» — свои и вся ветка. Если подклиентов нет или числа совпали,
+	// показываем одно число, чтобы не пугать дробью обычных клиентов.
+	const formatOwnAndTotalCount = (own, total, hasChildren) => {
+		if (!hasChildren || Number(total) === Number(own)) {
+			return String(own)
+		}
+
+		return `${own} / ${total}`
+	}
+
 	const canAddVehicleToClient = client => {
 		return (
 			(Boolean(client?.can_create_request) ||
@@ -182,7 +252,7 @@ export default function Clients() {
 					'vehicles.manage',
 					'clients.manage',
 				])) &&
-			String(client?.status || 'ACTIVE') !== 'BLOCKED'
+			getClientEffectiveStatus(client) !== 'BLOCKED'
 		)
 	}
 
@@ -344,6 +414,8 @@ export default function Clients() {
 			client.monitoring_login,
 			client.source_client_name,
 			client.source_parent_client_name,
+			client.parent_client_name,
+			client.parent_client_company_name,
 		]
 			.filter(Boolean)
 			.some(field => String(field).toLowerCase().includes(query))
@@ -368,35 +440,197 @@ export default function Clients() {
 	const clientSearchQuery = pickerQuery.trim().toLowerCase()
 	const isClientSearchActive = clientSearchQuery.length > 0
 
-	// Результаты поиска: плоский список карточек вместо групп.
-	// Совпадения в начале названия идут первыми — как в заявках.
-	const clientSearchResults = !isClientSearchActive
-		? []
-		: (clients || [])
+	// Поиск с сохранением иерархии.
+	//
+	// Правила:
+	// - совпал родитель  → показываем его и всю его ветку целиком;
+	// - совпал подклиент → показываем его родителей как контекст,
+	//   а внутри родителя только совпавшую ветку.
+	//
+	// Дерево строится из плоского /clients по parent_client_id, поэтому
+	// поиск работает по всей базе, а не по текущей странице групп.
+	const buildClientSearchTree = () => {
+		const allClients = clients || []
+
+		const byId = new Map()
+		allClients.forEach(client => byId.set(Number(client.id), client))
+
+		const childIdsByParent = new Map()
+
+		allClients.forEach(client => {
+			const parentId = client.parent_client_id
+				? Number(client.parent_client_id)
+				: null
+
+			if (!parentId || !byId.has(parentId)) return
+
+			if (!childIdsByParent.has(parentId)) {
+				childIdsByParent.set(parentId, [])
+			}
+
+			childIdsByParent.get(parentId).push(Number(client.id))
+		})
+
+		const matchedIds = new Set(
+			allClients
 				.filter(
-					c =>
-						clientMatchesFilters(c) && clientMatchesQuery(c, clientSearchQuery),
+					client =>
+						clientMatchesFilters(client) &&
+						clientMatchesQuery(client, clientSearchQuery),
 				)
-				.map(c => {
-					const known = knownClientCounts[String(c.id)]
+				.map(client => Number(client.id)),
+		)
 
-					if (known && known.vehicle_count !== undefined) {
-						return { ...c, ...known }
-					}
+		const includedIds = new Set()
 
-					return { ...c, __countsUnknown: true }
-				})
-				.sort((a, b) => {
-					const aName = getPickerClientName(a).toLowerCase()
-					const bName = getPickerClientName(b).toLowerCase()
+		const includeSubtree = (clientId, guard) => {
+			if (guard.has(clientId)) return
 
-					const aStarts = aName.startsWith(clientSearchQuery) ? 0 : 1
-					const bStarts = bName.startsWith(clientSearchQuery) ? 0 : 1
+			guard.add(clientId)
+			includedIds.add(clientId)
+			;(childIdsByParent.get(clientId) || []).forEach(childId =>
+				includeSubtree(childId, guard),
+			)
+		}
 
-					if (aStarts !== bStarts) return aStarts - bStarts
+		matchedIds.forEach(clientId => includeSubtree(clientId, new Set()))
 
-					return aName.localeCompare(bName, 'ru')
-				})
+		// Родители совпавших клиентов нужны как контекст: иначе подклиент
+		// повиснет в воздухе без своего родителя.
+		matchedIds.forEach(clientId => {
+			let current = byId.get(clientId)
+			let depth = 0
+
+			while (current && depth < CLIENT_SEARCH_MAX_DEPTH) {
+				const parentId = current.parent_client_id
+					? Number(current.parent_client_id)
+					: null
+
+				if (!parentId) break
+
+				const parent = byId.get(parentId)
+
+				if (!parent) break
+
+				includedIds.add(parentId)
+
+				current = parent
+				depth += 1
+			}
+		})
+
+		// Полное число потомков — для бейджа «Родитель · N подкл.».
+		const countDescendants = (clientId, guard = new Set()) => {
+			if (guard.has(clientId)) return 0
+
+			guard.add(clientId)
+
+			return (childIdsByParent.get(clientId) || []).reduce(
+				(sum, childId) => sum + 1 + countDescendants(childId, guard),
+				0,
+			)
+		}
+
+		const expandIds = []
+		const nodeGuard = new Set()
+
+		const buildNode = clientId => {
+			if (nodeGuard.has(clientId)) return null
+
+			nodeGuard.add(clientId)
+
+			const base = byId.get(clientId)
+
+			if (!base) return null
+
+			const known = knownClientCounts[String(clientId)]
+
+			const node = {
+				...base,
+				...(known && known.vehicle_count !== undefined
+					? known
+					: { __countsUnknown: true }),
+				__isSearchMatch: matchedIds.has(clientId),
+			}
+
+			const visibleChildren = (childIdsByParent.get(clientId) || [])
+				.filter(childId => includedIds.has(childId))
+				.map(childId => buildNode(childId))
+				.filter(Boolean)
+
+			node.children = visibleChildren
+			node.children_count = countDescendants(clientId)
+			node.__visibleChildrenCount = visibleChildren.length
+
+			if (visibleChildren.length > 0) {
+				expandIds.push(clientId)
+			}
+
+			return node
+		}
+
+		const rootIds = [...includedIds].filter(clientId => {
+			const client = byId.get(clientId)
+
+			const parentId = client?.parent_client_id
+				? Number(client.parent_client_id)
+				: null
+
+			return !parentId || !includedIds.has(parentId)
+		})
+
+		const roots = rootIds
+			.map(clientId => buildNode(clientId))
+			.filter(Boolean)
+			.sort((a, b) => {
+				const aName = getPickerClientName(a).toLowerCase()
+				const bName = getPickerClientName(b).toLowerCase()
+
+				const aStarts = aName.startsWith(clientSearchQuery) ? 0 : 1
+				const bStarts = bName.startsWith(clientSearchQuery) ? 0 : 1
+
+				if (aStarts !== bStarts) return aStarts - bStarts
+
+				return aName.localeCompare(bName, 'ru')
+			})
+
+		return {
+			roots,
+			matchedCount: matchedIds.size,
+			shownCount: includedIds.size,
+			expandIds,
+		}
+	}
+
+	const clientSearchTree = isClientSearchActive
+		? buildClientSearchTree()
+		: { roots: [], matchedCount: 0, shownCount: 0, expandIds: [] }
+
+	// В режиме поиска родителей раскрываем сами, иначе совпавший подклиент
+	// окажется спрятан за свёрнутым родителем.
+	useEffect(() => {
+		if (!isClientSearchActive) return
+		if (clientSearchTree.expandIds.length === 0) return
+
+		setExpandedClientNodes(prev => {
+			let changed = false
+			const next = { ...prev }
+
+			clientSearchTree.expandIds.forEach(clientId => {
+				if (!next[clientId]) {
+					next[clientId] = true
+					changed = true
+				}
+			})
+
+			return changed ? next : prev
+		})
+	}, [
+		clientSearchQuery,
+		clients.length,
+		clientFilters.status,
+		clientFilters.responsible,
+	])
 
 	// Полный список клиентов (из /clients), отфильтрованный по статусу,
 	// ответственному и тексту — это опции выпадающего навигатора.
@@ -453,15 +687,26 @@ export default function Clients() {
 		if (!client) return null
 
 		const status = client.status || 'ACTIVE'
+		const effectiveStatus = getClientEffectiveStatus(client)
+		const blockedByParent = isClientBlockedByParent(client)
 		const paymentType = client.payment_type || 'PREPAYMENT'
 
 		return (
 			<div className='client-card-badges'>
 				<span
-					className={`client-status-badge client-status-${String(status).toLowerCase()}`}
+					className={`client-status-badge client-status-${String(effectiveStatus).toLowerCase()}`}
 				>
 					Статус: {getClientStatusLabel(status)}
 				</span>
+
+				{blockedByParent && (
+					<span
+						className='client-blocked-parent-badge'
+						title='Блокировка наследуется от родительского клиента'
+					>
+						Заблокирован через «{client.blocked_by_client_name}»
+					</span>
+				)}
 
 				<span
 					className={`client-payment-badge client-payment-${getClientPaymentTypeClass(paymentType)}`}
@@ -477,7 +722,12 @@ export default function Clients() {
 	}
 
 	const getClientChildrenCount = client => {
-		return Number(client?.children_count || client?.children?.length || 0)
+		return Number(
+			client?.children_count ||
+				client?.subclients_count ||
+				client?.children?.length ||
+				0,
+		)
 	}
 
 	const getClientHierarchyBadgeText = (client, level = 0) => {
@@ -569,7 +819,10 @@ export default function Clients() {
 			})
 
 			if (selectedClientRef.current) {
-				fetchClientRequests(selectedClientRef.current.id)
+				fetchClientRequests(
+					selectedClientRef.current.id,
+					includeSubclientRequestsRef.current,
+				)
 			}
 		}, 20000)
 
@@ -579,6 +832,15 @@ export default function Clients() {
 	useEffect(() => {
 		selectedClientRef.current = selectedClient
 	}, [selectedClient])
+
+	// Переключатель «Показывать заявки подклиентов»
+	useEffect(() => {
+		includeSubclientRequestsRef.current = includeSubclientRequests
+
+		if (selectedClient?.id) {
+			fetchClientRequests(selectedClient.id, includeSubclientRequests)
+		}
+	}, [includeSubclientRequests])
 
 	useEffect(() => {
 		const handleClickOutside = () => {
@@ -855,11 +1117,16 @@ export default function Clients() {
 			email: client.email,
 			monitoring_login: client.monitoring_login,
 			status: client.status,
+			effective_status: client.effective_status,
+			is_blocked_by_parent: client.is_blocked_by_parent,
+			parent_client_id: client.parent_client_id,
 			payment_type: client.payment_type,
 			responsible_manager_id: client.responsible_manager_id,
 			responsible_manager_name: client.responsible_manager_name,
 			request_count: client.request_count,
+			total_request_count: client.total_request_count,
 			vehicle_count: client.vehicle_count,
+			total_vehicle_count: client.total_vehicle_count,
 			children_count: client.children_count,
 			can_open_details: client.can_open_details,
 			can_edit: client.can_edit,
@@ -1019,7 +1286,15 @@ export default function Clients() {
 				flattenClientsFromGroups(groups).forEach(client => {
 					next[String(client.id)] = {
 						vehicle_count: client.vehicle_count,
+						own_vehicle_count: getClientOwnVehicleCount(client),
+						total_vehicle_count: getClientTotalVehicleCount(client),
+						request_count: client.request_count,
+						own_request_count: getClientOwnRequestCount(client),
+						total_request_count: getClientTotalRequestCount(client),
 						children_count: getClientChildrenCount(client),
+						effective_status: client.effective_status,
+						is_blocked_by_parent: client.is_blocked_by_parent,
+						blocked_by_client_name: client.blocked_by_client_name,
 					}
 				})
 
@@ -1086,7 +1361,10 @@ export default function Clients() {
 		})
 
 		if (selectedClientRef.current) {
-			fetchClientRequests(selectedClientRef.current.id)
+			fetchClientRequests(
+				selectedClientRef.current.id,
+				includeSubclientRequestsRef.current,
+			)
 		}
 	}
 
@@ -1242,6 +1520,18 @@ export default function Clients() {
 		return getClientTypeLabel(clientType)
 	}
 
+	const getParentClientDisplayName = client => {
+		if (!client) return null
+
+		return (
+			client.parent_client_display_name ||
+			client.parent_client_company_name ||
+			client.parent_client_name ||
+			client.source_parent_client_name ||
+			null
+		)
+	}
+
 	const getEquipmentBadgeText = item => {
 		const titleParts = []
 
@@ -1303,11 +1593,25 @@ export default function Clients() {
 		return roleLabels[req.created_by_role] || req.created_by_role
 	}
 
-	const fetchClientRequests = async clientId => {
+	const fetchClientRequests = async (
+		clientId,
+		includeSubclients = includeSubclientRequestsRef.current,
+	) => {
 		try {
-			const res = await fetch(`${API_BASE_URL}/clients/${clientId}/requests`, {
-				headers: getAuthHeaders(),
-			})
+			const params = new URLSearchParams()
+
+			if (includeSubclients) {
+				params.set('include_subclients', 'true')
+			}
+
+			const query = params.toString()
+
+			const res = await fetch(
+				`${API_BASE_URL}/clients/${clientId}/requests${query ? `?${query}` : ''}`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
 
 			if (res.ok) {
 				const data = await res.json()
@@ -1431,7 +1735,11 @@ export default function Clients() {
 		setDeletedVehicles([])
 		setShowDeletedVehicles(false)
 
-		fetchClientRequests(client.id)
+		// Новый клиент открывается всегда со своими заявками.
+		setIncludeSubclientRequests(false)
+		includeSubclientRequestsRef.current = false
+
+		fetchClientRequests(client.id, false)
 	}
 
 	const fetchClientVehicles = async (
@@ -1629,7 +1937,7 @@ export default function Clients() {
 
 		const confirmText =
 			`Удалить клиента "${clientName}" в корзину?\n\n` +
-			'Клиент будет скрыт из активного списка. Если у клиента есть активные заявки, backend не даст его удалить.'
+			'Клиент будет скрыт из активного списка. Если у клиента есть активные заявки или подклиенты, backend не даст его удалить.'
 
 		if (!window.confirm(confirmText)) {
 			return
@@ -1696,9 +2004,13 @@ export default function Clients() {
 
 		if (nextStatus === oldStatus) return
 
+		const subclientsCount = Number(selectedClient.subclients_count || 0)
+
 		const confirmText =
 			nextStatus === 'BLOCKED'
-				? 'Заблокировать клиента? После этого создавать заявки для него будет нельзя.'
+				? subclientsCount > 0
+					? `Заблокировать клиента? Блокировка распространится на всех подклиентов (${subclientsCount}): по ним нельзя будет создавать заявки и добавлять машины.`
+					: 'Заблокировать клиента? После этого создавать заявки для него будет нельзя.'
 				: nextStatus === 'DEBTOR'
 					? 'Перевести клиента в статус должника? Заявки создавать можно, но будет предупреждение.'
 					: 'Перевести клиента в статус активного?'
@@ -1728,6 +2040,9 @@ export default function Clients() {
 			const updatedClient = {
 				...selectedClient,
 				status: nextStatus,
+				effective_status: isClientBlockedByParent(selectedClient)
+					? 'BLOCKED'
+					: nextStatus,
 			}
 
 			updateClientLocally(updatedClient)
@@ -2392,7 +2707,10 @@ export default function Clients() {
 					vehiclesPage,
 					vehiclesPageSize,
 				)
-				fetchClientRequests(selectedClient.id)
+				fetchClientRequests(
+					selectedClient.id,
+					includeSubclientRequestsRef.current,
+				)
 			}
 
 			fetchClients({ silent: true })
@@ -2594,6 +2912,25 @@ export default function Clients() {
 		const isNested = level > 0
 		const hierarchyBadgeText = getClientHierarchyBadgeText(client, level)
 
+		const ownRequestCount = getClientOwnRequestCount(client)
+		const totalRequestCount = getClientTotalRequestCount(client)
+		const ownVehicleCount = getClientOwnVehicleCount(client)
+		const totalVehicleCount = getClientTotalVehicleCount(client)
+
+		const requestCountText = formatOwnAndTotalCount(
+			ownRequestCount,
+			totalRequestCount,
+			hasChildren,
+		)
+
+		const vehicleCountText = client.__countsUnknown
+			? '—'
+			: formatOwnAndTotalCount(ownVehicleCount, totalVehicleCount, hasChildren)
+
+		const countsTitle = hasChildren
+			? 'Слева — свои, справа — вместе с подклиентами'
+			: undefined
+
 		if (isNested) {
 			return (
 				<div
@@ -2650,6 +2987,10 @@ export default function Clients() {
 											{hierarchyBadgeText}
 										</span>
 									)}
+
+									{client.__isSearchMatch && (
+										<span className='client-search-match-badge'>совпадение</span>
+									)}
 								</div>
 
 								<div className='client-tree-row-meta'>
@@ -2664,20 +3005,17 @@ export default function Clients() {
 						</div>
 
 						<div className='client-tree-row-right'>
-							<span className='client-tree-stat'>
-								Заявок: <b>{client.request_count || 0}</b>
+							<span className='client-tree-stat' title={countsTitle}>
+								Заявок: <b>{requestCountText}</b>
 							</span>
 
-							<span className='client-tree-stat'>
-								Машин:{' '}
-								<b>
-									{client.__countsUnknown ? '—' : client.vehicle_count || 0}
-								</b>
+							<span className='client-tree-stat' title={countsTitle}>
+								Машин: <b>{vehicleCountText}</b>
 							</span>
 
 							{hasChildren && (
 								<span className='client-tree-stat'>
-									Подклиентов: <b>{client.children_count || children.length}</b>
+									Подклиентов: <b>{childrenCount}</b>
 								</span>
 							)}
 
@@ -2811,6 +3149,10 @@ export default function Clients() {
 									{hierarchyBadgeText}
 								</span>
 							)}
+
+							{client.__isSearchMatch && (
+								<span className='client-search-match-badge'>совпадение</span>
+							)}
 						</div>
 
 						{(canEditClient(client) || canDeleteClient) && (
@@ -2917,23 +3259,23 @@ export default function Clients() {
 						}}
 					>
 						<div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-							<div>
+							<div title={countsTitle}>
 								<span className='request-count-label'>Заявок:</span>
 								<span
-									className={`request-count-badge ${client.request_count > 0 ? 'active' : ''}`}
+									className={`request-count-badge ${totalRequestCount > 0 ? 'active' : ''}`}
 									style={{ marginLeft: '8px' }}
 								>
-									{client.request_count || 0}
+									{requestCountText}
 								</span>
 							</div>
 
-							<div>
+							<div title={countsTitle}>
 								<span className='request-count-label'>Машин:</span>
 								<span
-									className={`request-count-badge ${client.vehicle_count > 0 ? 'active' : ''}`}
+									className={`request-count-badge ${totalVehicleCount > 0 ? 'active' : ''}`}
 									style={{ marginLeft: '8px' }}
 								>
-									{client.__countsUnknown ? '—' : client.vehicle_count || 0}
+									{vehicleCountText}
 								</span>
 							</div>
 
@@ -3000,6 +3342,18 @@ export default function Clients() {
 	// а не фильтр, сужающий список, поэтому в счётчик не включаем.
 	const activeFiltersCount = Object.values(clientFilters).filter(Boolean).length
 
+	const selectedClientSubclientsCount = Number(
+		selectedClient?.subclients_count || 0,
+	)
+
+	const ownClientRequestsCount = clientRequests.filter(
+		req => !req.is_subclient_request,
+	).length
+
+	const subclientRequestsCount = clientRequests.filter(
+		req => req.is_subclient_request,
+	).length
+
 	return (
 		<div className='clients-page-container'>
 			<style>{`
@@ -3010,6 +3364,108 @@ export default function Clients() {
 				}
 				.vehicle-highlighted {
 					animation: vehiclePulse 2.5s ease-out forwards;
+				}
+
+				.client-blocked-parent-badge {
+					display: inline-flex;
+					align-items: center;
+					gap: 4px;
+					padding: 2px 8px;
+					border-radius: 12px;
+					font-size: 11px;
+					font-weight: 600;
+					background: #fdecea;
+					color: #b71c1c;
+					border: 1px solid #f5c6cb;
+					white-space: nowrap;
+				}
+
+				.client-blocked-parent-notice {
+					margin: 10px 0 0;
+					padding: 10px 12px;
+					border-radius: 8px;
+					background: #fdecea;
+					border: 1px solid #f5c6cb;
+					color: #b71c1c;
+					font-size: 13px;
+					line-height: 1.4;
+				}
+
+				.client-parent-link-value {
+					display: inline-flex;
+					align-items: center;
+					gap: 6px;
+					flex-wrap: wrap;
+				}
+
+				.subclient-requests-toolbar {
+					display: flex;
+					align-items: center;
+					justify-content: space-between;
+					gap: 12px;
+					flex-wrap: wrap;
+					margin-top: 10px;
+				}
+
+				.subclient-requests-toggle {
+					display: inline-flex;
+					align-items: center;
+					gap: 8px;
+					padding: 6px 12px;
+					border: 1px solid #d7e3c9;
+					background: #f6faf1;
+					border-radius: 20px;
+					font-size: 13px;
+					font-weight: 600;
+					color: #3f6b1a;
+					cursor: pointer;
+					user-select: none;
+				}
+
+				.subclient-requests-toggle input {
+					accent-color: #5e9424;
+					cursor: pointer;
+				}
+
+				.subclient-requests-toggle.is-disabled {
+					opacity: 0.55;
+					cursor: not-allowed;
+				}
+
+				.subclient-requests-summary {
+					font-size: 12px;
+					color: #666;
+				}
+
+				.request-subclient-badge {
+					display: inline-block;
+					padding: 2px 8px;
+					border-radius: 10px;
+					font-size: 11px;
+					font-weight: 700;
+					background: #eef4ff;
+					color: #1e4b9c;
+					border: 1px solid #cfe0ff;
+					max-width: 220px;
+					overflow: hidden;
+					text-overflow: ellipsis;
+					white-space: nowrap;
+				}
+
+				.request-card.request-card-subclient {
+					border-left: 3px solid #1e4b9c;
+				}
+
+				.client-search-match-badge {
+					display: inline-block;
+					padding: 2px 8px;
+					border-radius: 12px;
+					font-size: 11px;
+					font-weight: 700;
+					background: #fff5d6;
+					color: #8a6100;
+					border: 1px solid #f2d98c;
+					white-space: nowrap;
 				}
 			`}</style>
 			{!selectedClient ? (
@@ -3181,7 +3637,8 @@ export default function Clients() {
 											</div>
 
 											<div className='client-group-subtitle'>
-												Найдено: {clientSearchResults.length} · запрос «
+												Найдено: {clientSearchTree.matchedCount} · показано с
+												родителями: {clientSearchTree.shownCount} · запрос «
 												{pickerQuery.trim()}»
 											</div>
 										</div>
@@ -3199,10 +3656,10 @@ export default function Clients() {
 								</div>
 
 								<div className='client-group-tree-list'>
-									{clientSearchResults.length === 0 ? (
+									{clientSearchTree.roots.length === 0 ? (
 										<div className='client-search-empty'>Ничего не найдено</div>
 									) : (
-										clientSearchResults.map(client =>
+										clientSearchTree.roots.map(client =>
 											renderClientCard(client, 0),
 										)
 									)}
@@ -3292,12 +3749,34 @@ export default function Clients() {
 																)}
 														</div>
 
-														<div className='client-group-subtitle'>
+														<div
+															className='client-group-subtitle'
+															title={
+																group.parent_client &&
+																Number(group.subclients_count || 0) > 0
+																	? 'Слева — свои, справа — вместе с подклиентами'
+																	: undefined
+															}
+														>
 															{group.parent_client ? (
 																<>
 																	Подклиентов: {group.subclients_count || 0} ·
-																	Машин: {group.vehicle_count || 0} · Заявок:{' '}
-																	{group.request_count || 0}
+																	Машин:{' '}
+																	{formatOwnAndTotalCount(
+																		getClientOwnVehicleCount(
+																			group.parent_client,
+																		),
+																		Number(group.vehicle_count || 0),
+																		Number(group.subclients_count || 0) > 0,
+																	)}{' '}
+																	· Заявок:{' '}
+																	{formatOwnAndTotalCount(
+																		getClientOwnRequestCount(
+																			group.parent_client,
+																		),
+																		Number(group.request_count || 0),
+																		Number(group.subclients_count || 0) > 0,
+																	)}
 																</>
 															) : (
 																<>
@@ -3375,179 +3854,231 @@ export default function Clients() {
 						</div>
 					</div>
 
+					{isClientBlockedByParent(selectedClient) && (
+						<div className='client-blocked-parent-notice'>
+							Клиент заблокирован через родителя «
+							{selectedClient.blocked_by_client_name}». Создавать заявки и
+							добавлять машины нельзя, пока родительский клиент заблокирован.
+						</div>
+					)}
+
 					<div className='client-info-box'>
-						<div className='info-row'>
-							<span className='info-key'>ФИО / Название</span>
-							<span className='info-val'>
-								{selectedClient.company_name || selectedClient.name}
-							</span>
-						</div>
-						<div className='info-row'>
-							<span className='info-key'>Тип лица</span>
-							<span className='info-val'>
-								{getClientTypeLabel(selectedClient.type)}
-							</span>
-						</div>
-						<div className='info-row'>
-							<span className='info-key'>
-								{getClientIdentifierLabel(selectedClient)}
-							</span>
-							<span className='info-val'>
-								{getClientIdentifierValue(selectedClient)}
-							</span>
-						</div>
-						<div className='info-row'>
-							<span className='info-key'>Телефон</span>
-							<span className='info-val'>{selectedClient.phone}</span>
-						</div>
-						<div className='info-row'>
-							<span className='info-key'>Email</span>
-							<span className='info-val'>{selectedClient.email || '—'}</span>
-						</div>
-						<div className='info-row'>
-							<span className='info-key'>Логин платформы мониторинга</span>
-							<span className='info-val'>
-								{selectedClient.monitoring_login || '—'}
-							</span>
-						</div>
-
-						{canViewClientMonitoringPassword(selectedClient) && (
+						<div className='client-info-main'>
 							<div className='info-row'>
-								<span className='info-key'>Пароль платформы мониторинга</span>
+								<span className='info-key'>ФИО / Название</span>
 								<span className='info-val'>
-									{selectedClient.monitoring_password ? (
-										<span
-											style={{
-												display: 'inline-flex',
-												alignItems: 'center',
-												gap: '8px',
-												flexWrap: 'wrap',
-											}}
-										>
-											<span>
-												{showMonitoringPassword
-													? selectedClient.monitoring_password
-													: '••••••••'}
-											</span>
-
-											<button
-												type='button'
-												className='btn-details'
-												onClick={() => setShowMonitoringPassword(prev => !prev)}
-												style={{
-													padding: '4px 8px',
-													fontSize: '12px',
-												}}
-											>
-												{showMonitoringPassword ? 'Скрыть' : 'Показать'}
-											</button>
-										</span>
-									) : (
-										'—'
-									)}
+									{selectedClient.company_name || selectedClient.name}
 								</span>
 							</div>
-						)}
-
-						<div className='info-row'>
-							<span className='info-key'>Статус клиента</span>
-
-							{canChangeClientStatus(selectedClient) ? (
-								<div className='client-status-control'>
-									<span
-										className={`client-status-dot client-status-dot-${String(selectedClient.status || 'ACTIVE').toLowerCase()}`}
-									/>
-
-									<select
-										className='client-inline-select client-status-select'
-										value={selectedClient.status || 'ACTIVE'}
-										onChange={e => handleClientStatusChange(e.target.value)}
-										disabled={clientActionLoading}
-									>
-										<option value='ACTIVE'>Активный</option>
-										<option value='DEBTOR'>Должник</option>
-										<option value='BLOCKED'>Заблокирован</option>
-									</select>
-								</div>
-							) : (
-								<span
-									className={`info-val client-status-detail client-status-${String(selectedClient.status || 'ACTIVE').toLowerCase()}`}
-								>
-									{getClientStatusLabel(selectedClient.status || 'ACTIVE')}
+							<div className='info-row'>
+								<span className='info-key'>Тип лица</span>
+								<span className='info-val'>
+									{getClientTypeLabel(selectedClient.type)}
 								</span>
+							</div>
+							<div className='info-row'>
+								<span className='info-key'>
+									{getClientIdentifierLabel(selectedClient)}
+								</span>
+								<span className='info-val'>
+									{getClientIdentifierValue(selectedClient)}
+								</span>
+							</div>
+
+							{getParentClientDisplayName(selectedClient) && (
+								<div className='info-row'>
+									<span className='info-key'>Родительский клиент</span>
+									<span className='info-val client-parent-link-value'>
+										<span>{getParentClientDisplayName(selectedClient)}</span>
+
+										{!selectedClient.parent_client_id && (
+											<span
+												className='client-hierarchy-badge child'
+												title='Связь не установлена: имя пришло из выгрузки, но родитель не найден в CRM'
+											>
+												связь не установлена
+											</span>
+										)}
+									</span>
+								</div>
 							)}
-						</div>
 
-						<div className='info-row'>
-							<span className='info-key'>Тип оплаты</span>
+							{selectedClientSubclientsCount > 0 && (
+								<div className='info-row'>
+									<span className='info-key'>Подклиентов</span>
+									<span className='info-val'>
+										{selectedClientSubclientsCount}
+									</span>
+								</div>
+							)}
 
-							{canChangeClientPaymentType(selectedClient) ? (
-								<div className='client-status-control'>
+							<div className='info-row'>
+								<span className='info-key'>Телефон</span>
+								<span className='info-val'>{selectedClient.phone}</span>
+							</div>
+							<div className='info-row'>
+								<span className='info-key'>Email</span>
+								<span className='info-val'>{selectedClient.email || '—'}</span>
+							</div>
+							<div className='info-row'>
+								<span className='info-key'>Логин платформы мониторинга</span>
+								<span className='info-val'>
+									{selectedClient.monitoring_login || '—'}
+								</span>
+							</div>
+
+							{canViewClientMonitoringPassword(selectedClient) && (
+								<div className='info-row'>
+									<span className='info-key'>Пароль платформы мониторинга</span>
+									<span className='info-val'>
+										{selectedClient.monitoring_password ? (
+											<span
+												style={{
+													display: 'inline-flex',
+													alignItems: 'center',
+													gap: '8px',
+													flexWrap: 'wrap',
+												}}
+											>
+												<span>
+													{showMonitoringPassword
+														? selectedClient.monitoring_password
+														: '••••••••'}
+												</span>
+
+												<button
+													type='button'
+													className='btn-details'
+													onClick={() =>
+														setShowMonitoringPassword(prev => !prev)
+													}
+													style={{
+														padding: '4px 8px',
+														fontSize: '12px',
+													}}
+												>
+													{showMonitoringPassword ? 'Скрыть' : 'Показать'}
+												</button>
+											</span>
+										) : (
+											'—'
+										)}
+									</span>
+								</div>
+							)}
+
+							<div className='info-row'>
+								<span className='info-key'>Статус клиента</span>
+
+								{canChangeClientStatus(selectedClient) ? (
+									<div className='client-status-control'>
+										<span
+											className={`client-status-dot client-status-dot-${String(getClientEffectiveStatus(selectedClient)).toLowerCase()}`}
+										/>
+
+										<select
+											className='client-inline-select client-status-select'
+											value={selectedClient.status || 'ACTIVE'}
+											onChange={e => handleClientStatusChange(e.target.value)}
+											disabled={
+												clientActionLoading ||
+												isClientBlockedByParent(selectedClient)
+											}
+											title={
+												isClientBlockedByParent(selectedClient)
+													? 'Сначала разблокируйте родительского клиента'
+													: undefined
+											}
+										>
+											<option value='ACTIVE'>Активный</option>
+											<option value='DEBTOR'>Должник</option>
+											<option value='BLOCKED'>Заблокирован</option>
+										</select>
+									</div>
+								) : (
 									<span
-										className={`client-payment-dot client-payment-dot-${getClientPaymentTypeClass(
+										className={`info-val client-status-detail client-status-${String(getClientEffectiveStatus(selectedClient)).toLowerCase()}`}
+									>
+										{getClientStatusLabel(selectedClient.status || 'ACTIVE')}
+									</span>
+								)}
+							</div>
+
+							<div className='info-row'>
+								<span className='info-key'>Тип оплаты</span>
+
+								{canChangeClientPaymentType(selectedClient) ? (
+									<div className='client-status-control'>
+										<span
+											className={`client-payment-dot client-payment-dot-${getClientPaymentTypeClass(
+												selectedClient.payment_type || 'PREPAYMENT',
+											)}`}
+										/>
+
+										<select
+											className='client-inline-select client-payment-select'
+											value={selectedClient.payment_type || 'PREPAYMENT'}
+											onChange={e =>
+												handleClientPaymentTypeChange(e.target.value)
+											}
+											disabled={clientActionLoading}
+										>
+											<option value='PREPAYMENT'>Предоплата</option>
+											<option value='POSTPAYMENT'>Постоплата</option>
+										</select>
+									</div>
+								) : (
+									<span
+										className={`info-val client-payment-detail client-payment-${getClientPaymentTypeClass(
 											selectedClient.payment_type || 'PREPAYMENT',
 										)}`}
-									/>
+									>
+										{getClientPaymentTypeLabel(
+											selectedClient.payment_type || 'PREPAYMENT',
+										)}
+									</span>
+								)}
+							</div>
 
+							<div className='info-row'>
+								<span className='info-key'>Ответственный</span>
+
+								{canReassignClient(selectedClient) ? (
 									<select
-										className='client-inline-select client-payment-select'
-										value={selectedClient.payment_type || 'PREPAYMENT'}
+										className='client-inline-select'
+										value={selectedClient.responsible_manager_id || ''}
 										onChange={e =>
-											handleClientPaymentTypeChange(e.target.value)
+											handleClientResponsibleChange(e.target.value)
 										}
 										disabled={clientActionLoading}
 									>
-										<option value='PREPAYMENT'>Предоплата</option>
-										<option value='POSTPAYMENT'>Постоплата</option>
+										<option value=''>Не назначен</option>
+
+										{responsibleManagers.map(user => (
+											<option key={user.id} value={user.id}>
+												{user.name} ·{' '}
+												{user.role === 'MANAGER'
+													? 'Менеджер'
+													: user.role === 'ROP'
+														? 'РОП'
+														: user.role === 'ADMIN'
+															? 'Админ'
+															: user.role}
+											</option>
+										))}
 									</select>
-								</div>
-							) : (
-								<span
-									className={`info-val client-payment-detail client-payment-${getClientPaymentTypeClass(
-										selectedClient.payment_type || 'PREPAYMENT',
-									)}`}
-								>
-									{getClientPaymentTypeLabel(
-										selectedClient.payment_type || 'PREPAYMENT',
-									)}
-								</span>
-							)}
-						</div>
-
-						<div className='info-row'>
-							<span className='info-key'>Ответственный</span>
-
-							{canReassignClient(selectedClient) ? (
-								<select
-									className='client-inline-select'
-									value={selectedClient.responsible_manager_id || ''}
-									onChange={e => handleClientResponsibleChange(e.target.value)}
-									disabled={clientActionLoading}
-								>
-									<option value=''>Не назначен</option>
-
-									{responsibleManagers.map(user => (
-										<option key={user.id} value={user.id}>
-											{user.name} ·{' '}
-											{user.role === 'MANAGER'
-												? 'Менеджер'
-												: user.role === 'ROP'
-													? 'РОП'
-													: user.role === 'ADMIN'
-														? 'Админ'
-														: user.role}
-										</option>
-									))}
-								</select>
-							) : (
-								<span className='info-val'>
-									{selectedClient.responsible_manager_name || 'Не назначен'}
-								</span>
-							)}
+								) : (
+									<span className='info-val'>
+										{selectedClient.responsible_manager_name || 'Не назначен'}
+									</span>
+								)}
+							</div>
 						</div>
 
 						{(canEditClient(selectedClient) ||
 							canDeleteClient ||
+							canViewPortalUsers ||
+							canViewClientHistory ||
 							canViewClientInstallationSettings(selectedClient)) && (
 							<div className='client-edit-btn-wrapper'>
 								{canEditClient(selectedClient) && (
@@ -3585,6 +4116,26 @@ export default function Clients() {
 										disabled={clientActionLoading}
 									>
 										⚙ Параметры установки
+									</button>
+								)}
+
+								{canViewPortalUsers && (
+									<button
+										className='client-install-settings-btn client-detail-action-btn'
+										onClick={() => setPortalUsersClient(selectedClient)}
+										disabled={clientActionLoading}
+									>
+										👤 Настройка пользователей
+									</button>
+								)}
+
+								{canViewClientHistory && (
+									<button
+										className='client-install-settings-btn client-detail-action-btn'
+										onClick={() => setHistoryClient(selectedClient)}
+										disabled={clientActionLoading}
+									>
+										🕘 История изменений
 									</button>
 								)}
 							</div>
@@ -3903,6 +4454,32 @@ export default function Clients() {
 						Заявки клиента ({clientRequests.length})
 					</h3>
 
+					{selectedClientSubclientsCount > 0 && (
+						<div className='subclient-requests-toolbar'>
+							<label
+								className={`subclient-requests-toggle ${
+									clientActionLoading ? 'is-disabled' : ''
+								}`}
+							>
+								<input
+									type='checkbox'
+									checked={includeSubclientRequests}
+									disabled={clientActionLoading}
+									onChange={e => setIncludeSubclientRequests(e.target.checked)}
+								/>
+								Показывать заявки подклиентов
+							</label>
+
+							{includeSubclientRequests && (
+								<span className='subclient-requests-summary'>
+									Свои: {ownClientRequestsCount} · Подклиентов:{' '}
+									{subclientRequestsCount} · Заявки подклиентов доступны только
+									для просмотра
+								</span>
+							)}
+						</div>
+					)}
+
 					<div className='requests-list' style={{ marginTop: '15px' }}>
 						{clientRequests.length === 0 ? (
 							<div
@@ -3919,10 +4496,24 @@ export default function Clients() {
 						{clientRequests.map(req => (
 							<div
 								key={req.id}
-								className='request-card'
+								className={`request-card ${
+									req.is_subclient_request ? 'request-card-subclient' : ''
+								}`}
 								style={{ position: 'relative', cursor: 'default' }}
 							>
 								<div className='card-column'>
+									{req.is_subclient_request && (
+										<div className='card-item'>
+											<span className='card-label'>Клиент</span>
+											<span
+												className='request-subclient-badge'
+												title={req.client_display_name}
+											>
+												{req.client_display_name}
+											</span>
+										</div>
+									)}
+
 									<div className='card-item' style={{ marginTop: '8px' }}>
 										<span className='card-label'>Вид работы</span>
 										<span
@@ -4870,6 +5461,19 @@ export default function Clients() {
 				isOpen={Boolean(installationSettingsClient)}
 				client={installationSettingsClient}
 				onClose={() => setInstallationSettingsClient(null)}
+			/>
+
+			<PortalUsersModal
+				isOpen={Boolean(portalUsersClient)}
+				client={portalUsersClient}
+				onClose={() => setPortalUsersClient(null)}
+				onChanged={() => fetchClientGroups({ silent: true })}
+			/>
+
+			<ClientHistoryModal
+				isOpen={Boolean(historyClient)}
+				client={historyClient}
+				onClose={() => setHistoryClient(null)}
 			/>
 
 			<AttachEquipmentToVehicleModal

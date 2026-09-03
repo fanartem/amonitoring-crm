@@ -20,6 +20,10 @@ from app.routers import (
     support_requests,
     access_control,
     reports,
+    portal_users,
+    portal,
+    portal_requests,
+    portal_notifications,
 )
 
 load_dotenv()
@@ -59,7 +63,10 @@ app.include_router(notifications.router)
 app.include_router(attachments.router)
 app.include_router(access_control.router)
 app.include_router(reports.router)
-
+app.include_router(portal_users.router)
+app.include_router(portal.router)
+app.include_router(portal_requests.router)
+app.include_router(portal_notifications.router)
 
 @app.get("/", include_in_schema=False)
 def main_root():

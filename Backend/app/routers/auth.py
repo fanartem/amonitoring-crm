@@ -6,14 +6,23 @@ from app.security import (
     create_access_token,
     hash_password,
     get_current_user,
+    get_user_token_version,
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    TOKEN_VERSION_CLAIM,
 )
 from app.permissions import (
     ADMIN,
+    add_access_audit_log,
+    add_client_history,
     attach_effective_permissions,
+    can_change_own_portal_password,
+    client_account_is_deleted,
+    get_portal_access_state,
     get_user_base_access,
+    get_user_client_id,
+    is_client_user,
 )
-from app.schemas import UserCreate
+from app.schemas import PortalPasswordChange, UserCreate
 from datetime import timedelta
 from pymysql.err import IntegrityError
 
@@ -368,9 +377,11 @@ def register(data: UserCreate, request: Request):
                     name,
                     city,
                     role,
+                    user_kind,
+                    client_id,
                     is_approved
                 )
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, 'EMPLOYEE', NULL, %s)
                 """,
                 (
                     email,
@@ -534,6 +545,31 @@ def login(
                     "role_disabled",
                 )
 
+            # Клиентская учётка: состояние клиента решает, пускать ли вообще.
+            # Текст один и тот же для обоих случаев и без подробностей —
+            # на странице входа мы ещё не знаем, кто по ту сторону, и статус
+            # клиента ему не сообщаем. Разница видна только в журнале.
+            if is_client_user(user):
+                if not get_user_client_id(user):
+                    raise deny(
+                        cursor,
+                        status.HTTP_403_FORBIDDEN,
+                        "Доступ в личный кабинет закрыт. Обратитесь к вашему менеджеру.",
+                        "client_not_linked",
+                    )
+
+                if client_account_is_deleted(user):
+                    raise deny(
+                        cursor,
+                        status.HTTP_403_FORBIDDEN,
+                        "Доступ в личный кабинет закрыт. Обратитесь к вашему менеджеру.",
+                        "client_deleted",
+                    )
+
+            # Рекурсивный обход ветки. Здесь он уместен: вход происходит
+            # редко, а знать режим кабинета нужно сразу.
+            portal_state = get_portal_access_state(cursor, user)
+
             attach_effective_permissions(cursor, user)
 
             record_auth_attempt(cursor, "login", email, client_ip, True, None)
@@ -541,11 +577,19 @@ def login(
 
             access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
-            # В токене только идентификатор. Роль, город и права всегда берутся
-            # из БД в get_current_user, чтобы изменения в Settings действовали
-            # немедленно, а не после перелогина.
+            # В токене идентификатор и версия токенов. Роль, город и права
+            # всегда берутся из БД в get_current_user, чтобы изменения
+            # в Settings действовали немедленно, а не после перелогина.
+            # Версия решает обратную задачу: погасить токены, выданные
+            # до смены пароля, не дожидаясь истечения срока.
             access_token = create_access_token(
-                data={"sub": str(user["id"])},
+                data={
+                    "sub": str(user["id"]),
+                    TOKEN_VERSION_CLAIM: get_user_token_version(
+                        cursor,
+                        int(user["id"]),
+                    ),
+                },
                 expires_delta=access_token_expires,
             )
 
@@ -560,6 +604,22 @@ def login(
                     "role_name": user["role_name"],
                     "role_badge_color": user["role_badge_color"],
                     "data_scope": user["data_scope"],
+
+                    # Тип учётки нужен фронту, чтобы не показывать клиенту
+                    # служебные элементы (например галочку «внутренний файл»).
+                    # .get с запасным значением: если поле почему-то не пришло,
+                    # считаем сотрудником не по умолчанию, а осознанно —
+                    # ошибка тогда будет видна в интерфейсе сотрудника,
+                    # а не утечкой в кабинете клиента.
+                    "user_kind": user.get("user_kind") or "EMPLOYEE",
+                    "client_id": user.get("client_id"),
+                    "client_name": user.get("client_display_name"),
+
+                    "portal_read_only": portal_state["portal_read_only"],
+                    "portal_blocked_by_parent": portal_state[
+                        "portal_blocked_by_parent"
+                    ],
+
                     "city": user["city"],
                     "is_super_admin": user["is_super_admin"],
                     "is_owner": user["is_owner"],
@@ -581,7 +641,20 @@ def read_current_user(current_user: dict = Depends(get_current_user)):
     Нужен потому, что /auth/login отдаёт права один раз, а токен живёт часами:
     без этого эндпоинта снятое в Settings право продолжает действовать на
     фронте до перелогина. Набор полей совпадает с блоком "user" в /auth/login.
+
+    Состояние кабинета считается здесь, а не в get_current_user: запрос
+    рекурсивный, и гонять его на каждый вызов API незачем. Этот эндпоинт
+    фронт дёргает при загрузке страницы — этого достаточно, чтобы снятие
+    блокировки доходило до клиента без перелогина.
     """
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            portal_state = get_portal_access_state(cursor, current_user)
+    finally:
+        connection.close()
+
     return {
         "id": current_user["id"],
         "name": current_user["name"],
@@ -590,6 +663,14 @@ def read_current_user(current_user: dict = Depends(get_current_user)):
         "role_name": current_user["role_name"],
         "role_badge_color": current_user["role_badge_color"],
         "data_scope": current_user["data_scope"],
+
+        "user_kind": current_user.get("user_kind") or "EMPLOYEE",
+        "client_id": current_user.get("client_id"),
+        "client_name": current_user.get("client_display_name"),
+
+        "portal_read_only": portal_state["portal_read_only"],
+        "portal_blocked_by_parent": portal_state["portal_blocked_by_parent"],
+
         "city": current_user["city"],
         "is_super_admin": current_user["is_super_admin"],
         "is_owner": current_user["is_owner"],
@@ -598,3 +679,152 @@ def read_current_user(current_user: dict = Depends(get_current_user)):
         "can_be_request_executor": current_user["can_be_request_executor"],
         "can_be_responsible_manager": current_user["can_be_responsible_manager"],
     }
+
+# Требования к паролю те же, что в portal_users.py, где пароль задаёт админ.
+# Значения продублированы намеренно: роутер не должен импортировать роутер.
+MIN_OWN_PASSWORD_LENGTH = 8
+MAX_OWN_PASSWORD_LENGTH = 128
+
+
+def validate_own_password(value) -> str:
+    password = str(value or "")
+
+    if len(password) < MIN_OWN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Пароль должен быть не короче {MIN_OWN_PASSWORD_LENGTH} символов",
+        )
+
+    if len(password) > MAX_OWN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Пароль должен быть не длиннее {MAX_OWN_PASSWORD_LENGTH} символов",
+        )
+
+    if password.strip() != password:
+        raise HTTPException(
+            status_code=400,
+            detail="Пароль не должен начинаться или заканчиваться пробелом",
+        )
+
+    return password
+
+
+@router.post("/password/change")
+def change_own_password(
+    data: PortalPasswordChange,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Смена собственного пароля учётной записью клиентского портала.
+
+    Почему только портал: по решению Р13 сотрудники продолжают менять
+    пароль через PUT /admin/users/{id}, где текущий пароль не спрашивается.
+    Открыть этот эндпоинт и им — правка в одну строку, но это отдельное
+    решение и отдельная правка фронта, а не побочный эффект этого шага.
+
+    Сброс пароля клиенту делает администратор в карточке клиента.
+    Почты у клиентов может не быть, поэтому самостоятельного
+    восстановления по email здесь нет и не планируется.
+    """
+    if not is_client_user(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Этот способ смены пароля предназначен для клиентского "
+                "портала. Сотрудники меняют пароль в разделе «Настройки»."
+            ),
+        )
+
+    if not can_change_own_portal_password(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для смены пароля",
+        )
+
+    new_password = validate_own_password(data.new_password)
+
+    if str(data.current_password or "") == new_password:
+        raise HTTPException(
+            status_code=400,
+            detail="Новый пароль совпадает с текущим",
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT hashed_password FROM users WHERE id = %s LIMIT 1",
+                (current_user["id"],),
+            )
+
+            row = cursor.fetchone()
+
+            if not row or not verify_password(
+                str(data.current_password or ""),
+                row["hashed_password"],
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Текущий пароль указан неверно",
+                )
+
+            # token_version + 1 гасит все выданные токены, включая токен
+            # этой же вкладки. Сессию, начатую до смены пароля, продолжать
+            # нельзя: именно её и могли увести — ради этого пароль и меняют.
+            cursor.execute(
+                """
+                UPDATE users
+                SET hashed_password = %s,
+                    token_version = token_version + 1
+                WHERE id = %s
+                """,
+                (hash_password(new_password), current_user["id"]),
+            )
+
+            client_id = get_user_client_id(current_user)
+
+            # Менеджер должен видеть это в карточке клиента: смена пароля
+            # клиентом — обычное событие, но при разборе «кто и когда потерял
+            # доступ» без неё картина неполная.
+            if client_id:
+                add_client_history(
+                    cursor,
+                    client_id=client_id,
+                    user_id=current_user["id"],
+                    action="PORTAL_PASSWORD_CHANGED",
+                    field_name="portal_user",
+                    old_value=current_user.get("email"),
+                    new_value=current_user.get("email"),
+                    comment="Пользователь портала сменил свой пароль",
+                )
+
+            add_access_audit_log(
+                cursor,
+                actor_user_id=current_user["id"],
+                target_user_id=current_user["id"],
+                action="PORTAL_PASSWORD_CHANGED",
+                old_value=None,
+                new_value={
+                    "email": current_user.get("email"),
+                    "password_changed": True,
+                },
+                reason="Password changed by portal user",
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Пароль изменён",
+                "reauth_required": True,
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()

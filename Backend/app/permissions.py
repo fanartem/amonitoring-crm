@@ -45,6 +45,19 @@ DATA_SCOPE_CITY_ASSIGNED = "CITY_ASSIGNED"
 DATA_SCOPE_OWN = "OWN"
 DATA_SCOPE_NONE = "NONE"
 
+# Область клиентского портала: пользователь видит только своего клиента
+# и его подклиентов. Добавлена миграцией 2026_09_03_client_portal_foundation.
+#
+# Важно: requests.py намеренно НЕ знает эту область — до этапа 6
+# get_effective_request_data_scope вернёт для неё NONE, то есть
+# портальный пользователь не увидит ни одной заявки.
+DATA_SCOPE_CLIENT = "CLIENT"
+
+USER_KIND_EMPLOYEE = "EMPLOYEE"
+USER_KIND_CLIENT = "CLIENT"
+
+CLIENT_PORTAL_ROLE = "CLIENT_PORTAL"
+
 USER_PERMISSION_ALLOW = "ALLOW"
 USER_PERMISSION_DENY = "DENY"
 
@@ -232,6 +245,52 @@ SUPPORT_REQUEST_COMMENT_PERMISSION_CODES = [
     "support_requests.manage",
 ]
 
+# Права клиентского портала. Синонимов нет и не будет:
+# коды заведены с нуля одной миграцией, дублировать нечего.
+PORTAL_ACCESS_PERMISSION_CODES = [
+    "portal.access",
+]
+
+PORTAL_REQUEST_VIEW_PERMISSION_CODES = [
+    "portal.requests.view",
+]
+
+PORTAL_REQUEST_CREATE_PERMISSION_CODES = [
+    "portal.requests.create",
+]
+
+PORTAL_REQUEST_CANCEL_PERMISSION_CODES = [
+    "portal.requests.cancel_new",
+]
+
+PORTAL_VEHICLE_VIEW_PERMISSION_CODES = [
+    "portal.vehicles.view",
+]
+
+PORTAL_SUBCLIENT_VIEW_PERMISSION_CODES = [
+    "portal.subclients.view",
+]
+
+PORTAL_SUBCLIENT_CREATE_PERMISSION_CODES = [
+    "portal.subclients.create",
+]
+
+PORTAL_PRICE_VIEW_PERMISSION_CODES = [
+    "portal.prices.view",
+]
+
+PORTAL_INSTALLATION_SETTINGS_VIEW_PERMISSION_CODES = [
+    "portal.installation_settings.view",
+]
+
+PORTAL_PASSWORD_CHANGE_PERMISSION_CODES = [
+    "portal.password.change",
+]
+
+PORTAL_COMMENT_CREATE_PERMISSION_CODES = [
+    "portal.comments.create",
+]
+
 
 def to_bool(value) -> bool:
     if isinstance(value, bool):
@@ -273,10 +332,261 @@ def get_data_scope(user: dict | None) -> str:
     )
 
 
+def get_user_kind(user: dict | None) -> str:
+    """
+    Тип учётной записи. Отсутствие значения считаем сотрудником —
+    так ведут себя все записи, созданные до появления портала.
+    """
+    if not user:
+        return USER_KIND_EMPLOYEE
+
+    kind = str(user.get("user_kind") or USER_KIND_EMPLOYEE).strip().upper()
+
+    return kind if kind in [USER_KIND_EMPLOYEE, USER_KIND_CLIENT] else USER_KIND_EMPLOYEE
+
+
+def is_client_user(user: dict | None) -> bool:
+    """
+    Учётная запись клиента. Проверяем и по типу, и по области данных:
+    одного признака мало, если кто-то руками поменяет роль в Settings.
+    """
+    if not user:
+        return False
+
+    return (
+        get_user_kind(user) == USER_KIND_CLIENT
+        or get_data_scope(user) == DATA_SCOPE_CLIENT
+    )
+
+
+def is_employee_user(user: dict | None) -> bool:
+    return not is_client_user(user)
+
+
+def get_user_client_id(user: dict | None) -> int | None:
+    """
+    Клиент, к которому привязана учётная запись портала.
+    У сотрудника всегда None — это гарантирует CHECK в базе.
+    """
+    if not is_client_user(user):
+        return None
+
+    client_id = user.get("client_id") if user else None
+
+    return int(client_id) if client_id else None
+
+
+def require_employee_user(
+    user: dict | None,
+    detail: str = "Раздел доступен только сотрудникам",
+):
+    """
+    Заглушка для сотрудничьих разделов. Клиентская учётка не должна
+    попадать в склад, отчёты, настройки и списки пользователей,
+    даже если кто-то по ошибке выдаст ей лишнее право.
+    """
+    if is_client_user(user):
+        raise HTTPException(status_code=403, detail=detail)
+
+    return True
+
+
+# Состояние клиента, к которому привязана учётная запись портала.
+#
+# Правила приняты на этапе 5:
+#   клиент в корзине — вход запрещён: карточки фактически нет;
+#   клиент BLOCKED   — вход разрешён, кабинет работает только на чтение;
+#   клиент DEBTOR    — обычная работа, долг ограничивает не портал,
+#                      а решения менеджера.
+CLIENT_STATUS_BLOCKED = "BLOCKED"
+
+# Совпадает с CLIENT_TREE_MAX_DEPTH в clients.py. Дублируется намеренно:
+# clients.py импортирует permissions.py, обратный импорт дал бы кольцо.
+CLIENT_PORTAL_TREE_MAX_DEPTH = 10
+
+
+def get_client_account_status(user: dict | None) -> str:
+    if not user:
+        return ""
+
+    return str(user.get("client_status") or "").strip().upper()
+
+
+def client_account_is_deleted(user: dict | None) -> bool:
+    return bool(user and to_bool(user.get("client_is_deleted")))
+
+
+def client_account_is_blocked(user: dict | None) -> bool:
+    """
+    Только собственный статус клиента, без цепочки родителей.
+    Дешёвая проверка по уже загруженной строке.
+    """
+    return get_client_account_status(user) == CLIENT_STATUS_BLOCKED
+
+
+def ensure_client_account_can_login(user: dict | None):
+    """
+    Вызывается на каждый запрос клиентской учётки. Здесь только то,
+    что видно в загруженной строке — без обхода дерева клиентов.
+    """
+    if not is_client_user(user):
+        return True
+
+    if not get_user_client_id(user):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Учётная запись не привязана к клиенту. "
+                "Обратитесь к вашему менеджеру."
+            ),
+        )
+
+    if client_account_is_deleted(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Доступ в личный кабинет закрыт. Обратитесь к вашему менеджеру.",
+        )
+
+    return True
+
+
+def client_branch_is_blocked(cursor, client_id: int | None) -> dict:
+    """
+    Блокировка наследуется вниз: заблокирован любой родитель по цепочке —
+    заблокирована вся ветка. Повторяет resolve_effective_client_block
+    из clients.py, но без импорта оттуда — иначе получится кольцо.
+
+    Берём самую близкую заблокированную строку: depth = 0 означает
+    собственный статус клиента, depth > 0 — блокировку от родителя.
+    """
+    empty = {
+        "is_blocked": False,
+        "is_blocked_by_parent": False,
+        "blocked_by_client_id": None,
+    }
+
+    if not client_id:
+        return empty
+
+    cursor.execute(
+        """
+        WITH RECURSIVE client_chain AS (
+            SELECT
+                c.id,
+                c.parent_client_id,
+                c.status,
+                c.is_deleted,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+
+            UNION ALL
+
+            SELECT
+                p.id,
+                p.parent_client_id,
+                p.status,
+                p.is_deleted,
+                chain.depth + 1
+            FROM clients p
+            INNER JOIN client_chain chain
+                ON p.id = chain.parent_client_id
+            WHERE p.is_deleted = 0
+              AND chain.depth < %s
+        )
+        SELECT id, status, depth
+        FROM client_chain
+        WHERE status = %s
+        ORDER BY depth ASC
+        LIMIT 1
+        """,
+        (int(client_id), CLIENT_PORTAL_TREE_MAX_DEPTH, CLIENT_STATUS_BLOCKED),
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return empty
+
+    return {
+        "is_blocked": True,
+        "is_blocked_by_parent": int(row["depth"]) > 0,
+        "blocked_by_client_id": int(row["id"]),
+    }
+
+
+def get_client_branch_ids(cursor, client_id: int | None) -> set[int]:
+    """
+    Клиент и вся его ветка подклиентов, включая самого клиента.
+
+    Направление вниз по дереву. Обратный обход (вверх, к родителям)
+    делает client_branch_is_blocked.
+
+    Живёт здесь, а не в роутере: ветку клиента считают и заявки,
+    и машины, и кабинет. Три копии одного рекурсивного запроса
+    разъедутся при первой же правке.
+    """
+    if not client_id:
+        return set()
+
+    cursor.execute(
+        """
+        WITH RECURSIVE client_tree AS (
+            SELECT
+                c.id,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+              AND c.is_deleted = 0
+
+            UNION ALL
+
+            SELECT
+                child.id,
+                tree.depth + 1
+            FROM clients child
+            INNER JOIN client_tree tree
+                ON child.parent_client_id = tree.id
+            WHERE child.is_deleted = 0
+              AND tree.depth < %s
+        )
+        SELECT DISTINCT id
+        FROM client_tree
+        """,
+        (int(client_id), CLIENT_PORTAL_TREE_MAX_DEPTH),
+    )
+
+    return {int(row["id"]) for row in (cursor.fetchall() or [])}
+
+
+def get_portal_access_state(cursor, user: dict | None) -> dict:
+    """
+    Состояние кабинета для фронта: можно ли что-то менять.
+    Для сотрудника возвращает нейтральные значения — поле в ответе
+    авторизации одно для всех, ветвиться на фронте не придётся.
+    """
+    if not is_client_user(user):
+        return {
+            "portal_read_only": False,
+            "portal_blocked_by_parent": False,
+        }
+
+    branch = client_branch_is_blocked(cursor, get_user_client_id(user))
+
+    return {
+        "portal_read_only": branch["is_blocked"],
+        "portal_blocked_by_parent": branch["is_blocked_by_parent"],
+    }
+
+
 def get_user_base_access(cursor, user_id: int) -> dict | None:
     """
     Возвращает актуального пользователя + данные роли + security flags.
     Это будет использоваться в get_current_user().
+
+    Для учётной записи клиента дополнительно подтягивается его клиент:
+    статус и признак корзины нужны при входе (этап 5), а client_id —
+    основа области данных CLIENT.
     """
     cursor.execute(
         """
@@ -286,6 +596,8 @@ def get_user_base_access(cursor, user_id: int) -> dict | None:
             u.name,
             u.role,
             u.city,
+            u.user_kind,
+            u.client_id,
             u.is_approved,
             u.is_active,
             u.deleted_at,
@@ -302,10 +614,18 @@ def get_user_base_access(cursor, user_id: int) -> dict | None:
             r.can_be_responsible_manager,
 
             COALESCE(usf.is_super_admin, 0) AS is_super_admin,
-            COALESCE(usf.is_owner, 0) AS is_owner
+            COALESCE(usf.is_owner, 0) AS is_owner,
+
+            c.name AS client_name,
+            c.company_name AS client_company_name,
+            c.status AS client_status,
+            c.is_deleted AS client_is_deleted,
+            c.parent_client_id AS client_parent_client_id,
+            c.responsible_manager_id AS client_responsible_manager_id
         FROM users u
         LEFT JOIN roles r ON r.code = u.role
         LEFT JOIN user_security_flags usf ON usf.user_id = u.id
+        LEFT JOIN clients c ON c.id = u.client_id
         WHERE u.id = %s
         LIMIT 1
         """,
@@ -328,6 +648,23 @@ def get_user_base_access(cursor, user_id: int) -> dict | None:
     user["role_name"] = user.get("role_name") or user.get("role")
     user["role_badge_color"] = user.get("role_badge_color") or "#64748B"
     user["data_scope"] = user.get("role_data_scope") or DATA_SCOPE_NONE
+
+    # Тип учётной записи. Пустое значение трактуем как сотрудника:
+    # так безопаснее, потому что права портала сотруднику никто не выдавал.
+    user_kind = str(user.get("user_kind") or USER_KIND_EMPLOYEE).strip().upper()
+
+    if user_kind not in [USER_KIND_EMPLOYEE, USER_KIND_CLIENT]:
+        user_kind = USER_KIND_EMPLOYEE
+
+    user["user_kind"] = user_kind
+
+    client_id = user.get("client_id")
+    user["client_id"] = int(client_id) if client_id else None
+
+    user["client_is_deleted"] = to_bool(user.get("client_is_deleted"))
+    user["client_display_name"] = (
+        user.get("client_company_name") or user.get("client_name")
+    )
 
     return user
 
@@ -1060,3 +1397,64 @@ def can_delete_support_request(user: dict) -> bool:
 
 def can_comment_support_request(user: dict) -> bool:
     return has_any_permission(user, SUPPORT_REQUEST_COMMENT_PERMISSION_CODES)
+
+
+def can_access_portal(user: dict | None) -> bool:
+    """
+    Вход в личный кабинет. Одного права мало: сотрудник с ошибочно
+    выданным portal.access в портал попасть не должен.
+    """
+    if not is_client_user(user):
+        return False
+
+    if not get_user_client_id(user):
+        return False
+
+    return has_any_permission(user, PORTAL_ACCESS_PERMISSION_CODES)
+
+
+def has_portal_permission(user: dict | None, permission_codes: list[str]) -> bool:
+    return can_access_portal(user) and has_any_permission(user, permission_codes)
+
+
+def can_view_portal_requests(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_REQUEST_VIEW_PERMISSION_CODES)
+
+
+def can_create_portal_request(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_REQUEST_CREATE_PERMISSION_CODES)
+
+
+def can_cancel_portal_request(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_REQUEST_CANCEL_PERMISSION_CODES)
+
+
+def can_view_portal_vehicles(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_VEHICLE_VIEW_PERMISSION_CODES)
+
+
+def can_view_portal_subclients(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_SUBCLIENT_VIEW_PERMISSION_CODES)
+
+
+def can_create_portal_subclient(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_SUBCLIENT_CREATE_PERMISSION_CODES)
+
+
+def can_view_portal_prices(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_PRICE_VIEW_PERMISSION_CODES)
+
+
+def can_view_portal_installation_settings(user: dict | None) -> bool:
+    return has_portal_permission(
+        user,
+        PORTAL_INSTALLATION_SETTINGS_VIEW_PERMISSION_CODES,
+    )
+
+
+def can_change_own_portal_password(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_PASSWORD_CHANGE_PERMISSION_CODES)
+
+
+def can_create_portal_comment(user: dict | None) -> bool:
+    return has_portal_permission(user, PORTAL_COMMENT_CREATE_PERMISSION_CODES)

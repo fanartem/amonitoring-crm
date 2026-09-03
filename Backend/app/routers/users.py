@@ -5,11 +5,28 @@ from app.permissions import (
     has_any_permission,
     has_permission,
     is_super_admin,
+    require_employee_user,
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
+# Все три эндпоинта отдают списки сотрудников: имена, роли, города.
+# Для клиентского портала это внутренний справочник компании, поэтому
+# каждый список закрыт дважды:
+#   1. require_employee_user — клиентская учётка не проходит вообще;
+#   2. u.user_kind = 'EMPLOYEE' в запросе — даже если кому-то выдадут
+#      роли портала флаг can_be_request_executor, клиенты в выборку
+#      не попадут.
+
+
 def ensure_can_view_request_executors(current_user: dict):
+    # Проверка типа учётки идёт ПЕРВОЙ, до super_admin: порядок важен,
+    # иначе флаг супер-админа открыл бы список клиенту.
+    require_employee_user(
+        current_user,
+        detail="Список исполнителей доступен только сотрудникам",
+    )
+
     if is_super_admin(current_user):
         return
 
@@ -35,6 +52,11 @@ def ensure_can_view_request_executors(current_user: dict):
 
 
 def ensure_can_view_responsible_managers(current_user: dict):
+    require_employee_user(
+        current_user,
+        detail="Список ответственных менеджеров доступен только сотрудникам",
+    )
+
     if is_super_admin(current_user):
         return
 
@@ -78,6 +100,7 @@ def get_technicians(current_user: dict = Depends(get_current_user)):
                 INNER JOIN roles r ON r.code = u.role
                 WHERE r.can_be_request_executor = 1
                   AND r.is_active = 1
+                  AND u.user_kind = 'EMPLOYEE'
                   AND u.is_approved = 1
                   AND u.is_active = 1
                   AND u.deleted_at IS NULL
@@ -124,6 +147,7 @@ def get_technicians_lookup(current_user: dict = Depends(get_current_user)):
                 FROM users u
                 INNER JOIN roles r ON r.code = u.role
                 WHERE r.can_be_request_executor = 1
+                  AND u.user_kind = 'EMPLOYEE'
                 ORDER BY
                     u.deleted_at IS NOT NULL ASC,
                     u.is_active DESC,
@@ -154,12 +178,13 @@ def get_responsible_managers(current_user: dict = Depends(get_current_user)):
 
     try:
         with connection.cursor() as cursor:
+            # u.email из выборки убран: с появлением портала email стал
+            # логином, а фронт здесь показывает только имя и роль.
             cursor.execute(
                 """
                 SELECT
                     u.id,
                     u.name,
-                    u.email,
                     u.role,
                     u.city,
 
@@ -170,6 +195,7 @@ def get_responsible_managers(current_user: dict = Depends(get_current_user)):
                 INNER JOIN roles r ON r.code = u.role
                 WHERE r.can_be_responsible_manager = 1
                   AND r.is_active = 1
+                  AND u.user_kind = 'EMPLOYEE'
                   AND u.is_approved = 1
                   AND u.is_active = 1
                   AND u.deleted_at IS NULL

@@ -24,9 +24,31 @@ from app.permissions import (
     add_client_history,
     is_client_owned_by_user,
     is_valid_client_status,
+    require_employee_user,
 )
 
-router = APIRouter(prefix="/clients", tags=["Clients"])
+
+def ensure_employee_access(current_user: dict = Depends(get_current_user)):
+    """
+    Раздел «Клиенты» — внутренний: здесь вся клиентская база компании,
+    пароли платформы мониторинга, статусы платёжной дисциплины и корзина.
+
+    Клиентская учётная запись сюда не попадает ни при каких правах.
+    Свои данные кабинет получает отдельными портальными эндпоинтами.
+    """
+    require_employee_user(
+        current_user,
+        detail="Раздел клиентов доступен только сотрудникам",
+    )
+
+    return current_user
+
+
+router = APIRouter(
+    prefix="/clients",
+    tags=["Clients"],
+    dependencies=[Depends(ensure_employee_access)],
+)
 
 def normalize_text(value: str | None) -> str:
     return " ".join(str(value or "").strip().lower().split())
@@ -112,8 +134,13 @@ ALLOWED_INSTALLATION_VISIT_PRICE_CODES = [
     "ON_SITE_OUTSIDE_CITY",
 ]
 
-# Защита от кольца в иерархии, пока родитель ищется по строковому имени.
-CLIENT_PARENT_LOOKUP_MAX_DEPTH = 10
+# Ограничение глубины иерархии клиентов.
+# Реальная база после миграции 2026_09_02_client_parent_id имеет глубину 2,
+# запас нужен только как страховка от кольца.
+CLIENT_TREE_MAX_DEPTH = 10
+
+# Старое имя оставлено, чтобы не ломать возможные внешние импорты.
+CLIENT_PARENT_LOOKUP_MAX_DEPTH = CLIENT_TREE_MAX_DEPTH
 
 def can_view_clients(current_user: dict) -> bool:
     return has_any_permission(current_user, CLIENT_VIEW_PERMISSION_CODES)
@@ -351,6 +378,12 @@ def attach_client_permissions(client: dict, current_user: dict) -> dict:
     client["can_create_request"] = can_create_request_for_client(client, current_user)
     client["can_edit_vehicles"] = can_edit_vehicle_for_client(client, current_user)
 
+    # Заблокированный родитель блокирует всю ветку: создавать заявки
+    # и добавлять машины подклиенту нельзя, пока родитель заблокирован.
+    if client.get("is_blocked_by_parent"):
+        client["can_create_request"] = False
+        client["can_edit_vehicles"] = False
+
     return client
 
 def attach_clients_permissions(clients: list[dict], current_user: dict) -> list[dict]:
@@ -383,6 +416,13 @@ def get_source_name(client: dict) -> str:
     )
 
 def get_parent_source_name(client: dict) -> str | None:
+    """
+    Имя родителя из выгрузки ГЛОНАСС Софт.
+
+    После этапа 2 используется только там, где настоящей ссылки
+    parent_client_id ещё нет: имя группы для «осиротевших» клиентов
+    и восстановление связи из корзины.
+    """
     parent = client.get("source_parent_client_name")
     if not parent:
         return None
@@ -396,6 +436,263 @@ def get_parent_source_name(client: dict) -> str | None:
         return None
 
     return parent
+
+def get_parent_client_id(client: dict) -> int | None:
+    parent_client_id = client.get("parent_client_id")
+
+    if parent_client_id in (None, "", 0):
+        return None
+
+    return int(parent_client_id)
+
+def resolve_parent_client_id_by_name(cursor, client: dict) -> int | None:
+    """
+    Разовый поиск родителя по строковому имени из выгрузки.
+
+    Используется только при восстановлении клиента из корзины,
+    когда ссылка parent_client_id пустая.
+    """
+    parent_name = get_parent_source_name(client)
+
+    if not parent_name:
+        return None
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM clients
+        WHERE is_deleted = 0
+          AND LOWER(TRIM(COALESCE(
+                NULLIF(source_client_name, ''),
+                NULLIF(company_name, ''),
+                NULLIF(name, '')
+              ))) = %s
+        ORDER BY id ASC
+        LIMIT 1
+        """,
+        (normalize_text(parent_name),),
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    if int(row["id"]) == int(client["id"]):
+        return None
+
+    return int(row["id"])
+
+def find_parent_client_id(cursor, client: dict) -> int | None:
+    """
+    Настоящая ссылка на родителя. Если её нет — разовый поиск по имени.
+    """
+    parent_client_id = get_parent_client_id(client)
+
+    if parent_client_id:
+        return parent_client_id
+
+    return resolve_parent_client_id_by_name(cursor, client)
+
+def get_client_ancestors(
+    cursor,
+    client_id: int,
+    include_deleted: bool = False,
+) -> list[dict]:
+    """
+    Цепочка родителей снизу вверх: ближайший родитель первым.
+
+    По умолчанию удалённые клиенты в цепочку не попадают: ветка на них
+    обрывается. include_deleted=True нужен только для проверки колец,
+    когда сам клиент лежит в корзине.
+    """
+    deleted_condition = "" if include_deleted else "p.is_deleted = 0 AND"
+
+    cursor.execute(
+        f"""
+        WITH RECURSIVE client_chain AS (
+            SELECT
+                c.id,
+                c.parent_client_id,
+                c.name,
+                c.company_name,
+                c.source_client_name,
+                c.status,
+                c.is_deleted,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+
+            UNION ALL
+
+            SELECT
+                p.id,
+                p.parent_client_id,
+                p.name,
+                p.company_name,
+                p.source_client_name,
+                p.status,
+                p.is_deleted,
+                chain.depth + 1
+            FROM clients p
+            INNER JOIN client_chain chain
+                ON p.id = chain.parent_client_id
+            WHERE {deleted_condition} chain.depth < %s
+        )
+        SELECT
+            id,
+            parent_client_id,
+            name,
+            company_name,
+            source_client_name,
+            status,
+            depth
+        FROM client_chain
+        WHERE depth > 0
+        ORDER BY depth ASC
+        """,
+        (client_id, CLIENT_TREE_MAX_DEPTH),
+    )
+
+    return cursor.fetchall() or []
+
+def get_client_descendant_ids(cursor, client_id: int) -> list[int]:
+    """
+    ID всех подклиентов ветки, без самого клиента.
+    """
+    cursor.execute(
+        """
+        WITH RECURSIVE client_tree AS (
+            SELECT
+                c.id,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+              AND c.is_deleted = 0
+
+            UNION ALL
+
+            SELECT
+                child.id,
+                tree.depth + 1
+            FROM clients child
+            INNER JOIN client_tree tree
+                ON child.parent_client_id = tree.id
+            WHERE child.is_deleted = 0
+              AND tree.depth < %s
+        )
+        SELECT id
+        FROM client_tree
+        WHERE depth > 0
+        ORDER BY id ASC
+        """,
+        (client_id, CLIENT_TREE_MAX_DEPTH),
+    )
+
+    rows = cursor.fetchall() or []
+
+    result = []
+
+    for row in rows:
+        descendant_id = int(row["id"])
+
+        if descendant_id == int(client_id):
+            continue
+
+        if descendant_id not in result:
+            result.append(descendant_id)
+
+    return result
+
+def get_subclient_ids_recursive(cursor, root_client_id: int) -> list[int]:
+    """
+    Совместимость со старым названием: раньше подклиенты искались
+    по строковому имени, теперь по parent_client_id.
+    """
+    return get_client_descendant_ids(cursor, root_client_id)
+
+def resolve_effective_client_block(cursor, client: dict) -> dict:
+    """
+    Блокировка наследуется вниз. Если заблокирован любой родитель
+    по цепочке, вся ветка считается заблокированной.
+    """
+    own_status = str(client.get("status") or "ACTIVE").strip().upper()
+
+    if own_status == "BLOCKED":
+        return {
+            "effective_status": "BLOCKED",
+            "is_blocked_by_parent": False,
+            "blocked_by_client_id": None,
+            "blocked_by_client_name": None,
+        }
+
+    for ancestor in get_client_ancestors(cursor, int(client["id"])):
+        if str(ancestor.get("status") or "").strip().upper() == "BLOCKED":
+            return {
+                "effective_status": "BLOCKED",
+                "is_blocked_by_parent": True,
+                "blocked_by_client_id": int(ancestor["id"]),
+                "blocked_by_client_name": get_client_display_name(ancestor),
+            }
+
+    return {
+        "effective_status": own_status,
+        "is_blocked_by_parent": False,
+        "blocked_by_client_id": None,
+        "blocked_by_client_name": None,
+    }
+
+def validate_parent_client(
+    cursor,
+    parent_client_id: int | None,
+    client_id: int | None = None,
+):
+    """
+    Проверка родителя перед сохранением: существует, не в корзине,
+    не сам клиент и не его потомок.
+    """
+    if parent_client_id is None:
+        return None
+
+    parent_client_id = int(parent_client_id)
+
+    if client_id is not None and parent_client_id == int(client_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Клиент не может быть родителем самому себе",
+        )
+
+    cursor.execute(
+        """
+        SELECT id, name, company_name, is_deleted
+        FROM clients
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (parent_client_id,),
+    )
+
+    parent = cursor.fetchone()
+
+    if not parent:
+        raise HTTPException(status_code=404, detail="Родительский клиент не найден")
+
+    if parent["is_deleted"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя выбрать родителем клиента из корзины",
+        )
+
+    if client_id is not None:
+        descendant_ids = get_client_descendant_ids(cursor, int(client_id))
+
+        if parent_client_id in descendant_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Нельзя выбрать родителем собственного подклиента",
+            )
+
+    return parent_client_id
 
 def empty_group(group_name: str, is_import_group: bool = True) -> dict:
     return {
@@ -412,9 +709,160 @@ def empty_group(group_name: str, is_import_group: bool = True) -> dict:
 def build_client_node(client: dict) -> dict:
     client["children"] = []
     client["children_count"] = 0
+    client["own_vehicle_count"] = int(client.get("vehicle_count") or 0)
+    client["own_request_count"] = int(client.get("request_count") or 0)
     client["total_vehicle_count"] = int(client.get("vehicle_count") or 0)
     client["total_request_count"] = int(client.get("request_count") or 0)
     return client
+
+def build_client_groups(rows: list[dict]) -> list[dict]:
+    """
+    Дерево клиентов по настоящей ссылке clients.parent_client_id.
+
+    Группы остаются теми же, что и раньше:
+    - клиент верхнего уровня иерархии — отдельная группа со своим деревом;
+    - клиент, чей родитель не виден текущему пользователю, попадает
+      в группу с именем родителя;
+    - клиенты, созданные в CRM без иерархии — общая группа.
+    """
+    nodes = {}
+
+    for row in rows:
+        nodes[int(row["id"])] = build_client_node(row)
+
+    def has_valid_parent_path(start_client_id: int) -> bool:
+        """
+        Страховка от кольца в данных: если по ссылкам parent_client_id
+        путь вверх не заканчивается, ветку не строим, иначе дерево
+        станет бесконечным.
+        """
+        seen = set()
+        current_id = int(start_client_id)
+
+        for _ in range(CLIENT_TREE_MAX_DEPTH + 1):
+            node = nodes.get(current_id)
+
+            if node is None:
+                return True
+
+            parent_id = get_parent_client_id(node)
+
+            if not parent_id or parent_id == current_id:
+                return True
+
+            if parent_id in seen:
+                return False
+
+            seen.add(current_id)
+            current_id = parent_id
+
+        return False
+
+    linked_ids = set()
+
+    for client_id, client in nodes.items():
+        parent_client_id = get_parent_client_id(client)
+
+        if not parent_client_id or parent_client_id == client_id:
+            continue
+
+        parent_node = nodes.get(parent_client_id)
+
+        if parent_node and has_valid_parent_path(client_id):
+            parent_node["children"].append(client)
+            linked_ids.add(client_id)
+
+    root_clients = []
+    external_groups = {}
+    regular_clients = []
+
+    for client_id, client in nodes.items():
+        if client_id in linked_ids:
+            continue
+
+        parent_client_id = get_parent_client_id(client)
+
+        # Родитель есть, но он не виден текущему пользователю
+        # или лежит в корзине — показываем группой по имени родителя.
+        if parent_client_id and parent_client_id not in nodes:
+            group_name = (
+                normalize_optional_str(client.get("source_parent_client_name"))
+                or f"Клиент #{parent_client_id}"
+            )
+
+            if group_name not in external_groups:
+                external_groups[group_name] = empty_group(
+                    group_name=group_name,
+                    is_import_group=True,
+                )
+
+            external_groups[group_name]["clients"].append(client)
+            continue
+
+        # Ссылки нет, но в выгрузке указан родитель, которого не нашли
+        # при миграции. Ведём себя как раньше: отдельная группа по имени.
+        legacy_parent_name = None
+
+        if not parent_client_id:
+            legacy_parent_name = get_parent_source_name(client)
+
+        if legacy_parent_name:
+            if legacy_parent_name not in external_groups:
+                external_groups[legacy_parent_name] = empty_group(
+                    group_name=legacy_parent_name,
+                    is_import_group=True,
+                )
+
+            external_groups[legacy_parent_name]["clients"].append(client)
+            continue
+
+        is_hierarchy_client = bool(
+            client.get("children")
+            or client.get("source_client_name")
+            or client.get("source_parent_client_name")
+        )
+
+        if is_hierarchy_client:
+            root_clients.append(client)
+        else:
+            regular_clients.append(client)
+
+    groups = []
+
+    # Root-клиенты иерархии как отдельные верхнеуровневые группы
+    for client in root_clients:
+        group = empty_group(
+            group_name=get_source_name(client),
+            is_import_group=client.get("source_system") == "GLONASS_SOFT",
+        )
+
+        group["parent_client"] = client
+        group["clients"] = client.get("children") or []
+
+        groups.append(group)
+
+    # Группы, где родитель известен только по имени
+    for group in external_groups.values():
+        groups.append(group)
+
+    # Обычные CRM-клиенты отдельной группой
+    if regular_clients:
+        regular_group = empty_group(
+            group_name=CRM_GROUP_NAME,
+            is_import_group=False,
+        )
+
+        regular_group["clients"] = regular_clients
+        groups.append(regular_group)
+
+    groups.sort(
+        key=lambda group: (
+            group["group_name"] == CRM_GROUP_NAME,
+            group["group_name"].lower(),
+        )
+    )
+
+    return groups
 
 def recalc_client_totals(
     client: dict,
@@ -446,10 +894,60 @@ def recalc_client_totals(
         total_request_count += child_request_count
 
     client["children_count"] = children_count
+    client["own_vehicle_count"] = int(client.get("vehicle_count") or 0)
+    client["own_request_count"] = int(client.get("request_count") or 0)
     client["total_vehicle_count"] = total_vehicle_count
     client["total_request_count"] = total_request_count
 
     return children_count, total_vehicle_count, total_request_count
+
+def apply_effective_client_status(
+    client: dict,
+    blocked_by_client_id: int | None = None,
+    blocked_by_client_name: str | None = None,
+    visited: set[int] | None = None,
+):
+    """
+    Блокировка родителя распространяется на всё дерево вниз.
+    Собственный статус клиента при этом не меняется.
+    """
+    if visited is None:
+        visited = set()
+
+    client_id = int(client.get("id") or 0)
+
+    if client_id in visited:
+        return
+
+    visited.add(client_id)
+
+    own_status = str(client.get("status") or "ACTIVE").strip().upper()
+
+    if blocked_by_client_name:
+        client["effective_status"] = "BLOCKED"
+        client["is_blocked_by_parent"] = True
+        client["blocked_by_client_id"] = blocked_by_client_id
+        client["blocked_by_client_name"] = blocked_by_client_name
+    else:
+        client["effective_status"] = own_status
+        client["is_blocked_by_parent"] = False
+        client["blocked_by_client_id"] = None
+        client["blocked_by_client_name"] = None
+
+    next_blocked_by_client_id = blocked_by_client_id
+    next_blocked_by_client_name = blocked_by_client_name
+
+    if not next_blocked_by_client_name and own_status == "BLOCKED":
+        next_blocked_by_client_id = client_id
+        next_blocked_by_client_name = get_client_display_name(client)
+
+    for child in client.get("children") or []:
+        apply_effective_client_status(
+            child,
+            next_blocked_by_client_id,
+            next_blocked_by_client_name,
+            visited,
+        )
 
 def normalize_phone(value: str | None) -> str:
     """
@@ -481,7 +979,8 @@ def find_duplicate_client(
             return None
 
         sql = """
-            SELECT id, type, name, company_name, phone, is_deleted
+            SELECT id, type, name, company_name, phone, is_deleted,
+                   created_by, responsible_manager_id
             FROM clients
             WHERE type = 'INDIVIDUAL'
               AND is_deleted = 0
@@ -498,7 +997,8 @@ def find_duplicate_client(
             return None
 
         sql = """
-            SELECT id, type, name, company_name, phone, is_deleted
+            SELECT id, type, name, company_name, phone, is_deleted,
+                   created_by, responsible_manager_id
             FROM clients
             WHERE type = %s
               AND is_deleted = 0
@@ -517,7 +1017,22 @@ def find_duplicate_client(
     cursor.execute(sql, tuple(params))
     return cursor.fetchone()
 
-def raise_duplicate_client_error(duplicate: dict):
+def raise_duplicate_client_error(duplicate: dict, current_user: dict | None = None):
+    """
+    Если дубль — чужой клиент, названия и телефона в ответе быть не должно:
+    перебором номеров иначе выясняется, кто у нас обслуживается.
+    """
+    if current_user is not None and not can_open_client_details_for_router(
+        duplicate, current_user
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Клиент с такими данными уже существует в системе. "
+                "Обратитесь к вашему менеджеру."
+            ),
+        )
+
     client_name = get_client_display_name(duplicate)
 
     raise HTTPException(
@@ -635,75 +1150,6 @@ def attach_executors_to_client_requests(cursor, requests: list[dict]) -> list[di
 
     return requests
 
-def get_subclient_ids_recursive(cursor, root_client_id: int) -> list[int]:
-    cursor.execute(
-        """
-        SELECT
-            id,
-            source_client_name,
-            company_name,
-            name
-        FROM clients
-        WHERE id = %s
-        AND is_deleted = 0
-        """,
-        (root_client_id,)
-    )
-    root = cursor.fetchone()
-
-    if not root:
-        return []
-
-    root_source_name = get_source_name(root)
-    visited_names = {normalize_text(root_source_name)}
-    result_ids = []
-
-    while True:
-        if not visited_names:
-            break
-
-        placeholders = ", ".join(["%s"] * len(visited_names))
-
-        cursor.execute(
-            f"""
-            SELECT
-                id,
-                source_client_name,
-                source_parent_client_name,
-                company_name,
-                name
-            FROM clients
-            WHERE is_deleted = 0
-            AND LOWER(TRIM(source_parent_client_name)) IN ({placeholders})
-            """,
-            tuple(visited_names)
-        )
-
-        children = cursor.fetchall()
-        new_names = set()
-
-        for child in children:
-            child_id = int(child["id"])
-
-            if child_id == int(root_client_id):
-                continue
-
-            if child_id not in result_ids:
-                result_ids.append(child_id)
-
-                child_source_name = get_source_name(child)
-                normalized_child_name = normalize_text(child_source_name)
-
-                if normalized_child_name and normalized_child_name not in visited_names:
-                    new_names.add(normalized_child_name)
-
-        if not new_names:
-            break
-
-        visited_names.update(new_names)
-
-    return result_ids
-
 def load_client_for_settings(
     cursor,
     client_id: int,
@@ -715,6 +1161,8 @@ def load_client_for_settings(
             id,
             name,
             company_name,
+            status,
+            parent_client_id,
             source_client_name,
             source_parent_client_name,
             created_by,
@@ -736,43 +1184,6 @@ def load_client_for_settings(
         raise HTTPException(status_code=400, detail="Клиент находится в корзине")
 
     return client
-
-
-def find_parent_client_id(cursor, client: dict) -> int | None:
-    """
-    Родитель ищется по строковому имени — тем же способом, что и в
-    get_clients_grouped. Этап 2 заменит это на clients.parent_client_id.
-    """
-    parent_name = get_parent_source_name(client)
-
-    if not parent_name:
-        return None
-
-    cursor.execute(
-        """
-        SELECT id
-        FROM clients
-        WHERE is_deleted = 0
-          AND LOWER(TRIM(COALESCE(
-                NULLIF(source_client_name, ''),
-                NULLIF(company_name, ''),
-                NULLIF(name, '')
-              ))) = %s
-        ORDER BY id ASC
-        LIMIT 1
-        """,
-        (normalize_text(parent_name),),
-    )
-
-    row = cursor.fetchone()
-
-    if not row:
-        return None
-
-    if int(row["id"]) == int(client["id"]):
-        return None
-
-    return int(row["id"])
 
 
 def load_client_installation_settings_row(cursor, client_id: int) -> dict | None:
@@ -858,51 +1269,23 @@ def resolve_client_installation_settings(cursor, client: dict) -> dict:
 
     source: OWN — заданы у этого клиента, INHERITED — взяты у родителя,
     NONE — не настроены нигде по цепочке.
+
+    Цепочка родителей строится по clients.parent_client_id.
     """
     own_row = load_client_installation_settings_row(cursor, int(client["id"]))
 
     if own_row:
         return build_installation_settings_payload(cursor, own_row, "OWN", client)
 
-    visited = {int(client["id"])}
-    current = client
-
-    for _ in range(CLIENT_PARENT_LOOKUP_MAX_DEPTH):
-        parent_id = find_parent_client_id(cursor, current)
-
-        if not parent_id or parent_id in visited:
-            break
-
-        visited.add(parent_id)
-
-        cursor.execute(
-            """
-            SELECT
-                id,
-                name,
-                company_name,
-                source_client_name,
-                source_parent_client_name
-            FROM clients
-            WHERE id = %s
-            LIMIT 1
-            """,
-            (parent_id,),
+    for parent_client in get_client_ancestors(cursor, int(client["id"])):
+        parent_row = load_client_installation_settings_row(
+            cursor, int(parent_client["id"])
         )
-
-        parent_client = cursor.fetchone()
-
-        if not parent_client:
-            break
-
-        parent_row = load_client_installation_settings_row(cursor, parent_id)
 
         if parent_row:
             return build_installation_settings_payload(
                 cursor, parent_row, "INHERITED", parent_client
             )
-
-        current = parent_client
 
     return {
         "source": "NONE",
@@ -1005,7 +1388,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
 
             where_clause = " AND ".join(conditions)
             sql = f"""
-            SELECT 
+            SELECT
                 c.id,
                 c.type,
                 c.bin_iin,
@@ -1023,6 +1406,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.created_at,
                 c.created_by,
                 c.responsible_manager_id,
+                c.parent_client_id,
                 c.status_changed_at,
                 c.status_changed_by,
                 c.responsible_changed_at,
@@ -1036,17 +1420,21 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 status_user.name AS status_changed_by_name,
                 responsible_user.name AS responsible_changed_by_name,
 
+                parent_client.name AS parent_client_name,
+                parent_client.company_name AS parent_client_company_name,
+
                 COUNT(r.id) AS request_count
             FROM clients c
             LEFT JOIN users creator ON c.created_by = creator.id
             LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
             LEFT JOIN users status_user ON c.status_changed_by = status_user.id
             LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
-            LEFT JOIN requests r 
-                ON c.id = r.client_id 
+            LEFT JOIN clients parent_client ON parent_client.id = c.parent_client_id
+            LEFT JOIN requests r
+                ON c.id = r.client_id
                 AND r.is_deleted = 0
             WHERE {where_clause}
-            GROUP BY 
+            GROUP BY
                 c.id,
                 c.type,
                 c.bin_iin,
@@ -1064,6 +1452,7 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 c.created_at,
                 c.created_by,
                 c.responsible_manager_id,
+                c.parent_client_id,
                 c.status_changed_at,
                 c.status_changed_by,
                 c.responsible_changed_at,
@@ -1074,7 +1463,9 @@ def get_clients(current_user: dict = Depends(get_current_user)):
                 creator.name,
                 responsible.name,
                 status_user.name,
-                responsible_user.name
+                responsible_user.name,
+                parent_client.name,
+                parent_client.company_name
             ORDER BY c.created_at DESC
             """
             cursor.execute(sql, tuple(values))
@@ -1116,7 +1507,7 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
             )
 
             if duplicate:
-                raise_duplicate_client_error(duplicate)
+                raise_duplicate_client_error(duplicate, current_user)
 
             client_status = get_client_status(getattr(data, "status", None))
 
@@ -1140,6 +1531,31 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
 
             client_bin_iin = validate_client_bin_iin(data.type, getattr(data, "bin_iin", None))
 
+            # Настоящая ссылка на родителя. Строковое имя из выгрузки
+            # остаётся только как справочное поле.
+            parent_client_id = validate_parent_client(
+                cursor,
+                getattr(data, "parent_client_id", None),
+            )
+
+            parent_client = None
+
+            if parent_client_id:
+                parent_client = load_client_for_settings(cursor, parent_client_id)
+
+                ensure_client_visible_by_scope(parent_client, current_user)
+
+                if not can_open_client_details_for_router(parent_client, current_user):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для создания подклиента этому клиенту",
+                    )
+
+            source_parent_client_name = getattr(data, "source_parent_client_name", None)
+
+            if parent_client and not normalize_optional_str(source_parent_client_name):
+                source_parent_client_name = get_source_name(parent_client)
+
             sql = """
                 INSERT INTO clients (
                     type,
@@ -1158,10 +1574,11 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                     source_inn,
                     created_by,
                     responsible_manager_id,
+                    parent_client_id,
                     responsible_changed_at,
                     responsible_changed_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
             """
 
             cursor.execute(
@@ -1180,10 +1597,11 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                         client_payment_type,
                         getattr(data, "source_system", None),
                         getattr(data, "source_client_name", None),
-                        getattr(data, "source_parent_client_name", None),
+                        source_parent_client_name,
                         getattr(data, "source_inn", None),
                         current_user["id"],
                         responsible_manager_id,
+                        parent_client_id,
                         current_user["id"] if responsible_manager_id else None,
                     )
                 )
@@ -1199,11 +1617,28 @@ def create_client(data: ClientCreate, current_user: dict = Depends(get_current_u
                 new_value=data.company_name or data.name,
             )
 
+            if parent_client_id:
+                add_client_history(
+                    cursor,
+                    client_id=new_id,
+                    user_id=current_user["id"],
+                    action="PARENT_CHANGED",
+                    field_name="parent_client_id",
+                    old_value=None,
+                    new_value=parent_client_id,
+                    comment=(
+                        f"Родитель: {get_client_display_name(parent_client)}"
+                        if parent_client
+                        else None
+                    ),
+                )
+
             connection.commit()
 
             return {
                 "id": new_id,
-                "message": "client created"
+                "message": "client created",
+                "parent_client_id": parent_client_id,
             }
 
     except HTTPException:
@@ -1236,7 +1671,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
 
             where_clause = " AND ".join(conditions)
             sql = f"""
-            SELECT 
+            SELECT
                 c.id,
                 c.type,
                 c.bin_iin,
@@ -1254,6 +1689,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 c.created_at,
                 c.created_by,
                 c.responsible_manager_id,
+                c.parent_client_id,
                 c.deleted_at,
                 c.deleted_by,
 
@@ -1268,7 +1704,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
             LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
             LEFT JOIN requests r ON c.id = r.client_id
             WHERE {where_clause}
-            GROUP BY 
+            GROUP BY
                 c.id,
                 c.type,
                 c.bin_iin,
@@ -1286,6 +1722,7 @@ def get_deleted_clients(current_user: dict = Depends(get_current_user)):
                 c.created_at,
                 c.created_by,
                 c.responsible_manager_id,
+                c.parent_client_id,
                 c.deleted_at,
                 c.deleted_by,
                 u.name,
@@ -1328,6 +1765,8 @@ def apply_counts_to_group(group: dict, request_counts: dict[int, int], vehicle_c
 
         client["request_count"] = int(request_counts.get(client_id, 0))
         client["vehicle_count"] = int(vehicle_counts.get(client_id, 0))
+        client["own_request_count"] = int(client["request_count"])
+        client["own_vehicle_count"] = int(client["vehicle_count"])
         client["total_request_count"] = int(client["request_count"])
         client["total_vehicle_count"] = int(client["vehicle_count"])
 
@@ -1338,6 +1777,77 @@ def apply_counts_to_group(group: dict, request_counts: dict[int, int], vehicle_c
 
     for client in group.get("clients") or []:
         walk(client)
+
+def build_clients_grouped_rows(cursor, current_user: dict) -> list[dict]:
+    conditions = ["c.is_deleted = 0"]
+    values = []
+
+    apply_client_access_scope_condition(
+        conditions=conditions,
+        values=values,
+        current_user=current_user,
+        table_alias="c",
+    )
+
+    where_clause = " AND ".join(conditions)
+
+    # Важно: здесь НЕ джойним requests/vehicles.
+    # Иначе снова будет тяжёлая загрузка всей базы.
+    cursor.execute(
+        f"""
+        SELECT
+            c.id,
+            c.type,
+            c.bin_iin,
+            c.name,
+            c.company_name,
+            c.phone,
+            c.email,
+            c.monitoring_login,
+            c.status,
+            c.payment_type,
+            c.source_system,
+            c.source_client_name,
+            c.source_parent_client_name,
+            c.source_inn,
+            c.created_at,
+            c.created_by,
+            c.responsible_manager_id,
+            c.parent_client_id,
+            c.status_changed_at,
+            c.status_changed_by,
+            c.responsible_changed_at,
+            c.responsible_changed_by,
+            c.is_deleted,
+            c.deleted_at,
+            c.deleted_by,
+
+            creator.name AS created_by_name,
+            responsible.name AS responsible_manager_name,
+            status_user.name AS status_changed_by_name,
+            responsible_user.name AS responsible_changed_by_name,
+
+            0 AS request_count,
+            0 AS vehicle_count
+
+        FROM clients c
+
+        LEFT JOIN users creator ON c.created_by = creator.id
+        LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+        LEFT JOIN users status_user ON c.status_changed_by = status_user.id
+        LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
+
+        WHERE {where_clause}
+
+        ORDER BY
+            c.company_name ASC,
+            c.name ASC,
+            c.id ASC
+        """,
+        tuple(values),
+    )
+
+    return cursor.fetchall()
 
 @router.get("/grouped")
 def get_clients_grouped(
@@ -1351,150 +1861,8 @@ def get_clients_grouped(
 
     try:
         with connection.cursor() as cursor:
-            conditions = ["c.is_deleted = 0"]
-            values = []
-
-            apply_client_access_scope_condition(
-                conditions=conditions,
-                values=values,
-                current_user=current_user,
-                table_alias="c",
-            )
-
-            where_clause = " AND ".join(conditions)
-
-            # Важно: здесь НЕ джойним requests/vehicles.
-            # Иначе снова будет тяжёлая загрузка всей базы.
-            cursor.execute(
-                f"""
-                SELECT
-                    c.id,
-                    c.type,
-                    c.bin_iin,
-                    c.name,
-                    c.company_name,
-                    c.phone,
-                    c.email,
-                    c.monitoring_login,
-                    c.status,
-                    c.payment_type,
-                    c.source_system,
-                    c.source_client_name,
-                    c.source_parent_client_name,
-                    c.source_inn,
-                    c.created_at,
-                    c.created_by,
-                    c.responsible_manager_id,
-                    c.status_changed_at,
-                    c.status_changed_by,
-                    c.responsible_changed_at,
-                    c.responsible_changed_by,
-                    c.is_deleted,
-                    c.deleted_at,
-                    c.deleted_by,
-
-                    creator.name AS created_by_name,
-                    responsible.name AS responsible_manager_name,
-                    status_user.name AS status_changed_by_name,
-                    responsible_user.name AS responsible_changed_by_name,
-
-                    0 AS request_count,
-                    0 AS vehicle_count
-
-                FROM clients c
-
-                LEFT JOIN users creator ON c.created_by = creator.id
-                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
-                LEFT JOIN users status_user ON c.status_changed_by = status_user.id
-                LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
-
-                WHERE {where_clause}
-
-                ORDER BY
-                    c.source_parent_client_name ASC,
-                    c.company_name ASC,
-                    c.name ASC,
-                    c.id ASC
-                """,
-                tuple(values),
-            )
-
-            rows = cursor.fetchall()
-
-            regular_clients = []
-            hierarchy_clients = []
-
-            for row in rows:
-                if row.get("source_client_name") or row.get("source_parent_client_name"):
-                    hierarchy_clients.append(build_client_node(row))
-                else:
-                    regular_clients.append(build_client_node(row))
-
-            nodes_by_source_name = {}
-
-            for client in hierarchy_clients:
-                source_name = get_source_name(client)
-                nodes_by_source_name[normalize_text(source_name)] = client
-
-            root_clients = []
-            external_groups = {}
-
-            for client in hierarchy_clients:
-                parent_name = get_parent_source_name(client)
-
-                if not parent_name:
-                    root_clients.append(client)
-                    continue
-
-                parent_node = nodes_by_source_name.get(normalize_text(parent_name))
-
-                if parent_node:
-                    parent_node["children"].append(client)
-                else:
-                    if parent_name not in external_groups:
-                        external_groups[parent_name] = empty_group(
-                            group_name=parent_name,
-                            is_import_group=True,
-                        )
-
-                    external_groups[parent_name]["clients"].append(client)
-
-            groups = []
-
-            # Root-клиенты иерархии как отдельные верхнеуровневые группы
-            for client in root_clients:
-                group_name = get_source_name(client)
-
-                group = empty_group(
-                    group_name=group_name,
-                    is_import_group=client.get("source_system") == "GLONASS_SOFT",
-                )
-
-                group["parent_client"] = client
-                group["clients"] = client.get("children") or []
-
-                groups.append(group)
-
-            # Внешние группы, где parent указан как имя, но не найден как клиент
-            for group in external_groups.values():
-                groups.append(group)
-
-            # Обычные CRM-клиенты отдельной группой
-            if regular_clients:
-                regular_group = empty_group(
-                    group_name=CRM_GROUP_NAME,
-                    is_import_group=False,
-                )
-
-                regular_group["clients"] = regular_clients
-                groups.append(regular_group)
-
-            groups.sort(
-                key=lambda group: (
-                    group["group_name"] == CRM_GROUP_NAME,
-                    group["group_name"].lower(),
-                )
-            )
+            rows = build_clients_grouped_rows(cursor, current_user)
+            groups = build_client_groups(rows)
 
             total_groups = len(groups)
             offset = (page - 1) * page_size
@@ -1550,6 +1918,7 @@ def get_clients_grouped(
                     parent_client = group["parent_client"]
 
                     recalc_client_totals(parent_client)
+                    apply_effective_client_status(parent_client)
 
                     group["clients"] = parent_client.get("children") or []
                     group["clients_count"] = 1 + int(parent_client.get("children_count") or 0)
@@ -1570,6 +1939,7 @@ def get_clients_grouped(
 
                 for client in group.get("clients") or []:
                     recalc_client_totals(client)
+                    apply_effective_client_status(client)
 
                     total_clients += 1 + int(client.get("children_count") or 0)
                     total_requests += int(client.get("total_request_count") or 0)
@@ -1608,144 +1978,8 @@ def get_client_grouped_position(
 
     try:
         with connection.cursor() as cursor:
-            conditions = ["c.is_deleted = 0"]
-            values = []
-
-            apply_client_access_scope_condition(
-                conditions=conditions,
-                values=values,
-                current_user=current_user,
-                table_alias="c",
-            )
-
-            where_clause = " AND ".join(conditions)
-
-            cursor.execute(
-                f"""
-                SELECT
-                    c.id,
-                    c.type,
-                    c.bin_iin,
-                    c.name,
-                    c.company_name,
-                    c.phone,
-                    c.email,
-                    c.monitoring_login,
-                    c.status,
-                    c.payment_type,
-                    c.source_system,
-                    c.source_client_name,
-                    c.source_parent_client_name,
-                    c.source_inn,
-                    c.created_at,
-                    c.created_by,
-                    c.responsible_manager_id,
-                    c.status_changed_at,
-                    c.status_changed_by,
-                    c.responsible_changed_at,
-                    c.responsible_changed_by,
-                    c.is_deleted,
-                    c.deleted_at,
-                    c.deleted_by,
-
-                    creator.name AS created_by_name,
-                    responsible.name AS responsible_manager_name,
-                    status_user.name AS status_changed_by_name,
-                    responsible_user.name AS responsible_changed_by_name,
-
-                    0 AS request_count,
-                    0 AS vehicle_count
-
-                FROM clients c
-
-                LEFT JOIN users creator ON c.created_by = creator.id
-                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
-                LEFT JOIN users status_user ON c.status_changed_by = status_user.id
-                LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
-
-                WHERE {where_clause}
-
-                ORDER BY
-                    c.source_parent_client_name ASC,
-                    c.company_name ASC,
-                    c.name ASC,
-                    c.id ASC
-                """,
-                tuple(values),
-            )
-
-            rows = cursor.fetchall()
-
-            regular_clients = []
-            hierarchy_clients = []
-
-            for row in rows:
-                if row.get("source_client_name") or row.get("source_parent_client_name"):
-                    hierarchy_clients.append(build_client_node(row))
-                else:
-                    regular_clients.append(build_client_node(row))
-
-            nodes_by_source_name = {}
-
-            for client in hierarchy_clients:
-                source_name = get_source_name(client)
-                nodes_by_source_name[normalize_text(source_name)] = client
-
-            root_clients = []
-            external_groups = {}
-
-            for client in hierarchy_clients:
-                parent_name = get_parent_source_name(client)
-
-                if not parent_name:
-                    root_clients.append(client)
-                    continue
-
-                parent_node = nodes_by_source_name.get(normalize_text(parent_name))
-
-                if parent_node:
-                    parent_node["children"].append(client)
-                else:
-                    if parent_name not in external_groups:
-                        external_groups[parent_name] = empty_group(
-                            group_name=parent_name,
-                            is_import_group=True,
-                        )
-
-                    external_groups[parent_name]["clients"].append(client)
-
-            groups = []
-
-            for client in root_clients:
-                group_name = get_source_name(client)
-
-                group = empty_group(
-                    group_name=group_name,
-                    is_import_group=client.get("source_system") == "GLONASS_SOFT",
-                )
-
-                group["parent_client"] = client
-                group["clients"] = client.get("children") or []
-                groups.append(group)
-
-            for group in external_groups.values():
-                groups.append(group)
-
-            if regular_clients:
-                regular_group = empty_group(
-                    group_name=CRM_GROUP_NAME,
-                    is_import_group=False,
-                )
-
-                regular_group["clients"] = regular_clients
-                groups.append(regular_group)
-
-            groups.sort(
-                key=lambda group: (
-                    group["group_name"] == CRM_GROUP_NAME,
-                    group["group_name"].lower(),
-                )
-            )
+            rows = build_clients_grouped_rows(cursor, current_user)
+            groups = build_client_groups(rows)
 
             def find_in_tree(clients_list, target_id, ancestors=None):
                 if ancestors is None:
@@ -1785,7 +2019,13 @@ def get_client_grouped_position(
                         "ancestor_ids": [],
                     }
 
-                result = find_in_tree(group.get("clients") or [], client_id)
+                if parent_client:
+                    result = find_in_tree(
+                        parent_client.get("children") or [],
+                        client_id,
+                    )
+                else:
+                    result = find_in_tree(group.get("clients") or [], client_id)
 
                 if result:
                     return {
@@ -1850,6 +2090,7 @@ def get_client_by_id(
                     c.created_at,
                     c.created_by,
                     c.responsible_manager_id,
+                    c.parent_client_id,
                     c.status_changed_at,
                     c.status_changed_by,
                     c.responsible_changed_at,
@@ -1862,6 +2103,10 @@ def get_client_by_id(
                     responsible.name AS responsible_manager_name,
                     status_user.name AS status_changed_by_name,
                     responsible_user.name AS responsible_changed_by_name,
+
+                    parent_client.name AS parent_client_name,
+                    parent_client.company_name AS parent_client_company_name,
+                    parent_client.status AS parent_client_status,
 
                     (
                         SELECT COUNT(*)
@@ -1883,6 +2128,7 @@ def get_client_by_id(
                 LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
                 LEFT JOIN users status_user ON c.status_changed_by = status_user.id
                 LEFT JOIN users responsible_user ON c.responsible_changed_by = responsible_user.id
+                LEFT JOIN clients parent_client ON parent_client.id = c.parent_client_id
 
                 WHERE {where_clause}
 
@@ -1896,6 +2142,9 @@ def get_client_by_id(
             if not client:
                 raise HTTPException(status_code=404, detail="Клиент не найден")
 
+            block_state = resolve_effective_client_block(cursor, client)
+            client.update(block_state)
+
             attach_client_permissions(client, current_user)
 
             if not can_open_client_details_for_router(client, current_user):
@@ -1907,10 +2156,57 @@ def get_client_by_id(
             if not can_view_client_monitoring_password(current_user):
                 client["monitoring_password"] = None
 
+            own_request_count = int(client.get("request_count") or 0)
+            own_vehicle_count = int(client.get("vehicle_count") or 0)
+
+            descendant_ids = get_client_descendant_ids(cursor, client_id)
+
+            total_request_count = own_request_count
+            total_vehicle_count = own_vehicle_count
+
+            if descendant_ids:
+                placeholders = ", ".join(["%s"] * len(descendant_ids))
+
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*) AS count
+                    FROM requests
+                    WHERE is_deleted = 0
+                      AND client_id IN ({placeholders})
+                    """,
+                    tuple(descendant_ids),
+                )
+
+                row = cursor.fetchone()
+                total_request_count += int((row or {}).get("count") or 0)
+
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*) AS count
+                    FROM vehicles
+                    WHERE is_deleted = 0
+                      AND client_id IN ({placeholders})
+                    """,
+                    tuple(descendant_ids),
+                )
+
+                row = cursor.fetchone()
+                total_vehicle_count += int((row or {}).get("count") or 0)
+
             client["children"] = []
-            client["children_count"] = 0
-            client["total_request_count"] = int(client.get("request_count") or 0)
-            client["total_vehicle_count"] = int(client.get("vehicle_count") or 0)
+            client["children_count"] = len(descendant_ids)
+            client["subclients_count"] = len(descendant_ids)
+            client["subclient_ids"] = descendant_ids
+
+            client["own_request_count"] = own_request_count
+            client["own_vehicle_count"] = own_vehicle_count
+            client["total_request_count"] = total_request_count
+            client["total_vehicle_count"] = total_vehicle_count
+
+            client["parent_client_display_name"] = (
+                client.get("parent_client_company_name")
+                or client.get("parent_client_name")
+            )
 
             return client
 
@@ -1932,6 +2228,7 @@ def update_client(
                     id,
                     created_by,
                     responsible_manager_id,
+                    parent_client_id,
                     is_deleted
                 FROM clients
                 WHERE id = %s
@@ -1945,9 +2242,9 @@ def update_client(
 
             if client["is_deleted"]:
                 raise HTTPException(status_code=400, detail="Нельзя редактировать клиента из корзины")
-            
+
             ensure_client_visible_by_scope(client, current_user)
-            
+
             if not can_edit_client(client, current_user):
                 raise HTTPException(
                     status_code=403,
@@ -1966,9 +2263,39 @@ def update_client(
                 if forbidden_field in update_data:
                     update_data.pop(forbidden_field, None)
 
-            if not update_data:
+            # Родитель меняется отдельно: нужны проверки на кольцо,
+            # корзину и доступ к самому родителю.
+            parent_change = None
+
+            if "parent_client_id" in update_data:
+                new_parent_client_id = update_data.pop("parent_client_id")
+                old_parent_client_id = get_parent_client_id(client)
+
+                if new_parent_client_id in (None, "", 0):
+                    new_parent_client_id = None
+                else:
+                    new_parent_client_id = validate_parent_client(
+                        cursor,
+                        new_parent_client_id,
+                        client_id,
+                    )
+
+                    new_parent = load_client_for_settings(cursor, new_parent_client_id)
+
+                    ensure_client_visible_by_scope(new_parent, current_user)
+
+                    if not can_open_client_details_for_router(new_parent, current_user):
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Недостаточно прав для привязки к этому родительскому клиенту",
+                        )
+
+                if new_parent_client_id != old_parent_client_id:
+                    parent_change = (old_parent_client_id, new_parent_client_id)
+
+            if not update_data and parent_change is None:
                 return {"message": "Нет данных для обновления"}
-            
+
             cursor.execute(
                 """
                 SELECT
@@ -2014,7 +2341,7 @@ def update_client(
             )
 
             if duplicate:
-                raise_duplicate_client_error(duplicate)
+                raise_duplicate_client_error(duplicate, current_user)
 
             allowed_fields = [
                 "type",
@@ -2061,6 +2388,10 @@ def update_client(
                 else:
                     changed_fields.append((field, old_field_value, new_field_value))
 
+            if parent_change is not None:
+                updates.append("parent_client_id = %s")
+                values.append(parent_change[1])
+
             if not updates:
                 return {"message": "Нет допустимых полей для обновления"}
 
@@ -2083,6 +2414,17 @@ def update_client(
                     field_name=field,
                     old_value=old_field_value,
                     new_value=new_field_value,
+                )
+
+            if parent_change is not None:
+                add_client_history(
+                    cursor,
+                    client_id=client_id,
+                    user_id=current_user["id"],
+                    action="PARENT_CHANGED",
+                    field_name="parent_client_id",
+                    old_value=parent_change[0],
+                    new_value=parent_change[1],
                 )
 
             connection.commit()
@@ -2120,7 +2462,8 @@ def update_client_status(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, status, created_by, responsible_manager_id, is_deleted
+                SELECT id, name, company_name, status, created_by,
+                       responsible_manager_id, parent_client_id, is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -2136,7 +2479,7 @@ def update_client_status(
                     status_code=400,
                     detail="Нельзя менять статус клиента из корзины"
                 )
-            
+
             ensure_client_visible_by_scope(client, current_user)
 
             if client["status"] == new_status:
@@ -2145,6 +2488,21 @@ def update_client_status(
                     "client_id": client_id,
                     "status": new_status,
                 }
+
+            # Разблокировать подклиента, пока заблокирован его родитель,
+            # бессмысленно: блокировка наследуется сверху.
+            if new_status != "BLOCKED":
+                block_state = resolve_effective_client_block(cursor, client)
+
+                if block_state["is_blocked_by_parent"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Клиент заблокирован через родителя "
+                            f"«{block_state['blocked_by_client_name']}». "
+                            "Сначала разблокируйте родительского клиента."
+                        ),
+                    )
 
             cursor.execute(
                 """
@@ -2161,6 +2519,8 @@ def update_client_status(
                 )
             )
 
+            descendant_ids = get_client_descendant_ids(cursor, client_id)
+
             add_client_history(
                 cursor,
                 client_id=client_id,
@@ -2169,6 +2529,11 @@ def update_client_status(
                 field_name="status",
                 old_value=client["status"],
                 new_value=new_status,
+                comment=(
+                    f"Статус наследуется подклиентами: {len(descendant_ids)}"
+                    if descendant_ids and new_status == "BLOCKED"
+                    else None
+                ),
             )
 
             connection.commit()
@@ -2178,6 +2543,9 @@ def update_client_status(
                 "client_id": client_id,
                 "old_status": client["status"],
                 "new_status": new_status,
+                "affected_subclients_count": (
+                    len(descendant_ids) if new_status == "BLOCKED" else 0
+                ),
             }
 
     except HTTPException:
@@ -2324,7 +2692,7 @@ def update_client_responsible(
             target_ids = [client_id]
 
             if data.apply_to_subclients:
-                target_ids.extend(get_subclient_ids_recursive(cursor, client_id))
+                target_ids.extend(get_client_descendant_ids(cursor, client_id))
 
             placeholders = ", ".join(["%s"] * len(target_ids))
 
@@ -2401,6 +2769,19 @@ def delete_client(client_id: int, current_user: dict = Depends(get_current_user)
 
             ensure_client_visible_by_scope(client, current_user)
 
+            # Клиент с подклиентами не удаляется молча: иначе вся ветка
+            # повиснет и уедет в группу «по имени родителя».
+            descendant_ids = get_client_descendant_ids(cursor, client_id)
+
+            if descendant_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Нельзя удалить клиента: у него есть подклиенты ({len(descendant_ids)}). "
+                        "Сначала перенесите или удалите подклиентов."
+                    )
+                )
+
             # Проверяем активные заявки клиента
             cursor.execute(
                 """
@@ -2466,7 +2847,16 @@ def restore_client(client_id: int, current_user: dict = Depends(get_current_user
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, name, created_by, responsible_manager_id, is_deleted
+                SELECT
+                    id,
+                    name,
+                    company_name,
+                    source_client_name,
+                    source_parent_client_name,
+                    parent_client_id,
+                    created_by,
+                    responsible_manager_id,
+                    is_deleted
                 FROM clients
                 WHERE id = %s
                 """,
@@ -2482,15 +2872,53 @@ def restore_client(client_id: int, current_user: dict = Depends(get_current_user
 
             ensure_client_visible_by_scope(client, current_user)
 
+            # Пока клиент лежал в корзине, родителя могли удалить,
+            # а связь могла быть потеряна при импорте. Восстанавливаем ссылку.
+            old_parent_client_id = get_parent_client_id(client)
+            restored_parent_client_id = old_parent_client_id
+
+            if restored_parent_client_id:
+                cursor.execute(
+                    "SELECT id, is_deleted FROM clients WHERE id = %s LIMIT 1",
+                    (restored_parent_client_id,),
+                )
+
+                parent_row = cursor.fetchone()
+
+                if not parent_row or parent_row["is_deleted"]:
+                    restored_parent_client_id = None
+
+            if not restored_parent_client_id:
+                restored_parent_client_id = resolve_parent_client_id_by_name(
+                    cursor, client
+                )
+
+                if restored_parent_client_id:
+                    # Защита от кольца: клиент из корзины не должен оказаться
+                    # выше собственного будущего родителя. Цепочку смотрим
+                    # вместе с удалёнными, иначе кольцо через корзину не видно.
+                    ancestor_ids = {
+                        int(row["id"])
+                        for row in get_client_ancestors(
+                            cursor,
+                            restored_parent_client_id,
+                            include_deleted=True,
+                        )
+                    }
+
+                    if int(client_id) in ancestor_ids:
+                        restored_parent_client_id = None
+
             cursor.execute(
                 """
                 UPDATE clients
                 SET is_deleted = 0,
                     deleted_at = NULL,
-                    deleted_by = NULL
+                    deleted_by = NULL,
+                    parent_client_id = %s
                 WHERE id = %s
                 """,
-                (client_id,)
+                (restored_parent_client_id, client_id)
             )
 
             add_client_history(
@@ -2501,11 +2929,24 @@ def restore_client(client_id: int, current_user: dict = Depends(get_current_user
                 new_value=client.get("name"),
             )
 
+            if restored_parent_client_id != old_parent_client_id:
+                add_client_history(
+                    cursor,
+                    client_id=client_id,
+                    user_id=current_user["id"],
+                    action="PARENT_CHANGED",
+                    field_name="parent_client_id",
+                    old_value=old_parent_client_id,
+                    new_value=restored_parent_client_id,
+                    comment="Связь пересчитана при восстановлении из корзины",
+                )
+
             connection.commit()
 
             return {
                 "message": "Клиент восстановлен",
-                "client_id": client_id
+                "client_id": client_id,
+                "parent_client_id": restored_parent_client_id,
             }
 
     except HTTPException:
@@ -2517,7 +2958,18 @@ def restore_client(client_id: int, current_user: dict = Depends(get_current_user
         connection.close()
 
 @router.get("/{client_id}/requests")
-def get_client_requests(client_id: int, current_user: dict = Depends(get_current_user)):
+def get_client_requests(
+    client_id: int,
+    include_subclients: bool = Query(default=False),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Заявки клиента.
+
+    include_subclients=true добавляет заявки всей ветки подклиентов.
+    Такие заявки помечены is_subclient_request=1: их видно из карточки
+    родителя, но редактируются они по обычным правилам заявок.
+    """
     ensure_can_view_clients(current_user)
 
     connection = get_connection()
@@ -2541,17 +2993,26 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
 
             if not client:
                 raise HTTPException(status_code=404, detail="Клиент не найден")
-            
+
             ensure_client_visible_by_scope(client, current_user)
-            
+
             if not can_open_client_details_for_router(client, current_user):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для просмотра заявок этого клиента"
                 )
 
+            client_ids = [int(client_id)]
+            subclient_ids = []
+
+            if include_subclients:
+                subclient_ids = get_client_descendant_ids(cursor, client_id)
+                client_ids.extend(subclient_ids)
+
+            placeholders = ", ".join(["%s"] * len(client_ids))
+
             cursor.execute(
-                """
+                f"""
                 SELECT
                     r.id,
                     r.client_id,
@@ -2570,20 +3031,36 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
                     r.created_by,
 
                     client.payment_type AS client_payment_type,
+                    client.name AS client_name,
+                    client.company_name AS client_company_name,
+                    client.parent_client_id AS client_parent_client_id,
 
                     creator.name AS created_by_name,
                     creator.role AS created_by_role
                 FROM requests r
                 LEFT JOIN clients client ON r.client_id = client.id
                 LEFT JOIN users creator ON r.created_by = creator.id
-                WHERE r.client_id = %s
+                WHERE r.client_id IN ({placeholders})
                     AND r.is_deleted = 0
                 ORDER BY r.created_at DESC
                 """,
-                (client_id,)
+                tuple(client_ids)
             )
 
             requests = cursor.fetchall()
+
+            subclient_ids_set = set(subclient_ids)
+
+            for request in requests:
+                request_client_id = int(request.get("client_id") or 0)
+
+                request["is_subclient_request"] = request_client_id in subclient_ids_set
+                request["client_display_name"] = (
+                    request.get("client_company_name")
+                    or request.get("client_name")
+                    or f"ID {request_client_id}"
+                )
+
             requests = attach_vehicles_to_requests(cursor, requests)
             requests = attach_executors_to_client_requests(cursor, requests)
 
@@ -2593,6 +3070,103 @@ def get_client_requests(client_id: int, current_user: dict = Depends(get_current
                     request["total_price"] = None
 
             return requests
+
+    finally:
+        connection.close()
+
+@router.get("/{client_id}/subclients")
+def get_client_subclients(
+    client_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Плоский список подклиентов ветки со счётчиками.
+    Нужен карточке клиента и, позже, порталу.
+    """
+    ensure_can_view_clients(current_user)
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            client = load_client_for_settings(cursor, client_id)
+
+            ensure_client_visible_by_scope(client, current_user)
+
+            if not can_open_client_details_for_router(client, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Недостаточно прав для просмотра этого клиента",
+                )
+
+            descendant_ids = get_client_descendant_ids(cursor, client_id)
+
+            if not descendant_ids:
+                return []
+
+            placeholders = ", ".join(["%s"] * len(descendant_ids))
+
+            cursor.execute(
+                f"""
+                SELECT
+                    c.id,
+                    c.type,
+                    c.name,
+                    c.company_name,
+                    c.phone,
+                    c.status,
+                    c.payment_type,
+                    c.parent_client_id,
+                    c.responsible_manager_id,
+                    c.created_by,
+
+                    responsible.name AS responsible_manager_name,
+
+                    (
+                        SELECT COUNT(*)
+                        FROM requests r
+                        WHERE r.client_id = c.id
+                          AND r.is_deleted = 0
+                    ) AS request_count,
+
+                    (
+                        SELECT COUNT(*)
+                        FROM vehicles v
+                        WHERE v.client_id = c.id
+                          AND v.is_deleted = 0
+                    ) AS vehicle_count
+
+                FROM clients c
+                LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
+                WHERE c.id IN ({placeholders})
+                  AND c.is_deleted = 0
+                ORDER BY c.company_name ASC, c.name ASC, c.id ASC
+                """,
+                tuple(descendant_ids),
+            )
+
+            subclients = cursor.fetchall()
+
+            parent_block_state = resolve_effective_client_block(cursor, client)
+
+            for subclient in subclients:
+                if parent_block_state["effective_status"] == "BLOCKED":
+                    subclient["effective_status"] = "BLOCKED"
+                    subclient["is_blocked_by_parent"] = True
+                    subclient["blocked_by_client_id"] = (
+                        parent_block_state["blocked_by_client_id"]
+                        or int(client["id"])
+                    )
+                    subclient["blocked_by_client_name"] = (
+                        parent_block_state["blocked_by_client_name"]
+                        or get_client_display_name(client)
+                    )
+                else:
+                    subclient.update(resolve_effective_client_block(cursor, subclient))
+
+                attach_client_permissions(subclient, current_user)
+
+            return subclients
 
     finally:
         connection.close()

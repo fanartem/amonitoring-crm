@@ -213,16 +213,46 @@
 	position: relative;
 }
 
-/* Кнопка «Редактировать» — абсолютно поверх info-box на десктопе */
+/* Карточка клиента: две колонки — данные и кнопки действий.
+   Раньше блок кнопок был position: absolute и лежал поверх карточки.
+   Пока строк в левой колонке хватало, это выглядело нормально;
+   у клиента без подклиентов и без части полей строк меньше, и кнопки
+   ложились прямо на селекторы статуса и типа оплаты. Кнопок при этом
+   стало пять, а карточка от этого не выросла — блок из потока
+   про её высоту ничего не знал. */
+.client-info-box {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 20px;
+}
+
+.client-info-main {
+	flex: 1 1 420px;
+	min-width: 0;
+}
+
 .client-edit-btn-wrapper {
-	position: absolute;
-	top: 20px;
-	right: 20px;
+	position: static;
+	flex: 0 0 auto;
 	display: flex;
 	flex-direction: column;
-	align-items: flex-end;
+	align-items: stretch;
 	gap: 8px;
-	z-index: 5;
+}
+
+/* Три кнопки переиспользуют .client-install-settings-btn с его
+   margin-top: 22px — в столбце это давало рваные промежутки.
+   Внутри блока действий расстояние задаёт только gap. */
+.client-edit-btn-wrapper .client-detail-action-btn {
+	margin-top: 0;
+	width: 100%;
+}
+
+/* Машины и заявки клиента — во всю ширину, под обеими колонками */
+.client-info-box > div:last-child {
+	flex: 1 1 100%;
+	min-width: 0;
 }
 
 .info-row {
@@ -1786,9 +1816,11 @@
 		gap: 6px;
 	}
 
-	/* Кнопка «Редактировать» — выходит из потока и встаёт после Email */
+	/* На узком экране блок действий занимает всю ширину и встаёт
+	   под данными клиента. */
 	.client-edit-btn-wrapper {
 		position: static;
+		flex: 1 1 100%;
 		margin-top: 12px;
 		align-items: stretch;
 		justify-content: flex-start;

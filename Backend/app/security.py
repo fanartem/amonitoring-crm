@@ -11,6 +11,7 @@ from app.database import get_connection
 
 from app.permissions import (
     attach_effective_permissions,
+    ensure_client_account_can_login,
     get_user_base_access,
 )
 
@@ -28,6 +29,37 @@ if not SECRET_KEY:
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+# Отзыв выданных токенов.
+#
+# Роль, город и права в токен не кладутся и берутся из БД на каждом
+# запросе, поэтому изменения в Settings действуют сразу. Со сменой
+# пароля так не выходит: пароля в токене нет, и отличить токен,
+# выданный до смены, нечем. Отсюда счётчик версии на пользователе.
+TOKEN_VERSION_CLAIM = "tv"
+
+
+def get_user_token_version(cursor, user_id: int) -> int:
+    """
+    Текущая версия токенов пользователя.
+
+    Отдельный запрос, а не поле из get_user_base_access: это индексный
+    поиск по первичному ключу рядом с уже идущими запросами прав,
+    а зависимость от того, какие колонки выбирает permissions.py,
+    здесь была бы лишней. Понадобится — перенесём в общий SELECT.
+    """
+    cursor.execute(
+        "SELECT token_version FROM users WHERE id = %s LIMIT 1",
+        (user_id,),
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return 0
+
+    return int(row.get("token_version") or 0)
+
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
@@ -59,6 +91,11 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = int(payload["sub"])
 
+        # Токены, выданные до этой правки, поля версии не содержат.
+        # Читаем их как 0 — столько же стоит в колонке по умолчанию,
+        # поэтому выкатка никого не разлогинивает.
+        token_version = int(payload.get(TOKEN_VERSION_CLAIM) or 0)
+
     except (JWTError, KeyError, TypeError, ValueError):
         raise credentials_exception
 
@@ -88,6 +125,18 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
                     status_code=403,
                     detail="Роль пользователя отключена"
                 )
+
+            # Клиент удалён или учётка потеряла привязку — доступ закрыт
+            # сразу, на любом эндпоинте. Проверка дешёвая: только поля
+            # уже загруженной строки. Блокировка сюда не входит намеренно,
+            # она означает режим чтения, а не отказ во входе.
+            ensure_client_account_can_login(user)
+
+            # Пароль сменили — значит все токены, выданные раньше,
+            # больше не годятся. Проверяем до сбора прав: незачем
+            # собирать права для токена, который сейчас отвергнем.
+            if token_version != get_user_token_version(cursor, user_id):
+                raise credentials_exception
 
             attach_effective_permissions(cursor, user)
 

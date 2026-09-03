@@ -539,7 +539,9 @@ export default function CreateRequestModal({
 					editRequestData.client_type || editRequestData.type,
 				),
 				client_name: editRequestData.client_name || '',
+				bin_iin: editRequestData.bin_iin || '',
 				phone: editRequestData.phone || '',
+				email: editRequestData.email || '',
 				city: editRequestData.city || '',
 				company_name: editRequestData.company_name || '',
 				payment_type: editRequestData.client_payment_type || 'PREPAYMENT',
@@ -1595,7 +1597,24 @@ export default function CreateRequestModal({
 
 		if (!data.exists) return null
 
-		return data.vehicle || { vin: normalizedVin }
+		// Бэкенд теперь может ответить exists: true вместе с vehicle: null.
+		// Это машина чужого клиента: сам факт занятости VIN показываем,
+		// марку/модель/госномер/название клиента — нет.
+		if (data.is_foreign_client || !data.vehicle) {
+			return {
+				vin: data.vin || normalizedVin,
+				is_foreign_client: true,
+				access_message:
+					data.message ||
+					'Автомобиль с этим VIN уже зарегистрирован в системе. Обратитесь к вашему менеджеру.',
+			}
+		}
+
+		return {
+			...data.vehicle,
+			is_foreign_client: false,
+			access_message: data.message || '',
+		}
 	}
 
 	const validateDuplicateVinsInForm = () => {
@@ -1642,6 +1661,15 @@ export default function CreateRequestModal({
 				const existingVehicle = await checkVehicleVinExists(vin)
 
 				if (existingVehicle) {
+					// Чужой клиент: бэкенд отдал только факт занятости VIN,
+					// без марки, госномера и названия клиента. Показываем
+					// ровно то, что он разрешил показать.
+					if (existingVehicle.is_foreign_client) {
+						throw new Error(
+							`VIN ${vin.toUpperCase()}. ${existingVehicle.access_message}`,
+						)
+					}
+
 					const existingVehicleText = [
 						existingVehicle.brand,
 						existingVehicle.model,
@@ -1735,14 +1763,19 @@ export default function CreateRequestModal({
 							? formData.payment_type
 							: 'PREPAYMENT',
 
+						// Настоящая ссылка на родителя (этап 2). Строковое имя
+						// source_parent_client_name бэкенд подставит сам из
+						// карточки родителя, поэтому отсюда его не шлём —
+						// иначе имя и ссылка могут разойтись.
+						parent_client_id: formData.is_subclient
+							? Number(formData.parent_client_id) || null
+							: null,
+
 						source_system: formData.is_subclient ? 'CRM' : null,
 						source_client_name:
 							formData.client_type === 'Физ. лицо'
 								? formData.client_name.trim()
 								: formData.company_name.trim(),
-						source_parent_client_name: formData.is_subclient
-							? formData.parent_source_name
-							: null,
 						source_inn: null,
 					}),
 				})
@@ -1777,6 +1810,10 @@ export default function CreateRequestModal({
 						payment_type: canSetPaymentType
 							? formData.payment_type
 							: 'PREPAYMENT',
+						parent_client_id: formData.is_subclient
+							? Number(formData.parent_client_id) || null
+							: null,
+
 						source_system: formData.is_subclient ? 'CRM' : null,
 						source_client_name:
 							formData.client_type === 'Физ. лицо'

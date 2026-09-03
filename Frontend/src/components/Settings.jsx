@@ -84,6 +84,12 @@ const DATA_SCOPE_FALLBACK = [
 		name: 'Без области данных',
 		description: 'Нет автоматической области доступа к данным',
 	},
+	{
+		code: 'CLIENT',
+		name: 'Клиентский портал',
+		description:
+			'Только для учётных записей клиентов: пользователь видит своего клиента и его подклиентов',
+	},
 ]
 
 const DATA_SCOPE_LABELS = DATA_SCOPE_FALLBACK.reduce((acc, item) => {
@@ -106,6 +112,33 @@ const CATEGORY_LABELS = {
 	calendar: 'Календарь',
 	general: 'Общие',
 	reports: 'Отчёты',
+	portal: 'Клиентский портал',
+}
+
+// Каталог прав бэкенд отдаёт раздельно:
+//   employee — всё, кроме раздела portal. Права портала сотруднику ничего
+//              не дают (can_access_portal требует клиентскую учётку),
+//              поэтому в его чек-листе они только путают;
+//   portal   — только права портала. Нужны роли CLIENT_PORTAL, где задаётся
+//              стандарт для новых учётных записей клиентов.
+const PERMISSIONS_AUDIENCE_EMPLOYEE = 'employee'
+const PERMISSIONS_AUDIENCE_PORTAL = 'portal'
+
+const PORTAL_ROLE_CODE = 'CLIENT_PORTAL'
+const PORTAL_DATA_SCOPE = 'CLIENT'
+
+const getPermissionsAudience = (role = {}) => {
+	const normalizedCode = String(role.code || '')
+		.trim()
+		.toUpperCase()
+	const normalizedScope = String(role.data_scope || '')
+		.trim()
+		.toUpperCase()
+
+	return normalizedCode === PORTAL_ROLE_CODE ||
+		normalizedScope === PORTAL_DATA_SCOPE
+		? PERMISSIONS_AUDIENCE_PORTAL
+		: PERMISSIONS_AUDIENCE_EMPLOYEE
 }
 
 const DEFAULT_ROLE_FORM = {
@@ -191,6 +224,9 @@ export default function Settings() {
 
 	const [roles, setRoles] = useState([])
 	const [permissions, setPermissions] = useState([])
+	const [permissionsAudience, setPermissionsAudience] = useState(
+		PERMISSIONS_AUDIENCE_EMPLOYEE,
+	)
 	const [dataScopes, setDataScopes] = useState(DATA_SCOPE_FALLBACK)
 	const [rolesLoading, setRolesLoading] = useState(false)
 	const [roleDetailLoading, setRoleDetailLoading] = useState(false)
@@ -231,6 +267,11 @@ export default function Settings() {
 		selectedRole &&
 		!selectedRoleIsSystem &&
 		Number(selectedRole.users_count || 0) === 0
+
+	// Считаем по форме, а не по выбранной роли: при создании новой роли
+	// область данных меняется до сохранения, и набор галочек должен
+	// переключиться сразу.
+	const roleAudience = getPermissionsAudience(roleForm)
 
 	const groupedRolePermissions = useMemo(() => {
 		const search = permissionSearch.trim().toLowerCase()
@@ -275,10 +316,17 @@ export default function Settings() {
 
 		if (canManageRoles) {
 			fetchRoles()
-			fetchPermissions()
+			fetchPermissions(PERMISSIONS_AUDIENCE_EMPLOYEE)
 			fetchDataScopes()
 		}
 	}, [canManageCities, canManageTimeConflictCities, canManageRoles])
+
+	useEffect(() => {
+		if (!canManageRoles) return
+		if (roleAudience === permissionsAudience) return
+
+		fetchPermissions(roleAudience)
+	}, [canManageRoles, roleAudience, permissionsAudience])
 
 	const fetchNotificationSettings = async () => {
 		setNotificationLoading(true)
@@ -583,22 +631,28 @@ export default function Settings() {
 		}
 	}
 
-	const fetchPermissions = async () => {
+	const fetchPermissions = async (audience = PERMISSIONS_AUDIENCE_EMPLOYEE) => {
 		try {
-			const res = await fetch(`${API_BASE_URL}/access/permissions`, {
-				headers: getAuthHeaders(),
-			})
+			const res = await fetch(
+				`${API_BASE_URL}/access/permissions?audience=${encodeURIComponent(audience)}`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
 
 			if (!res.ok) {
 				setPermissions([])
+				setPermissionsAudience(audience)
 				return
 			}
 
 			const data = await res.json()
 			setPermissions(Array.isArray(data.permissions) ? data.permissions : [])
+			setPermissionsAudience(audience)
 		} catch (err) {
 			console.error('Ошибка загрузки permissions:', err)
 			setPermissions([])
+			setPermissionsAudience(audience)
 		}
 	}
 
@@ -1232,13 +1286,24 @@ export default function Settings() {
 										</div>
 									)}
 
+									{roleAudience === PERMISSIONS_AUDIENCE_PORTAL && (
+										<div className='settings-role-note'>
+											Это роль клиентского портала. Здесь задаётся только
+											стандарт — набор галочек, который получает каждая новая
+											учётная запись клиента. Доступы конкретного пользователя
+											настраиваются в карточке клиента, кнопка «Настройка
+											пользователей».
+										</div>
+									)}
+
 									<div className='settings-role-permissions-header'>
 										<div>
 											<h5>Стандартные доступы роли</h5>
 											<p>
-												Выбрано: {rolePermissionCodes.size}. При сохранении
-												доступы будут автоматически применены сотрудникам с этой
-												ролью.
+												Выбрано: {rolePermissionCodes.size}.{' '}
+												{roleAudience === PERMISSIONS_AUDIENCE_PORTAL
+													? 'Изменения применятся к новым учётным записям портала и к тем, у кого нет индивидуальных настроек.'
+													: 'При сохранении доступы будут автоматически применены сотрудникам с этой ролью.'}
 											</p>
 										</div>
 

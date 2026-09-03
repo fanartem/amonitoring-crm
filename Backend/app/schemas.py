@@ -92,6 +92,8 @@ class ClientCreate(BaseModel):
     source_parent_client_name: str | None = None
     source_inn: str | None = None
 
+    parent_client_id: int | None = None
+
 
 class ClientUpdate(BaseModel):
     type: Optional[str] = None
@@ -111,6 +113,8 @@ class ClientUpdate(BaseModel):
     source_parent_client_name: Optional[str] = None
     source_inn: Optional[str] = None
 
+    parent_client_id: int | None = None
+
 class ClientStatusUpdate(BaseModel):
     status: str
 
@@ -120,6 +124,83 @@ class ClientResponsibleUpdate(BaseModel):
 
 class ClientPaymentTypeUpdate(BaseModel):
     payment_type: str
+
+
+# Учётные записи клиентского портала.
+#
+# Права конкретной учётки здесь намеренно не задаются: для этого уже есть
+# индивидуальные ALLOW/DENY в Settings (UserPermissionOverridesUpdate).
+# Второй механизм настройки прав в другом месте — это расхождение,
+# которое рано или поздно разъедется.
+class PortalUserCreate(BaseModel):
+    email: str
+    name: str
+    password: str
+
+
+class PortalUserUpdate(BaseModel):
+    name: str | None = None
+    is_active: bool | None = None
+    reason: str | None = None
+
+
+class PortalUserPasswordSet(BaseModel):
+    password: str
+    reason: str | None = None
+
+
+class PortalRequestVehicleInput(BaseModel):
+    # Либо существующая машина клиента, либо новая по VIN.
+    vehicle_id: int | None = None
+
+    type: str | None = None
+    brand: str | None = None
+    model: str | None = None
+    vin: str | None = None
+    plate_number: str | None = None
+    year: int | None = None
+
+
+class PortalRequestCreate(BaseModel):
+    # Чего здесь намеренно нет: work_type (всегда установка),
+    # visit_type, visit_price_code, platform и параметры установки —
+    # всё это сервер берёт из договора. И цены: клиент её не присылает.
+    client_id: int | None = None
+    city: str
+    address: str | None = None
+    scheduled_at: datetime
+    schedule_approval_reason: str | None = None
+    comment: str | None = None
+    vehicles: list["PortalRequestVehicleInput"] = []
+
+
+class PortalSubclientCreate(BaseModel):
+    # Родителя клиент не выбирает: им автоматически становится его
+    # собственная организация. Поле в модели отсутствует намеренно —
+    # чего нет в схеме, то нельзя подделать запросом.
+    type: str
+    name: str
+    company_name: str | None = None
+    bin_iin: str | None = None
+    phone: str
+    email: str | None = None
+
+
+class PortalPasswordChange(BaseModel):
+    # Текущий пароль обязателен. Этим смена в кабинете отличается от ветки
+    # is_self в PUT /admin/users/{id}, где сотруднику достаточно
+    # действующего токена (решение Р13, вариант А).
+    current_password: str
+    new_password: str
+
+
+class PortalUserPermissionsUpdate(BaseModel):
+    # Полная замена: приходит список отмеченных кодов, всё остальное
+    # считается снятым. Частичного изменения здесь нет намеренно —
+    # иначе два открытых окна тихо перетирали бы друг друга.
+    permission_codes: list[str] = []
+    reason: str | None = None
+
 
 class ClientInstallationSensorInput(BaseModel):
     name: str
@@ -471,6 +552,7 @@ class AttachmentOut(BaseModel):
 
     content_type: Optional[str] = None
     file_size: int = 0
+    is_internal: bool = False
 
     uploaded_by: Optional[int] = None
     uploaded_by_name: Optional[str] = None
@@ -482,7 +564,8 @@ class AttachmentOut(BaseModel):
 
 
 class AttachmentUpdate(BaseModel):
-    display_name: str
+    display_name: str | None = None
+    is_internal: bool | None = None
 
 class RoleCreate(BaseModel):
     code: str

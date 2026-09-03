@@ -9,11 +9,16 @@ from app.security import get_current_user
 from app.permissions import (
     is_super_admin,
     is_owner,
+    is_client_user,
+    require_employee_user,
     has_any_permission,
     get_user_base_access,
     attach_effective_permissions,
     add_access_audit_log,
     expand_permissions_with_dependencies,
+    DATA_SCOPE_CLIENT,
+    USER_KIND_CLIENT,
+    CLIENT_PORTAL_ROLE,
 )
 
 from app.schemas import (
@@ -25,7 +30,24 @@ from app.schemas import (
     UserRoleUpdate,
 )
 
-router = APIRouter(prefix="/access", tags=["Access Control"])
+def ensure_employee_access(current_user: dict = Depends(get_current_user)):
+    """
+    Управление ролями и доступами — внутренний раздел.
+    Клиентская учётная запись сюда не попадает ни в каком виде.
+    """
+    require_employee_user(
+        current_user,
+        detail="Раздел доступов доступен только сотрудникам",
+    )
+
+    return current_user
+
+
+router = APIRouter(
+    prefix="/access",
+    tags=["Access Control"],
+    dependencies=[Depends(ensure_employee_access)],
+)
 
 
 def can_view_access_control(current_user: dict) -> bool:
@@ -54,6 +76,9 @@ ALLOWED_DATA_SCOPES = {
     "CITY_ASSIGNED",
     "OWN",
     "NONE",
+    # Область клиентского портала. Должна совпадать с enum roles.data_scope,
+    # иначе интерфейс ролей показывает у CLIENT_PORTAL пустую область.
+    "CLIENT",
 }
 
 SYSTEM_ROLE_PROTECTED_FIELDS = {
@@ -148,6 +173,101 @@ UI_HIDDEN_PERMISSION_CODES = {
 }
 
 
+# Права клиентского портала. Сотруднику они не дают ничего:
+# can_access_portal требует user_kind = CLIENT и заполненный client_id,
+# и только после этого смотрит на само право. Поэтому в чек-листах
+# сотрудников эта категория не показывается — иначе администратор видит
+# галочки, которые выглядят как доступ, но ни на что не влияют.
+PORTAL_PERMISSION_CATEGORY = "portal"
+
+PERMISSIONS_AUDIENCE_EMPLOYEE = "employee"
+PERMISSIONS_AUDIENCE_PORTAL = "portal"
+PERMISSIONS_AUDIENCE_ALL = "all"
+
+ALLOWED_PERMISSIONS_AUDIENCES = {
+    PERMISSIONS_AUDIENCE_EMPLOYEE,
+    PERMISSIONS_AUDIENCE_PORTAL,
+    PERMISSIONS_AUDIENCE_ALL,
+}
+
+
+def is_portal_permission(permission: dict) -> bool:
+    return str(permission.get("category") or "").strip() == PORTAL_PERMISSION_CATEGORY
+
+
+def filter_portal_permission_codes(cursor, permission_codes: set[str]) -> list[str]:
+    """
+    Какие из переданных кодов относятся к порталу.
+    Спрашиваем базу, а не список в коде: каталог прав живёт в БД,
+    и новый portal.* появится там раньше, чем здесь.
+    """
+    if not permission_codes:
+        return []
+
+    placeholders = ", ".join(["%s"] * len(permission_codes))
+
+    cursor.execute(
+        f"""
+        SELECT code
+        FROM permissions
+        WHERE code IN ({placeholders})
+          AND category = %s
+        """,
+        tuple(permission_codes) + (PORTAL_PERMISSION_CATEGORY,),
+    )
+
+    return sorted(row["code"] for row in cursor.fetchall())
+
+
+def role_is_portal_role(role_code: str | None, data_scope: str | None) -> bool:
+    return (
+        str(role_code or "").strip().upper() == CLIENT_PORTAL_ROLE
+        or str(data_scope or "").strip().upper() == DATA_SCOPE_CLIENT
+    )
+
+
+def ensure_role_permission_audience(
+    cursor,
+    *,
+    is_portal_role: bool,
+    permission_codes: set[str],
+):
+    """
+    Роль портала и роль сотрудника не смешиваются.
+
+    Права portal.* у сотрудника не работают вообще: can_access_portal
+    требует клиентскую учётку. А любое право CRM у роли портала — это
+    доступ внешнего человека к внутренним данным.
+
+    На шаге 311 то же правило закрыли для индивидуальных переопределений
+    пользователя. Здесь — уровень роли, который я тогда пропустил.
+    """
+    portal_codes = set(filter_portal_permission_codes(cursor, permission_codes))
+
+    if is_portal_role:
+        foreign_codes = sorted(permission_codes - portal_codes)
+
+        if foreign_codes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Роли клиентского портала можно выдать только права раздела "
+                    "«Клиентский портал». Лишние коды: " + ", ".join(foreign_codes)
+                ),
+            )
+
+        return
+
+    if portal_codes:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Права клиентского портала нельзя выдать роли сотрудника: "
+                + ", ".join(sorted(portal_codes))
+            ),
+        )
+
+
 def is_ui_alias_permission(permission: dict) -> bool:
     """
     Returns True for permission rows that must stay active in DB/back-end checks
@@ -162,7 +282,10 @@ def is_ui_alias_permission(permission: dict) -> bool:
     return description.startswith("алиас") or "алиас доступа" in description
 
 
-def build_permissions_ui_payload(permissions: list[dict]) -> dict:
+def build_permissions_ui_payload(
+    permissions: list[dict],
+    audience: str = PERMISSIONS_AUDIENCE_EMPLOYEE,
+) -> dict:
     visible_permissions = []
     hidden_permissions = []
     grouped = {}
@@ -171,8 +294,23 @@ def build_permissions_ui_payload(permissions: list[dict]) -> dict:
         permission["is_dangerous"] = bool(permission["is_dangerous"])
         permission["is_system"] = bool(permission["is_system"])
         permission["is_active"] = bool(permission["is_active"])
+        permission["is_portal"] = is_portal_permission(permission)
 
         if is_ui_alias_permission(permission):
+            hidden_permissions.append(permission)
+            continue
+
+        if (
+            audience == PERMISSIONS_AUDIENCE_EMPLOYEE
+            and permission["is_portal"]
+        ):
+            hidden_permissions.append(permission)
+            continue
+
+        if (
+            audience == PERMISSIONS_AUDIENCE_PORTAL
+            and not permission["is_portal"]
+        ):
             hidden_permissions.append(permission)
             continue
 
@@ -180,6 +318,7 @@ def build_permissions_ui_payload(permissions: list[dict]) -> dict:
         grouped.setdefault(permission["category"], []).append(permission)
 
     return {
+        "audience": audience,
         "permissions": visible_permissions,
         "grouped": grouped,
         "hidden_permissions_count": len(hidden_permissions),
@@ -531,12 +670,28 @@ def validate_permission_overrides_payload(data: UserPermissionOverridesUpdate) -
     return result
 
 @router.get("/permissions")
-def get_permissions(current_user: dict = Depends(get_current_user)):
+def get_permissions(
+    audience: str = Query(PERMISSIONS_AUDIENCE_EMPLOYEE),
+    current_user: dict = Depends(get_current_user),
+):
     """
-    Список всех permission-кодов.
-    Используется frontend для чек-листов ролей и пользователей.
+    Список permission-кодов для чек-листов.
+
+    audience:
+      employee — по умолчанию: всё, кроме портала. Это экраны сотрудников;
+      portal   — только права портала. Нужен экрану роли CLIENT_PORTAL
+                 в Settings и настройке клиентских учёток в карточке клиента;
+      all      — весь каталог, для отладки и сверок.
     """
     ensure_can_view_access_control(current_user)
+
+    normalized_audience = str(audience or "").strip().lower()
+
+    if normalized_audience not in ALLOWED_PERMISSIONS_AUDIENCES:
+        raise HTTPException(
+            status_code=400,
+            detail="Некорректный audience: допустимы employee, portal, all",
+        )
 
     connection = get_connection()
 
@@ -565,7 +720,10 @@ def get_permissions(current_user: dict = Depends(get_current_user)):
 
             permissions = cursor.fetchall()
 
-            return build_permissions_ui_payload(permissions)
+            return build_permissions_ui_payload(
+                permissions,
+                audience=normalized_audience,
+            )
 
     finally:
         connection.close()
@@ -739,11 +897,14 @@ def get_role_detail(
                     name,
                     email,
                     city,
+                    user_kind,
+                    client_id,
                     is_active,
                     is_approved,
                     deleted_at
                 FROM users
                 WHERE role = %s
+                  AND user_kind = 'EMPLOYEE'
                 ORDER BY
                     deleted_at IS NOT NULL ASC,
                     is_active DESC,
@@ -962,6 +1123,15 @@ def create_role(
 
             permission_codes = normalize_permission_codes(data.permission_codes)
             permission_codes = expand_permissions_with_dependencies(cursor, permission_codes)
+
+            # Новая роль с областью CLIENT — это вторая роль портала.
+            # Ей тоже нельзя выдавать права CRM.
+            ensure_role_permission_audience(
+                cursor,
+                is_portal_role=role_is_portal_role(role_code, data_scope),
+                permission_codes=permission_codes,
+            )
+
             permission_ids_by_code = get_active_permission_ids_by_codes(
                 cursor,
                 permission_codes,
@@ -1299,6 +1469,15 @@ def update_role_permissions(
             if not role:
                 raise HTTPException(status_code=404, detail="Роль не найдена")
 
+            ensure_role_permission_audience(
+                cursor,
+                is_portal_role=role_is_portal_role(
+                    role.get("code"),
+                    role.get("data_scope"),
+                ),
+                permission_codes=requested_codes,
+            )
+
             locked_core_codes = get_locked_core_permission_codes_for_role(
                 cursor,
                 role["id"],
@@ -1430,8 +1609,36 @@ def update_user_permission_overrides(
                     ),
                 )
 
+            # Граница первая: клиентские учётки настраиваются в карточке
+            # клиента, а не здесь. Два экрана для одного и того же неизбежно
+            # разъедутся, и разойдутся они молча.
+            if is_client_user(target_user):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Это учётная запись клиентского портала. Доступы "
+                        "настраиваются в карточке клиента, вкладка "
+                        "«Настройка пользователей»."
+                    ),
+                )
+
             overrides_by_code = validate_permission_overrides_payload(data)
             requested_codes = set(overrides_by_code.keys())
+
+            # Граница вторая: сотруднику права портала не выдаются.
+            # Они всё равно не сработают (can_access_portal требует
+            # клиентскую учётку), но в списке доступов выглядели бы
+            # как выданный доступ.
+            portal_codes = filter_portal_permission_codes(cursor, requested_codes)
+
+            if portal_codes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Права клиентского портала нельзя выдать сотруднику: "
+                        + ", ".join(portal_codes)
+                    ),
+                )
 
             permission_ids_by_code = get_active_permission_ids_by_codes(
                 cursor,
@@ -1557,6 +1764,19 @@ def update_user_security_flags(
                 raise HTTPException(
                     status_code=400,
                     detail="Нельзя выдать Супер-Админа неподтверждённому пользователю",
+                )
+
+            # Супер-админ получает ВСЕ активные права системы
+            # (get_effective_permissions). Для внешнего человека это
+            # означало бы полный доступ к CRM, поэтому клиентской
+            # учётной записи флаг не выдаётся вообще.
+            if is_client_user(target_user):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Клиентской учётной записи нельзя выдать Супер-Админа: "
+                        "она получила бы все права системы."
+                    ),
                 )
 
             old_flags = get_user_security_flags_snapshot(cursor, user_id)
@@ -1727,6 +1947,39 @@ def update_user_role(
                 raise HTTPException(
                     status_code=400,
                     detail="Нельзя назначить отключённую роль",
+                )
+
+            # Роль портала и учётка клиента должны совпадать в обе стороны.
+            # База это не поймает: CHECK следит за парой user_kind/client_id,
+            # а роль ему безразлична. Без этой проверки сотрудник с ролью
+            # портала теряет склад, отчёты и списки людей, оставаясь
+            # сотрудником, и понять причину будет трудно.
+            role_is_portal = (
+                str(role.get("data_scope") or "").strip().upper() == DATA_SCOPE_CLIENT
+                or normalized_role_code == CLIENT_PORTAL_ROLE
+            )
+
+            target_is_client_user = (
+                str(target_user.get("user_kind") or "").strip().upper()
+                == USER_KIND_CLIENT
+            )
+
+            if role_is_portal and not target_is_client_user:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Роль клиентского портала можно назначить только учётной "
+                        "записи клиента. Этот пользователь — сотрудник."
+                    ),
+                )
+
+            if target_is_client_user and not role_is_portal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Учётной записи клиента можно назначить только роль "
+                        "клиентского портала."
+                    ),
                 )
 
             incoming = data.dict(exclude_unset=True)
@@ -1935,6 +2188,15 @@ def get_data_scopes(current_user: dict = Depends(get_current_user)):
             "code": "NONE",
             "name": "Без области данных",
             "description": "Нет автоматической области доступа к данным",
+        },
+        {
+            "code": "CLIENT",
+            "name": "Клиентский портал",
+            "description": (
+                "Только для учётных записей клиентов: пользователь видит "
+                "своего клиента и его подклиентов. Сотруднику такую роль "
+                "назначить нельзя."
+            ),
         },
     ]
 

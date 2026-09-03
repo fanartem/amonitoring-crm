@@ -629,3 +629,404 @@ def notify_request_time_conflict(
             created_ids.append(notification_id)
 
     return created_ids
+
+# ============================================================================
+# Уведомления клиентского кабинета.
+#
+# Отдельный блок, а не правки существующих notify_*: у сотрудников и
+# у клиентов разные получатели, разные тексты и разные правила показа.
+# Смешивать их в одной функции — значит однажды отправить клиенту
+# внутренний текст, потому что кто-то поправил ветку для менеджеров.
+#
+# Правило текстов: клиенту уходит только то, что он и так видит
+# в карточке заявки. Никаких причин согласования, кодов ролей, почты
+# и телефонов исполнителей, оценок платёжной дисциплины.
+# ============================================================================
+
+PORTAL_REQUEST_CREATED = "PORTAL_REQUEST_CREATED"
+PORTAL_REQUEST_STATUS_CHANGED = "PORTAL_REQUEST_STATUS_CHANGED"
+PORTAL_REQUEST_UPDATED = "PORTAL_REQUEST_UPDATED"
+PORTAL_REQUEST_EXECUTORS = "PORTAL_REQUEST_EXECUTORS"
+PORTAL_REQUEST_SCHEDULE_APPROVAL = "PORTAL_REQUEST_SCHEDULE_APPROVAL"
+PORTAL_REQUEST_COMMENT = "PORTAL_REQUEST_COMMENT"
+PORTAL_REQUEST_CANCELLED = "PORTAL_REQUEST_CANCELLED"
+
+PORTAL_NOTIFICATION_TYPE_CODES = [
+    PORTAL_REQUEST_CREATED,
+    PORTAL_REQUEST_STATUS_CHANGED,
+    PORTAL_REQUEST_UPDATED,
+    PORTAL_REQUEST_EXECUTORS,
+    PORTAL_REQUEST_SCHEDULE_APPROVAL,
+    PORTAL_REQUEST_COMMENT,
+    PORTAL_REQUEST_CANCELLED,
+]
+
+# Какие события показываются всплывающим окном, а какие просто копятся
+# в колокольчике. Список живёт здесь, а не в React: чтобы поменять набор
+# важных событий, не должно требоваться пересобирать фронт.
+PORTAL_TOAST_TYPE_CODES = {
+    PORTAL_REQUEST_CREATED,
+    PORTAL_REQUEST_STATUS_CHANGED,
+    PORTAL_REQUEST_UPDATED,
+    PORTAL_REQUEST_CANCELLED,
+}
+
+# Те же подписи, что в PortalRequests.jsx. Продублированы намеренно:
+# сервис не должен зависеть от роутеров, а роутер — от сервиса ради
+# одного словаря. Если подписи поменяются, поменять надо в обоих местах.
+PORTAL_STATUS_LABELS = {
+    "NEW": "В ожидании",
+    "IN_PROGRESS": "Принято в работу",
+    "COMPLETED": "Работы завершены",
+    "CANCELLED": "Отменено",
+}
+
+# Та же глубина, что в requests.py и clients.py — страховка от кольца
+# в данных, а не ограничение бизнес-логики.
+PORTAL_CLIENT_TREE_MAX_DEPTH = 10
+
+PORTAL_COMMENT_PREVIEW_LENGTH = 140
+
+
+def get_portal_status_label(status) -> str:
+    code = str(status or "")
+
+    return PORTAL_STATUS_LABELS.get(code, code or "—")
+
+
+def get_portal_notification_user_ids(cursor, client_id: int | None) -> list[int]:
+    """
+    Учётки кабинета, которым положено знать о событии по заявке клиента.
+
+    Это сам клиент и все организации ВЫШЕ по дереву (решение Р30(Б)):
+    головная организация видит заявки подклиентов в списке, и странно,
+    если об изменениях она узнаёт последней.
+
+    Вниз по дереву не идём: подклиент не видит заявок родителя и не должен
+    получать о них уведомления.
+
+    Отключённые и удалённые учётки пропускаем — уведомление им бесполезно,
+    а таблица растёт.
+
+    Отдельно: право «Портал: просмотр подклиентов» здесь НЕ проверяется.
+    Оно проверяется на чтении, вместе с видимостью самой заявки. Права
+    могут снять уже после отправки, и запись в таблице этого пережить
+    не должна.
+    """
+    if not client_id:
+        return []
+
+    cursor.execute(
+        """
+        WITH RECURSIVE client_chain AS (
+            SELECT
+                c.id,
+                c.parent_client_id,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+              AND c.is_deleted = 0
+
+            UNION ALL
+
+            SELECT
+                p.id,
+                p.parent_client_id,
+                chain.depth + 1
+            FROM clients p
+            INNER JOIN client_chain chain
+                ON p.id = chain.parent_client_id
+            WHERE p.is_deleted = 0
+              AND chain.depth < %s
+        )
+        SELECT DISTINCT u.id
+        FROM client_chain
+        INNER JOIN users u
+            ON u.client_id = client_chain.id
+        WHERE u.user_kind = 'CLIENT'
+          AND u.is_approved = 1
+          AND u.is_active = 1
+          AND u.deleted_at IS NULL
+        ORDER BY u.id
+        """,
+        (int(client_id), PORTAL_CLIENT_TREE_MAX_DEPTH),
+    )
+
+    return [int(row["id"]) for row in (cursor.fetchall() or [])]
+
+
+def create_portal_request_notifications(
+    cursor,
+    request_id: int,
+    client_id: int | None,
+    type_code: str,
+    title: str,
+    message: str,
+    actor_user_id: int | None = None,
+):
+    """
+    Общая точка отправки для всех клиентских уведомлений по заявке.
+
+    Одна функция вместо семи копий рассылки: получатели и entity_type
+    у всех событий одинаковые, отличается только текст.
+    """
+    user_ids = get_portal_notification_user_ids(cursor, client_id)
+
+    if not user_ids:
+        return []
+
+    return create_notifications_for_users(
+        cursor=cursor,
+        user_ids=user_ids,
+        type_code=type_code,
+        title=title,
+        message=message,
+        entity_type="request",
+        entity_id=request_id,
+        actor_user_id=actor_user_id,
+        exclude_user_id=actor_user_id,
+    )
+
+
+def build_portal_client_suffix(client_name: str | None) -> str:
+    """
+    Название организации в конце текста нужно получателям из головной
+    организации: у них в колокольчике заявки нескольких подклиентов,
+    и без названия непонятно, чья это.
+    """
+    name = str(client_name or "").strip()
+
+    return f" Организация: {name}." if name else ""
+
+
+def notify_portal_request_created(
+    cursor,
+    request_id: int,
+    client_id: int | None,
+    scheduled_at: datetime | None = None,
+    client_name: str | None = None,
+    actor_user_id: int | None = None,
+):
+    title = "Новая заявка"
+    message = (
+        f"Заявка №{request_id} создана. "
+        f"Работы: {format_request_datetime(scheduled_at)}."
+        f"{build_portal_client_suffix(client_name)}"
+    )
+
+    return create_portal_request_notifications(
+        cursor=cursor,
+        request_id=request_id,
+        client_id=client_id,
+        type_code=PORTAL_REQUEST_CREATED,
+        title=title,
+        message=message,
+        actor_user_id=actor_user_id,
+    )
+
+
+def notify_portal_request_status_changed(
+    cursor,
+    request_id: int,
+    client_id: int | None,
+    old_status: str | None,
+    new_status: str | None,
+    client_name: str | None = None,
+    actor_user_id: int | None = None,
+):
+    title = "Статус заявки изменён"
+    message = (
+        f"Заявка №{request_id}: "
+        f"{get_portal_status_label(old_status)} → {get_portal_status_label(new_status)}."
+        f"{build_portal_client_suffix(client_name)}"
+    )
+
+    return create_portal_request_notifications(
+        cursor=cursor,
+        request_id=request_id,
+        client_id=client_id,
+        type_code=PORTAL_REQUEST_STATUS_CHANGED,
+        title=title,
+        message=message,
+        actor_user_id=actor_user_id,
+    )
+
+
+def notify_portal_request_updated(
+    cursor,
+    request_id: int,
+    client_id: int | None,
+    changes: list[str],
+    client_name: str | None = None,
+    actor_user_id: int | None = None,
+):
+    """
+    changes — уже готовые строки вида «время работ: 10.09.2026 14:00 →
+    11.09.2026 09:00». Собирает их вызывающий: только он знает, какие
+    поля клиенту показывать, а какие нет.
+    """
+    visible_changes = [str(item).strip() for item in (changes or []) if str(item).strip()]
+
+    if not visible_changes:
+        return []
+
+    title = "Заявка изменена"
+    message = (
+        f"Заявка №{request_id}: {'; '.join(visible_changes)}."
+        f"{build_portal_client_suffix(client_name)}"
+    )
+
+    return create_portal_request_notifications(
+        cursor=cursor,
+        request_id=request_id,
+        client_id=client_id,
+        type_code=PORTAL_REQUEST_UPDATED,
+        title=title,
+        message=message,
+        actor_user_id=actor_user_id,
+    )
+
+
+def notify_portal_request_executors(
+    cursor,
+    request_id: int,
+    client_id: int | None,
+    executor_names: list[str],
+    client_name: str | None = None,
+    actor_user_id: int | None = None,
+):
+    """
+    Клиенту от исполнителя положено только имя (решение Р7).
+    Почта, роль, город и кто кого назначил сюда не попадают —
+    вызывающий передаёт готовый список имён, а не строки из БД.
+    """
+    names = [str(name).strip() for name in (executor_names or []) if str(name).strip()]
+
+    title = "Исполнитель по заявке"
+
+    if names:
+        label = "Назначен исполнитель" if len(names) == 1 else "Назначены исполнители"
+        message = f"Заявка №{request_id}: {label.lower()} — {', '.join(names)}."
+    else:
+        message = f"Заявка №{request_id}: исполнитель снят с заявки."
+
+    message += build_portal_client_suffix(client_name)
+
+    return create_portal_request_notifications(
+        cursor=cursor,
+        request_id=request_id,
+        client_id=client_id,
+        type_code=PORTAL_REQUEST_EXECUTORS,
+        title=title,
+        message=message,
+        actor_user_id=actor_user_id,
+    )
+
+
+def notify_portal_request_schedule_approval(
+    cursor,
+    request_id: int,
+    client_id: int | None,
+    is_approved: bool,
+    scheduled_at: datetime | None = None,
+    client_name: str | None = None,
+    actor_user_id: int | None = None,
+):
+    """
+    Решение по нерабочему времени. Причина согласования и внутренний
+    комментарий администратора не передаются: это переписка внутри
+    компании, она и в карточке клиенту не показывается.
+    """
+    title = "Решение по времени работ"
+
+    if is_approved:
+        message = (
+            f"Заявка №{request_id}: время "
+            f"{format_request_datetime(scheduled_at)} согласовано."
+        )
+    else:
+        message = (
+            f"Заявка №{request_id}: выбранное время не согласовано. "
+            "Свяжитесь с вашим менеджером, чтобы подобрать другое."
+        )
+
+    message += build_portal_client_suffix(client_name)
+
+    return create_portal_request_notifications(
+        cursor=cursor,
+        request_id=request_id,
+        client_id=client_id,
+        type_code=PORTAL_REQUEST_SCHEDULE_APPROVAL,
+        title=title,
+        message=message,
+        actor_user_id=actor_user_id,
+    )
+
+
+def notify_portal_request_comment(
+    cursor,
+    request_id: int,
+    client_id: int | None,
+    author_name: str | None,
+    comment_text: str | None,
+    client_name: str | None = None,
+    actor_user_id: int | None = None,
+):
+    """
+    Переписка по заявке общая (решение Р8), поэтому текст сообщения
+    в уведомлении показать можно — клиент и так открывает его в карточке.
+    Обрезаем, чтобы колокольчик не превращался в чат.
+    """
+    text = str(comment_text or "").strip()
+
+    if not text:
+        return []
+
+    if len(text) > PORTAL_COMMENT_PREVIEW_LENGTH:
+        text = text[:PORTAL_COMMENT_PREVIEW_LENGTH].rstrip() + "..."
+
+    author = str(author_name or "").strip() or "Сотрудник"
+
+    title = "Новое сообщение по заявке"
+    message = f"Заявка №{request_id}, {author}: {text}"
+
+    return create_portal_request_notifications(
+        cursor=cursor,
+        request_id=request_id,
+        client_id=client_id,
+        type_code=PORTAL_REQUEST_COMMENT,
+        title=title,
+        message=message,
+        actor_user_id=actor_user_id,
+    )
+
+
+def notify_portal_request_cancelled(
+    cursor,
+    request_id: int,
+    client_id: int | None,
+    cancelled_by_client: bool = False,
+    client_name: str | None = None,
+    actor_user_id: int | None = None,
+):
+    title = "Заявка отменена"
+
+    if cancelled_by_client:
+        message = f"Заявка №{request_id} отменена из личного кабинета."
+    else:
+        message = (
+            f"Заявка №{request_id} отменена. "
+            "Подробности уточните у вашего менеджера."
+        )
+
+    message += build_portal_client_suffix(client_name)
+
+    return create_portal_request_notifications(
+        cursor=cursor,
+        request_id=request_id,
+        client_id=client_id,
+        type_code=PORTAL_REQUEST_CANCELLED,
+        title=title,
+        message=message,
+        actor_user_id=actor_user_id,
+    )

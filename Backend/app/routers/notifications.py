@@ -5,9 +5,29 @@ from app.schemas import (
     NotificationSettingsBulkUpdate,
     NotificationIgnoredCitiesUpdate,
 )
-from app.permissions import has_any_permission
+from app.permissions import has_any_permission, require_employee_user
 
-router = APIRouter(prefix="/notifications", tags=["Notifications"])
+PORTAL_NOTIFICATION_CATEGORY = "PORTAL"
+
+
+def ensure_employee_access(current_user: dict = Depends(get_current_user)):
+    """
+    Раздел сотрудников. У кабинета свой роутер /portal/notifications
+    со своими правилами видимости.
+
+    Вторая линия защиты помимо прав: сегодня клиенту не выдают
+    notifications.*, но если кто-то выдаст — он не должен получить
+    уведомления сотрудников.
+    """
+    require_employee_user(current_user)
+    return current_user
+
+
+router = APIRouter(
+    prefix="/notifications",
+    tags=["Notifications"],
+    dependencies=[Depends(ensure_employee_access)],
+)
 
 
 NOTIFICATION_VIEW_PERMISSION_CODES = [
@@ -323,9 +343,10 @@ def get_notification_settings(current_user: dict = Depends(get_current_user)):
                     ON uns.notification_type_code = nt.code
                     AND uns.user_id = %s
                 WHERE nt.is_active = 1
+                  AND COALESCE(nt.category, '') <> %s
                 ORDER BY nt.category ASC, nt.id ASC
                 """,
-                (current_user["id"],)
+                (current_user["id"], PORTAL_NOTIFICATION_CATEGORY)
             )
 
             rows = cursor.fetchall()
@@ -359,9 +380,10 @@ def update_notification_settings(
                     SELECT code
                     FROM notification_types
                     WHERE code = %s
-                    AND is_active = 1
+                      AND is_active = 1
+                      AND COALESCE(category, '') <> %s
                     """,
-                    (setting.type_code,)
+                    (setting.type_code, PORTAL_NOTIFICATION_CATEGORY)
                 )
 
                 notification_type = cursor.fetchone()

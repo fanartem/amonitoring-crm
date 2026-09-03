@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_connection
 from app.schemas import (
@@ -19,6 +21,7 @@ from app.permissions import (
     DATA_SCOPE_CITY_ASSIGNED,
     DATA_SCOPE_OWN,
     DATA_SCOPE_NONE,
+    DATA_SCOPE_CLIENT,
     get_data_scope,
     has_any_permission,
     is_super_admin,
@@ -33,6 +36,14 @@ from app.permissions import (
     can_view_price_fields,
     can_create_request_for_client,
     is_client_owned_by_user,
+    is_client_user,
+    get_user_client_id,
+    can_view_portal_requests,
+    can_view_portal_prices,
+    can_cancel_portal_request,
+    can_create_portal_comment,
+    can_view_portal_subclients,
+    get_client_branch_ids,
 )
 
 from datetime import datetime, time, timezone, timedelta
@@ -44,6 +55,16 @@ from app.notification_service import (
     notify_request_payment_changed,
     notify_request_executors_assigned,
     notify_request_time_conflict,
+
+    # Уведомления кабинета. Отдельные функции, а не флаг в существующих:
+    # у клиента другие получатели, другие тексты и другой набор событий.
+    notify_portal_request_created,
+    notify_portal_request_status_changed,
+    notify_portal_request_updated,
+    notify_portal_request_executors,
+    notify_portal_request_schedule_approval,
+    notify_portal_request_comment,
+    notify_portal_request_cancelled,
 )
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
@@ -63,6 +84,10 @@ SCHEDULE_APPROVAL_REJECTED = "REJECTED"
 
 CLIENT_PAYMENT_PREPAYMENT = "PREPAYMENT"
 CLIENT_PAYMENT_POSTPAYMENT = "POSTPAYMENT"
+
+# Та же глубина, что и в clients.py. Реальная иерархия после миграции
+# 2026_09_02_client_parent_id имеет глубину 2, запас — страховка от кольца.
+CLIENT_TREE_MAX_DEPTH = 10
 
 ALMATY_TZ = timezone(timedelta(hours=5))
 
@@ -176,6 +201,11 @@ def user_can_override_request_status_transitions(current_user: dict) -> bool:
 
 
 def user_can_view_deleted_requests(current_user: dict) -> bool:
+    # Корзина — внутренний инструмент: там лежат заявки всех клиентов
+    # и причины удаления. Клиенту она закрыта независимо от прав.
+    if is_client_user(current_user):
+        return False
+
     return user_has_any_permission(current_user, REQUEST_TRASH_VIEW_PERMISSION_CODES)
 
 
@@ -198,6 +228,19 @@ def get_effective_request_data_scope(current_user: dict) -> str:
     какие именно заявки доступны. requests.view_all остаётся явным обходом
     ограничения области данных.
     """
+    # Клиентская учётка разбирается ПЕРВОЙ, до всех прав сотрудников.
+    # Порядок тот же, что в users.py и в access.js: сначала тип учётки,
+    # потом права. Иначе случайно выданное requests.view_all открыло бы
+    # клиенту все заявки CRM.
+    if is_client_user(current_user):
+        if not get_user_client_id(current_user):
+            return DATA_SCOPE_NONE
+
+        if not can_view_portal_requests(current_user):
+            return DATA_SCOPE_NONE
+
+        return DATA_SCOPE_CLIENT
+
     if user_can_view_all_request_rows(current_user):
         return DATA_SCOPE_ALL
 
@@ -216,6 +259,234 @@ def get_effective_request_data_scope(current_user: dict) -> str:
             return scope
 
     return DATA_SCOPE_NONE
+
+
+def get_responsible_client_scope_ids(cursor, user_id: int) -> tuple[set[int], set[int]]:
+    """
+    Клиенты области RESPONSIBLE_CLIENTS.
+
+    Возвращает две группы:
+    - свои клиенты: пользователь ответственный или создатель;
+    - вся ветка: свои клиенты плюс их подклиенты по parent_client_id.
+
+    Ветка нужна для варианта Б: кто ведёт родителя, видит заявки
+    подклиентов. Редактирование при этом остаётся у тех, кто относится
+    к заявке напрямую.
+    """
+    cursor.execute(
+        """
+        SELECT id
+        FROM clients
+        WHERE is_deleted = 0
+          AND (responsible_manager_id = %s OR created_by = %s)
+        """,
+        (user_id, user_id),
+    )
+
+    direct_client_ids = {int(row["id"]) for row in (cursor.fetchall() or [])}
+
+    if not direct_client_ids:
+        return set(), set()
+
+    cursor.execute(
+        """
+        WITH RECURSIVE own_clients AS (
+            SELECT
+                c.id,
+                0 AS depth
+            FROM clients c
+            WHERE c.is_deleted = 0
+              AND (c.responsible_manager_id = %s OR c.created_by = %s)
+
+            UNION ALL
+
+            SELECT
+                child.id,
+                own.depth + 1
+            FROM clients child
+            INNER JOIN own_clients own
+                ON child.parent_client_id = own.id
+            WHERE child.is_deleted = 0
+              AND own.depth < %s
+        )
+        SELECT DISTINCT id
+        FROM own_clients
+        """,
+        (user_id, user_id, CLIENT_TREE_MAX_DEPTH),
+    )
+
+    branch_client_ids = {int(row["id"]) for row in (cursor.fetchall() or [])}
+    branch_client_ids |= direct_client_ids
+
+    return direct_client_ids, branch_client_ids
+
+
+def get_client_portal_scope_ids(cursor, client_id: int | None) -> set[int]:
+    """
+    Клиент кабинета и вся его ветка подклиентов.
+
+    Направление обратное get_responsible_client_scope_ids: там мы шли
+    от пользователя к его клиентам, здесь — от клиента вниз по дереву.
+    Клиенты в корзине в ветку не попадают: их карточек фактически нет.
+
+    Глубина ограничена CLIENT_TREE_MAX_DEPTH — та же страховка от кольца
+    в данных, что и в остальных обходах дерева.
+    """
+    return get_client_branch_ids(cursor, client_id)
+
+
+def get_client_portal_user_ids(cursor, client_id: int | None) -> set[int]:
+    """
+    Учётные записи кабинета этого клиента.
+
+    Нужны, чтобы отличить заявку, заведённую из кабинета, от заявки,
+    которую оформил наш менеджер. Первую клиент может отменить сам,
+    вторую — только через менеджера.
+
+    Удалённые учётки тоже считаем своими: заявка, созданная уволившимся
+    сотрудником клиента, всё равно заведена этим клиентом.
+    """
+    if not client_id:
+        return set()
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE user_kind = 'CLIENT'
+          AND client_id = %s
+        """,
+        (int(client_id),),
+    )
+
+    return {int(row["id"]) for row in (cursor.fetchall() or [])}
+
+
+def build_request_access_context(cursor, current_user: dict) -> dict:
+    """
+    Всё, что нужно знать про доступ пользователя к заявкам, одним объектом.
+
+    Считается один раз на запрос, чтобы не дёргать город и дерево клиентов
+    в цикле по заявкам.
+    """
+    scope = get_effective_request_data_scope(current_user)
+
+    context = {
+        "scope": scope,
+        "user_city": None,
+        "direct_client_ids": set(),
+        "branch_client_ids": set(),
+        "portal_user_ids": set(),
+    }
+
+    if scope in [DATA_SCOPE_CITY, DATA_SCOPE_ASSIGNED, DATA_SCOPE_CITY_ASSIGNED]:
+        context["user_city"] = get_current_user_city(cursor, current_user)
+
+    elif scope == DATA_SCOPE_RESPONSIBLE_CLIENTS:
+        direct_client_ids, branch_client_ids = get_responsible_client_scope_ids(
+            cursor,
+            int(current_user["id"]),
+        )
+
+        context["direct_client_ids"] = direct_client_ids
+        context["branch_client_ids"] = branch_client_ids
+
+    elif scope == DATA_SCOPE_CLIENT:
+        client_id = get_user_client_id(current_user)
+
+        # direct — заявки своего клиента, branch — плюс его подклиенты.
+        # Разделение нужно там же, где и у сотрудников: смотреть можно
+        # всю ветку, действовать — только по своему клиенту.
+        context["direct_client_ids"] = {int(client_id)} if client_id else set()
+
+        # Решение Р22(Б): без права «Портал: просмотр подклиентов»
+        # кабинет ограничен своей организацией. Вторая и последняя точка,
+        # где это решается — первая в portal.py.
+        if client_id and can_view_portal_subclients(current_user):
+            context["branch_client_ids"] = get_client_portal_scope_ids(
+                cursor,
+                client_id,
+            )
+        else:
+            context["branch_client_ids"] = set(context["direct_client_ids"])
+
+        context["portal_user_ids"] = get_client_portal_user_ids(cursor, client_id)
+
+    return context
+
+
+def find_blocking_client(cursor, client_id: int) -> dict | None:
+    """
+    Ближайший заблокированный клиент в цепочке «сам клиент → родители».
+
+    Блокировка наследуется вниз: заблокированный родитель закрывает
+    создание заявок всей ветке.
+    """
+    cursor.execute(
+        """
+        WITH RECURSIVE client_chain AS (
+            SELECT
+                c.id,
+                c.parent_client_id,
+                c.name,
+                c.company_name,
+                c.status,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+
+            UNION ALL
+
+            SELECT
+                p.id,
+                p.parent_client_id,
+                p.name,
+                p.company_name,
+                p.status,
+                chain.depth + 1
+            FROM clients p
+            INNER JOIN client_chain chain
+                ON p.id = chain.parent_client_id
+            WHERE p.is_deleted = 0
+              AND chain.depth < %s
+        )
+        SELECT id, name, company_name, status, depth
+        FROM client_chain
+        WHERE status = 'BLOCKED'
+        ORDER BY depth ASC
+        LIMIT 1
+        """,
+        (client_id, CLIENT_TREE_MAX_DEPTH),
+    )
+
+    return cursor.fetchone()
+
+
+def ensure_client_branch_not_blocked(cursor, client_id: int):
+    blocking_client = find_blocking_client(cursor, client_id)
+
+    if not blocking_client:
+        return
+
+    if int(blocking_client["depth"]) == 0:
+        raise HTTPException(
+            status_code=403,
+            detail="Нельзя создать заявку для заблокированного клиента",
+        )
+
+    blocking_client_name = (
+        blocking_client.get("company_name")
+        or blocking_client.get("name")
+        or f"ID {blocking_client.get('id')}"
+    )
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Нельзя создать заявку: заблокирован родительский клиент "
+            f"«{blocking_client_name}»"
+        ),
+    )
 
 
 def user_can_edit_own_or_responsible_request(current_user: dict, request: dict) -> bool:
@@ -249,10 +520,21 @@ def user_can_complete_assigned_request(current_user: dict) -> bool:
 
 
 def user_can_comment_requests(current_user: dict) -> bool:
+    # У клиента своё право: комментарии — общая лента, но открывать её
+    # на запись должно отдельное портальное право, а не requests.comments.*,
+    # которое даёт доступ к комментариям вообще всех заявок.
+    if is_client_user(current_user):
+        return can_create_portal_comment(current_user)
+
     return user_has_any_permission(current_user, REQUEST_COMMENT_PERMISSION_CODES)
 
 
 def user_can_view_calendar(current_user: dict) -> bool:
+    # Календарь показывает загрузку монтажников по всем клиентам —
+    # это внутреннее расписание компании.
+    if is_client_user(current_user):
+        return False
+
     return user_has_any_permission(current_user, CALENDAR_VIEW_PERMISSION_CODES)
 
 
@@ -269,6 +551,67 @@ def user_is_limited_executor(current_user: dict) -> bool:
 
 def almaty_now():
     return datetime.now(ALMATY_TZ).replace(tzinfo=None)
+
+
+# ---------------------------------------------------------------------------
+# Помощники для уведомлений кабинета.
+#
+# Тексты клиенту собираются здесь, а не в notification_service: только
+# роутер знает, какое поле заявки клиенту показывают, а какое нет.
+# Сервис принимает готовые строки и ничего не достаёт из БД сам —
+# иначе однажды в колокольчик уедет то, что скрыто в карточке.
+# ---------------------------------------------------------------------------
+
+PORTAL_VISIT_TYPE_LABELS = {
+    "IN_OFFICE": "в офисе",
+    "ON_SITE": "выезд к клиенту",
+}
+
+PORTAL_VISIT_PRICE_LABELS = {
+    VISIT_PRICE_CODE_CITY: "по городу",
+    VISIT_PRICE_CODE_OUTSIDE_CITY: "за городом",
+    VISIT_PRICE_CODE_BUSINESS_TRIP: "командировка",
+}
+
+
+def get_portal_client_name(cursor, client_id) -> str | None:
+    """
+    Название организации для подписи в уведомлении.
+
+    Нужно получателям из головной организации: у них в колокольчике
+    заявки нескольких подклиентов, и без названия непонятно, чья это.
+    """
+    if not client_id:
+        return None
+
+    cursor.execute(
+        """
+        SELECT name, company_name
+        FROM clients
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (int(client_id),),
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    return row.get("company_name") or row.get("name")
+
+
+def format_portal_value(value) -> str:
+    if value is None:
+        return "не указано"
+
+    if isinstance(value, datetime):
+        return value.strftime("%d.%m.%Y %H:%M")
+
+    text = str(value).strip()
+
+    return text or "не указано"
 
 
 def get_request_delete_seconds_left(request: dict) -> int:
@@ -568,6 +911,20 @@ def request_is_visible_to_technician_by_payment(request: dict) -> bool:
         or request.get("client_payment_type") == CLIENT_PAYMENT_POSTPAYMENT
     )
 
+def user_can_view_request_prices(current_user: dict) -> bool:
+    """
+    Кому видны цены заявки.
+
+    У сотрудника — обычные права раздела. У клиента — отдельное право
+    кабинета portal.prices.view: клиент не должен зависеть от кодов
+    prices.*, которые ему никто не выдаёт и выдавать не собирается.
+    """
+    if is_client_user(current_user):
+        return can_view_portal_prices(current_user)
+
+    return can_view_price_fields(current_user)
+
+
 def hide_request_prices(requests: list[dict]) -> list[dict]:
     for req in requests:
         req["total_price"] = None
@@ -578,7 +935,361 @@ def hide_request_prices(requests: list[dict]) -> list[dict]:
     return requests
 
 
-def attach_request_permissions(request: dict, current_user: dict) -> dict:
+# Поля строки заявки, которые клиенту не отдаются.
+#
+# Область данных решает, КАКИЕ заявки видно. Этот список решает, ЧТО
+# видно внутри строки — а это разные вопросы, и второй легко забыть.
+#
+# schedule_approval_* — внутренняя кухня согласования нерабочего времени:
+#   там наш менеджер пишет причину для администрации, а не для клиента.
+#   Сам статус согласования оставляем: «время согласовывается» клиенту
+#   полезно знать.
+# client_status      — наша оценка платёжной дисциплины (DEBTOR/BLOCKED).
+#   В интерфейсе кабинета мы её намеренно не показываем, в JSON тоже
+#   не должно быть.
+# created_by / *_role / responsible_manager_id — внутренние идентификаторы
+#   и коды ролей. Имя создателя оставляем: клиенту полезно видеть,
+#   кто оформил заявку.
+CLIENT_HIDDEN_REQUEST_FIELDS = (
+    "schedule_approval_reason",
+    "schedule_approval_comment",
+    "schedule_approval_requested_by",
+    "schedule_approval_requested_at",
+    "schedule_approval_decided_by",
+    "schedule_approval_decided_at",
+    "client_status",
+    "created_by",
+    "created_by_role",
+    "responsible_manager_id",
+    "current_user_is_executor",
+)
+
+
+def sanitize_executors_for_client(executors) -> list[dict]:
+    """
+    Клиенту от исполнителя нужно имя (решение Р7). Почта, роль, город
+    и кто кого назначил — внутренний справочник компании.
+    """
+    if not isinstance(executors, list):
+        return []
+
+    return [
+        {
+            "user_id": executor.get("user_id"),
+            "user_name": executor.get("user_name"),
+        }
+        for executor in executors
+    ]
+
+
+def sanitize_request_for_client(request: dict, current_user: dict) -> dict:
+    """
+    Вызывать ПОСЛЕ attach_request_permissions: флаг can_cancel считается
+    по created_by, а мы это поле убираем.
+    """
+    if not is_client_user(current_user):
+        return request
+
+    for field in CLIENT_HIDDEN_REQUEST_FIELDS:
+        request.pop(field, None)
+
+    if "executors" in request:
+        request["executors"] = sanitize_executors_for_client(
+            request.get("executors")
+        )
+
+    return request
+
+
+def sanitize_requests_for_client(
+    requests: list[dict],
+    current_user: dict,
+) -> list[dict]:
+    if not is_client_user(current_user):
+        return requests
+
+    for request in requests:
+        sanitize_request_for_client(request, current_user)
+
+    return requests
+
+
+# Белый список действий истории, которые видит клиент в портале.
+# Всё, чего здесь нет, скрыто — включая внутреннюю тарификацию,
+# причины согласования нерабочего времени и движение оборудования
+# на складе. Список закрытый намеренно: новое действие появляется
+# скрытым, а не открытым по недосмотру.
+CLIENT_VISIBLE_HISTORY_ACTIONS = {
+    "CREATED",
+    "STATUS_CHANGED",
+    "SCHEDULED_AT_CHANGED",
+    "ADDRESS_CHANGED",
+    "CITY_CHANGED",
+    "PLATFORM_CHANGED",
+    "VISIT_TYPE_CHANGED",
+    "ASSIGNED",
+    "UNASSIGNED",
+    "SELF_ACCEPTED",
+    "EXECUTORS_ASSIGNED",
+    "PAYMENT_UPDATED",
+}
+
+# В этих записях в old_value/new_value лежат ID пользователей.
+# Клиенту вместо "assigned_to=7" показываем имя исполнителя.
+CLIENT_HISTORY_EXECUTOR_ACTIONS = {
+    "ASSIGNED",
+    "UNASSIGNED",
+    "SELF_ACCEPTED",
+    "EXECUTORS_ASSIGNED",
+}
+
+ASSIGNED_TO_HISTORY_PATTERN = re.compile(r"assigned_to=(\d+)")
+EXECUTORS_HISTORY_PATTERN = re.compile(r"executors=\[([0-9,\s]*)\]")
+
+
+def extract_history_user_ids(value) -> list[int]:
+    if not value:
+        return []
+
+    text = str(value)
+    user_ids = []
+
+    for match in ASSIGNED_TO_HISTORY_PATTERN.finditer(text):
+        user_ids.append(int(match.group(1)))
+
+    for match in EXECUTORS_HISTORY_PATTERN.finditer(text):
+        for part in match.group(1).split(","):
+            part = part.strip()
+
+            if part.isdigit():
+                user_ids.append(int(part))
+
+    return user_ids
+
+
+def build_client_executor_history_value(value, names_by_id: dict) -> str | None:
+    """
+    Из "assigned_to=7, executors=[7, 8], status=IN_PROGRESS"
+    получаем "Иван Иванов, Пётр Петров".
+
+    Технические поля вроде status клиенту не нужны: смену статуса он
+    и так видит отдельной записью STATUS_CHANGED.
+    """
+    if value is None:
+        return None
+
+    text = str(value)
+
+    names = [
+        names_by_id.get(user_id) or f"Исполнитель #{user_id}"
+        for user_id in extract_history_user_ids(text)
+    ]
+
+    if names:
+        # dict.fromkeys убирает повторы, сохраняя порядок:
+        # assigned_to и executors часто содержат одного и того же человека.
+        return ", ".join(dict.fromkeys(names))
+
+    if "assigned_to=NULL" in text or "executors=[]" in text:
+        return "не назначен"
+
+    return None
+
+
+def filter_request_history_for_client(
+    cursor,
+    history: list[dict] | None,
+    current_user: dict,
+) -> list[dict]:
+    """
+    История заявки для клиентской учётной записи.
+
+    Сотрудникам отдаём как есть — это их рабочий журнал.
+    """
+    if not is_client_user(current_user):
+        return history or []
+
+    visible_rows = [
+        row
+        for row in (history or [])
+        if str(row.get("action") or "") in CLIENT_VISIBLE_HISTORY_ACTIONS
+    ]
+
+    if not visible_rows:
+        return []
+
+    user_ids = set()
+
+    for row in visible_rows:
+        if str(row.get("action") or "") in CLIENT_HISTORY_EXECUTOR_ACTIONS:
+            user_ids.update(extract_history_user_ids(row.get("old_value")))
+            user_ids.update(extract_history_user_ids(row.get("new_value")))
+
+    names_by_id = {}
+
+    if user_ids:
+        sorted_user_ids = sorted(user_ids)
+        placeholders = ", ".join(["%s"] * len(sorted_user_ids))
+
+        cursor.execute(
+            f"""
+            SELECT id, name
+            FROM users
+            WHERE id IN ({placeholders})
+            """,
+            tuple(sorted_user_ids),
+        )
+
+        names_by_id = {
+            int(row["id"]): row.get("name")
+            for row in (cursor.fetchall() or [])
+        }
+
+    result = []
+
+    for row in visible_rows:
+        action = str(row.get("action") or "")
+        item = dict(row)
+
+        if action in CLIENT_HISTORY_EXECUTOR_ACTIONS:
+            item["old_value"] = build_client_executor_history_value(
+                row.get("old_value"), names_by_id
+            )
+            item["new_value"] = build_client_executor_history_value(
+                row.get("new_value"), names_by_id
+            )
+
+        elif action == "CREATED":
+            # В базе лежит служебный английский текст вида
+            # "Request created with 2 vehicle(s)" — клиенту он ни к чему.
+            item["old_value"] = None
+            item["new_value"] = "Заявка создана"
+
+        result.append(item)
+
+    return result
+
+
+def request_is_directly_owned(request: dict, current_user: dict) -> bool:
+    """
+    Заявка «своя» напрямую: пользователь её создал или ведёт клиента.
+    """
+    user_id = int(current_user["id"])
+
+    created_by = request.get("created_by")
+    responsible_manager_id = request.get("responsible_manager_id")
+
+    if created_by is not None and int(created_by) == user_id:
+        return True
+
+    if responsible_manager_id is not None and int(responsible_manager_id) == user_id:
+        return True
+
+    return False
+
+
+def request_is_inherited_from_subclient(
+    request: dict,
+    current_user: dict,
+    access_context: dict | None = None,
+) -> bool:
+    """
+    Заявка видна только потому, что её клиент — подклиент в ветке
+    пользователя. Такие заявки открываются на чтение, но не редактируются.
+    """
+    if not access_context:
+        return False
+
+    if access_context.get("scope") != DATA_SCOPE_RESPONSIBLE_CLIENTS:
+        return False
+
+    if request_is_directly_owned(request, current_user):
+        return False
+
+    client_id = request.get("client_id")
+
+    if client_id is None:
+        return False
+
+    client_id = int(client_id)
+
+    if client_id in (access_context.get("direct_client_ids") or set()):
+        return False
+
+    return client_id in (access_context.get("branch_client_ids") or set())
+
+
+def attach_portal_request_permissions(
+    request: dict,
+    current_user: dict,
+    access_context: dict | None = None,
+) -> dict:
+    """
+    Флаги заявки для клиентского кабинета.
+
+    Все действия сотрудников выставляются в False явно, а не по остаточному
+    принципу. Сегодня у клиента нет прав requests.*, но если кто-то их
+    выдаст, интерфейс не должен нарисовать кнопку «Завершить».
+    """
+    request["can_edit"] = False
+    request["can_change_status"] = False
+    request["can_manage_executors"] = False
+    request["can_decide_schedule_approval"] = False
+    request["can_delete"] = False
+    request["can_delete_own_with_time_limit"] = False
+    request["delete_window_seconds_left"] = 0
+    request["can_edit_payment"] = False
+    request["can_accept"] = False
+
+    request["can_view_prices"] = can_view_portal_prices(current_user)
+
+    own_client_id = get_user_client_id(current_user)
+    request_client_id = request.get("client_id")
+
+    is_own_client_request = (
+        own_client_id is not None
+        and request_client_id is not None
+        and int(request_client_id) == int(own_client_id)
+    )
+
+    # Заявка подклиента: показываем её иначе, чем свою.
+    request["is_inherited_access"] = not is_own_client_request
+
+    # Решение Р20(Б): отменить можно заявку по всей своей ветке, но только
+    # ту, что завели из кабинета этого же клиента. Иначе получался тупик —
+    # пользователь родителя заводит подклиента, создаёт ему заявку
+    # и не может исправить собственную ошибку.
+    #
+    # Заявку, оформленную нашим менеджером, из кабинета не отменяют:
+    # у неё своя история договорённостей.
+    portal_user_ids = (access_context or {}).get("portal_user_ids") or set()
+    created_by = request.get("created_by")
+
+    created_from_portal = (
+        created_by is not None and int(created_by) in portal_user_ids
+    )
+
+    request["can_cancel"] = bool(
+        (is_own_client_request or created_from_portal)
+        and can_cancel_portal_request(current_user)
+        and str(request.get("status")) == "NEW"
+    )
+
+    return request
+
+
+def attach_request_permissions(
+    request: dict,
+    current_user: dict,
+    access_context: dict | None = None,
+) -> dict:
+    if is_client_user(current_user):
+        return attach_portal_request_permissions(
+            request,
+            current_user,
+            access_context,
+        )
+
     user_id = int(current_user["id"])
 
     created_by = request.get("created_by")
@@ -629,12 +1340,37 @@ def attach_request_permissions(request: dict, current_user: dict) -> dict:
         not in [SCHEDULE_APPROVAL_PENDING, SCHEDULE_APPROVAL_REJECTED]
     )
 
+    # Заявка подклиента, доступная через родителя: показываем, но
+    # ничего менять по ней нельзя.
+    is_inherited_access = request_is_inherited_from_subclient(
+        request,
+        current_user,
+        access_context,
+    )
+
+    request["is_inherited_access"] = is_inherited_access
+
+    if is_inherited_access:
+        request["can_edit"] = False
+        request["can_change_status"] = False
+        request["can_manage_executors"] = False
+        request["can_decide_schedule_approval"] = False
+        request["can_delete"] = False
+        request["can_delete_own_with_time_limit"] = False
+        request["delete_window_seconds_left"] = 0
+        request["can_edit_payment"] = False
+        request["can_accept"] = False
+
     return request
 
 
-def attach_requests_permissions(requests: list[dict], current_user: dict) -> list[dict]:
+def attach_requests_permissions(
+    requests: list[dict],
+    current_user: dict,
+    access_context: dict | None = None,
+) -> list[dict]:
     for request in requests:
-        attach_request_permissions(request, current_user)
+        attach_request_permissions(request, current_user, access_context)
 
     return requests
 
@@ -642,7 +1378,8 @@ def attach_requests_permissions(requests: list[dict], current_user: dict) -> lis
 def user_can_access_request(
     request: dict,
     current_user: dict,
-    user_city: str | None = None
+    user_city: str | None = None,
+    access_context: dict | None = None,
 ) -> bool:
     user_id = int(current_user["id"])
     data_scope = get_effective_request_data_scope(current_user)
@@ -650,17 +1387,26 @@ def user_can_access_request(
     if data_scope == DATA_SCOPE_ALL:
         return True
 
-    if data_scope == DATA_SCOPE_RESPONSIBLE_CLIENTS:
-        created_by = request.get("created_by")
-        responsible_manager_id = request.get("responsible_manager_id")
+    if data_scope == DATA_SCOPE_CLIENT:
+        # Без контекста доступа не пускаем: пустой набор клиентов
+        # означает «ничего не видно», а не «видно всё».
+        branch_client_ids = (access_context or {}).get("branch_client_ids") or set()
+        client_id = request.get("client_id")
 
-        if (
-            created_by is not None
-            and int(created_by) == user_id
-        ) or (
-            responsible_manager_id is not None
-            and int(responsible_manager_id) == user_id
-        ):
+        if client_id is None:
+            return False
+
+        return int(client_id) in branch_client_ids
+
+    if data_scope == DATA_SCOPE_RESPONSIBLE_CLIENTS:
+        if request_is_directly_owned(request, current_user):
+            return True
+
+        # Вариант Б: кто ведёт родителя, видит заявки его подклиентов.
+        branch_client_ids = (access_context or {}).get("branch_client_ids") or set()
+        client_id = request.get("client_id")
+
+        if client_id is not None and int(client_id) in branch_client_ids:
             return True
 
         return False
@@ -674,7 +1420,11 @@ def user_can_access_request(
         )
 
     if data_scope == DATA_SCOPE_CITY:
-        effective_user_city = user_city or current_user.get("city")
+        effective_user_city = (
+            user_city
+            or (access_context or {}).get("user_city")
+            or current_user.get("city")
+        )
 
         if not effective_user_city:
             return False
@@ -705,7 +1455,11 @@ def user_can_access_request(
         if not request_is_visible_to_technician_by_payment(request):
             return False
 
-        executor_city = user_city or current_user.get("city")
+        executor_city = (
+            user_city
+            or (access_context or {}).get("user_city")
+            or current_user.get("city")
+        )
 
         if not executor_city:
             return False
@@ -829,7 +1583,7 @@ def attach_vehicles_to_requests(cursor, requests: list[dict]) -> list[dict]:
                 request_vehicle_id,
                 []
             ).append(equipment)
-    
+
     grouped = {}
 
     for row in rows:
@@ -1106,6 +1860,15 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
     requests = шапка заявки
     request_vehicles = автомобили внутри заявки + параметры установки
     """
+    # Кабинет создаёт заявки своим эндпоинтом, по параметрам установки
+    # из договора. Общий /requests принимает произвольный client_id
+    # и полный набор полей — клиенту здесь делать нечего.
+    if is_client_user(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Создание заявки из личного кабинета выполняется отдельно",
+        )
+
     if not can_create_request(current_user):
         raise HTTPException(
             status_code=403,
@@ -1132,7 +1895,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
         data.visit_price_code,
         data.price,
     )
-    
+
     scheduled_at = normalize_scheduled_at(data.scheduled_at)
 
     if scheduled_at is None:
@@ -1164,6 +1927,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                 SELECT
                     id,
                     status,
+                    parent_client_id,
                     created_by,
                     responsible_manager_id,
                     is_deleted
@@ -1182,12 +1946,10 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     status_code=400,
                     detail="Нельзя создать заявку для клиента из корзины"
                 )
-            
-            if client["status"] == "BLOCKED":
-                raise HTTPException(
-                    status_code=403,
-                    detail="Нельзя создать заявку для заблокированного клиента"
-                )
+
+            # Блокировка наследуется вниз: заблокированный родитель
+            # закрывает создание заявок всем подклиентам.
+            ensure_client_branch_not_blocked(cursor, int(client["id"]))
 
             if not can_create_request_for_client(client, current_user):
                 raise HTTPException(
@@ -1231,7 +1993,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         status_code=400,
                         detail=f"Машина {vehicle_input.vehicle_id} находится в корзине"
                     )
-                
+
                 if not vehicle.get("vin") or not str(vehicle.get("vin")).strip():
                     raise HTTPException(
                         status_code=400,
@@ -1243,7 +2005,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         status_code=400,
                         detail=f"Машина {vehicle_input.vehicle_id} не принадлежит выбранному клиенту"
                     )
-            
+
             # Итог всегда считает сервер по строкам расчёта.
             # Присланный браузером total_price не сохраняем: это было
             # единственное место, где цена заявки принималась на веру.
@@ -1367,7 +2129,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                                 sensor_price
                             )
                         )
-            
+
             saved_total_price = total_price
 
             if data.price and data.price.lines:
@@ -1480,7 +2242,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                         schedule_approval["reason"],
                     )
                 )
-            
+
             cursor.execute(
                 """
                 SELECT name, company_name
@@ -1507,6 +2269,20 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                 city=data.city,
                 client_name=client_for_notification.get("name"),
                 company_name=client_for_notification.get("company_name"),
+                actor_user_id=current_user["id"],
+            )
+
+            # Заявку завёл наш менеджер — кабинет клиента должен узнать
+            # об этом так же, как если бы её создал сам клиент.
+            notify_portal_request_created(
+                cursor=cursor,
+                request_id=request_id,
+                client_id=data.client_id,
+                scheduled_at=scheduled_at,
+                client_name=(
+                    client_for_notification.get("company_name")
+                    or client_for_notification.get("name")
+                ),
                 actor_user_id=current_user["id"],
             )
 
@@ -1541,28 +2317,59 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 conditions.append("r.status = %s")
                 values.append(status)
 
-            data_scope = get_effective_request_data_scope(current_user)
+            access_context = build_request_access_context(cursor, current_user)
+            data_scope = access_context["scope"]
 
             if data_scope == DATA_SCOPE_ALL:
                 pass
 
             elif data_scope == DATA_SCOPE_RESPONSIBLE_CLIENTS:
-                conditions.append(
-                    """
-                    (
-                        r.created_by = %s
-                        OR c.responsible_manager_id = %s
+                branch_client_ids = sorted(access_context["branch_client_ids"])
+
+                if branch_client_ids:
+                    client_placeholders = ", ".join(["%s"] * len(branch_client_ids))
+
+                    # Свои заявки, свои клиенты и вся ветка их подклиентов.
+                    conditions.append(
+                        f"""
+                        (
+                            r.created_by = %s
+                            OR c.responsible_manager_id = %s
+                            OR r.client_id IN ({client_placeholders})
+                        )
+                        """
                     )
-                    """
-                )
-                values.extend([current_user["id"], current_user["id"]])
+                    values.extend(
+                        [current_user["id"], current_user["id"]] + branch_client_ids
+                    )
+                else:
+                    conditions.append(
+                        """
+                        (
+                            r.created_by = %s
+                            OR c.responsible_manager_id = %s
+                        )
+                        """
+                    )
+                    values.extend([current_user["id"], current_user["id"]])
+
+            elif data_scope == DATA_SCOPE_CLIENT:
+                branch_client_ids = sorted(access_context["branch_client_ids"])
+
+                if not branch_client_ids:
+                    return []
+
+                client_placeholders = ", ".join(["%s"] * len(branch_client_ids))
+
+                conditions.append(f"r.client_id IN ({client_placeholders})")
+                values.extend(branch_client_ids)
 
             elif data_scope == DATA_SCOPE_OWN:
                 conditions.append("r.created_by = %s")
                 values.append(current_user["id"])
 
             elif data_scope == DATA_SCOPE_CITY:
-                user_city = get_current_user_city(cursor, current_user)
+                user_city = access_context["user_city"]
 
                 if not user_city:
                     return []
@@ -1587,7 +2394,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 values.extend([current_user["id"], current_user["id"]])
 
             elif data_scope == DATA_SCOPE_CITY_ASSIGNED:
-                user_city = get_current_user_city(cursor, current_user)
+                user_city = access_context["user_city"]
 
                 conditions.append(
                     """
@@ -1657,6 +2464,7 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     c.type AS client_type,
                     c.source_client_name AS client_source_name,
                     c.source_parent_client_name AS parent_client_source_name,
+                    c.parent_client_id,
 
                     parent_client.name AS parent_client_name,
                     parent_client.company_name AS parent_client_company_name,
@@ -1671,22 +2479,9 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
 
-                LEFT JOIN (
-                    SELECT
-                        MIN(pc.id) AS client_id,
-                        LOWER(TRIM(COALESCE(
-                            NULLIF(pc.source_client_name, ''),
-                            NULLIF(pc.company_name, ''),
-                            NULLIF(pc.name, '')
-                        ))) AS source_key
-                    FROM clients pc
-                    WHERE pc.is_deleted = 0
-                    GROUP BY source_key
-                ) parent_match
-                    ON parent_match.source_key = LOWER(TRIM(c.source_parent_client_name))
-
                 LEFT JOIN clients parent_client
-                    ON parent_client.id = parent_match.client_id
+                    ON parent_client.id = c.parent_client_id
+                   AND parent_client.is_deleted = 0
 
                 LEFT JOIN users creator ON r.created_by = creator.id
                 LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
@@ -1699,10 +2494,18 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
             requests = cursor.fetchall()
             requests = attach_vehicles_to_requests(cursor, requests)
             requests = attach_executors_to_requests(cursor, requests)
-            requests = attach_requests_permissions(requests, current_user)
+            requests = attach_requests_permissions(
+                requests,
+                current_user,
+                access_context,
+            )
 
-            if not can_view_price_fields(current_user):
+            if not user_can_view_request_prices(current_user):
                 requests = hide_request_prices(requests)
+
+            # Последним шагом: строки уже отобраны и права проставлены,
+            # теперь убираем из них внутренние поля.
+            requests = sanitize_requests_for_client(requests, current_user)
 
             return requests
 
@@ -1785,18 +2588,21 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
 
             requests = cursor.fetchall()
 
-            user_city = None
-
-            if user_is_limited_executor(current_user):
-                user_city = get_current_user_city(cursor, current_user)
+            access_context = build_request_access_context(cursor, current_user)
+            user_city = access_context["user_city"]
 
             requests = [
                 request
                 for request in requests
-                if user_can_access_request(request, current_user, user_city)
+                if user_can_access_request(
+                    request,
+                    current_user,
+                    user_city,
+                    access_context,
+                )
             ]
 
-            if not can_view_price_fields(current_user):
+            if not user_can_view_request_prices(current_user):
                 requests = hide_request_prices(requests)
 
             return attach_vehicles_to_requests(cursor, requests)
@@ -1809,7 +2615,7 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
     # чтобы монтажники не могли оставлять комментарии, раскомментируй эту проверку:
     # if current_user["role"] == "TECHNICIAN":
     #     raise HTTPException(status_code=403, detail="Обычный монтажник не может оставлять комментарии")
-    
+
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
@@ -1817,6 +2623,7 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
                 """
                 SELECT
                     r.id,
+                    r.client_id,
                     r.city,
                     r.assigned_to,
                     r.is_paid,
@@ -1846,22 +2653,46 @@ def create_comment(data: CommentCreate, current_user: dict = Depends(get_current
                     status_code=403,
                     detail="Недостаточно прав для добавления комментариев к заявке"
                 )
-            
-            user_city = None
 
-            if user_is_limited_executor(current_user):
-                user_city = get_current_user_city(cursor, current_user)
+            access_context = build_request_access_context(cursor, current_user)
 
-            if not user_can_access_request(request, current_user, user_city):
+            if not user_can_access_request(
+                request,
+                current_user,
+                access_context["user_city"],
+                access_context,
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для комментирования этой заявки"
                 )
-            
+
+            # Заявку подклиента, доступную только через родителя,
+            # комментировать нельзя: доступ дан на чтение.
+            if request_is_inherited_from_subclient(request, current_user, access_context):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Заявка подклиента доступна только для просмотра"
+                )
+
             cursor.execute(
                 "INSERT INTO request_comments (request_id, user_id, message) VALUES (%s, %s, %s)",
                 (data.request_id, current_user["id"], data.message)
             )
+
+            # Переписка по заявке общая (решение Р8): сообщение видят
+            # и клиент, и сотрудники. Автор из рассылки исключается
+            # внутри сервиса.
+            notify_portal_request_comment(
+                cursor=cursor,
+                request_id=data.request_id,
+                client_id=request.get("client_id"),
+                author_name=current_user.get("name"),
+                comment_text=data.message,
+                client_name=get_portal_client_name(cursor, request.get("client_id")),
+                actor_user_id=current_user["id"],
+            )
+
             connection.commit()
         return {"message": "comment added"}
     finally:
@@ -1896,6 +2727,7 @@ def assign_request_executors(
                 """
                 SELECT
                     id,
+                    client_id,
                     status,
                     assigned_to,
                     schedule_approval_status
@@ -1937,7 +2769,10 @@ def assign_request_executors(
                 if executor_id not in executor_ids:
                     executor_ids.append(executor_id)
 
-            validate_request_executor_ids(cursor, executor_ids)
+            # Возвращённые строки нужны для уведомления клиенту:
+            # ему положено имя исполнителя (решение Р7), и брать его
+            # надо здесь, а не вторым запросом.
+            executor_users = validate_request_executor_ids(cursor, executor_ids)
 
             result = replace_request_executors(
                 cursor=cursor,
@@ -2022,6 +2857,34 @@ def assign_request_executors(
                     actor_user_id=current_user["id"],
                 )
 
+            # --- Кабинет клиента ---
+            portal_client_name = get_portal_client_name(cursor, req.get("client_id"))
+
+            if result["added_executor_ids"] or result["removed_executor_ids"]:
+                notify_portal_request_executors(
+                    cursor=cursor,
+                    request_id=request_id,
+                    client_id=req.get("client_id"),
+                    executor_names=[
+                        user.get("name")
+                        for user in executor_users
+                        if user.get("name")
+                    ],
+                    client_name=portal_client_name,
+                    actor_user_id=current_user["id"],
+                )
+
+            if req["status"] != new_status:
+                notify_portal_request_status_changed(
+                    cursor=cursor,
+                    request_id=request_id,
+                    client_id=req.get("client_id"),
+                    old_status=req["status"],
+                    new_status=new_status,
+                    client_name=portal_client_name,
+                    actor_user_id=current_user["id"],
+                )
+
             connection.commit()
 
             return {
@@ -2056,6 +2919,7 @@ def get_request_executors_endpoint(
                 """
                 SELECT
                     r.id,
+                    r.client_id,
                     r.city,
                     r.assigned_to,
                     r.is_paid,
@@ -2084,18 +2948,25 @@ def get_request_executors_endpoint(
             if not request:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
 
-            user_city = None
+            access_context = build_request_access_context(cursor, current_user)
 
-            if user_is_limited_executor(current_user):
-                user_city = get_current_user_city(cursor, current_user)
-
-            if not user_can_access_request(request, current_user, user_city):
+            if not user_can_access_request(
+                request,
+                current_user,
+                access_context["user_city"],
+                access_context,
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для просмотра исполнителей этой заявки"
                 )
 
-            return get_request_executors(cursor, request_id)
+            executors = get_request_executors(cursor, request_id)
+
+            if is_client_user(current_user):
+                return sanitize_executors_for_client(executors)
+
+            return executors
 
     finally:
         connection.close()
@@ -2146,7 +3017,10 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                           AND re.user_id = %s
                     ) AS current_user_is_executor,
 
-                    c.responsible_manager_id
+                    c.responsible_manager_id,
+
+                    c.name AS portal_client_name,
+                    c.company_name AS portal_client_company_name
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 WHERE r.id = %s AND r.is_deleted = 0
@@ -2158,15 +3032,21 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
             if not req:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
 
-            user_city = None
+            access_context = build_request_access_context(cursor, current_user)
+            user_city = access_context["user_city"]
 
-            if user_is_limited_executor(current_user):
-                user_city = get_current_user_city(cursor, current_user)
-
-            if not user_can_access_request(req, current_user, user_city):
+            if not user_can_access_request(req, current_user, user_city, access_context):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для редактирования этой заявки"
+                )
+
+            # Заявка подклиента, полученная через родителя, доступна
+            # только на чтение.
+            if request_is_inherited_from_subclient(req, current_user, access_context):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Заявка подклиента доступна только для просмотра"
                 )
 
             # Право на оплату — это право на одно поле, а не на всю заявку.
@@ -2191,6 +3071,16 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
 
             update_fields = []
             update_values = []
+
+            # Изменения, о которых узнает клиент. Список закрытый:
+            # поле попадает сюда, только если его явно пометили как
+            # клиентское. Новое поле по умолчанию остаётся внутренним.
+            portal_changes = []
+
+            portal_client_name = (
+                req.get("portal_client_company_name")
+                or req.get("portal_client_name")
+            )
 
             effective_visit_type = (
                 data.visit_type if data.visit_type is not None else req["visit_type"]
@@ -2231,14 +3121,37 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     )
                 )
 
-            def add_request_update(field_name: str, new_value, history_action: str):
+            def add_portal_change(label: str, old_value, new_value, labels: dict | None = None):
+                def show(value):
+                    if labels:
+                        return labels.get(str(value or ""), format_portal_value(value))
+
+                    return format_portal_value(value)
+
+                portal_changes.append(f"{label}: {show(old_value)} → {show(new_value)}")
+
+            def add_request_update(
+                field_name: str,
+                new_value,
+                history_action: str,
+                portal_label: str | None = None,
+                portal_labels: dict | None = None,
+            ):
                 old_value = req[field_name]
 
                 if old_value != new_value:
                     update_fields.append(f"{field_name} = %s")
                     update_values.append(new_value)
                     add_history(history_action, old_value, new_value)
-            
+
+                    if portal_label:
+                        add_portal_change(
+                            portal_label,
+                            old_value,
+                            new_value,
+                            portal_labels,
+                        )
+
             # platform
             if data.platform is not None:
                 if not can_edit_this_request:
@@ -2255,7 +3168,12 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         detail="Платформа мониторинга не может быть пустой"
                     )
 
-                add_request_update("platform", new_platform, "PLATFORM_CHANGED")
+                add_request_update(
+                    "platform",
+                    new_platform,
+                    "PLATFORM_CHANGED",
+                    portal_label="платформа",
+                )
 
             # visit_type
             if data.visit_type is not None and data.visit_type != req["visit_type"]:
@@ -2265,7 +3183,13 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         detail="Недостаточно прав для редактирования этой заявки"
                     )
 
-                add_request_update("visit_type", data.visit_type, "VISIT_TYPE_CHANGED")
+                add_request_update(
+                    "visit_type",
+                    data.visit_type,
+                    "VISIT_TYPE_CHANGED",
+                    portal_label="формат работ",
+                    portal_labels=PORTAL_VISIT_TYPE_LABELS,
+                )
                 schedule_rules_changed = True
 
             # visit_price_code / тип выезда
@@ -2283,6 +3207,8 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     "visit_price_code",
                     effective_visit_price_code,
                     "VISIT_PRICE_CODE_CHANGED",
+                    portal_label="тип выезда",
+                    portal_labels=PORTAL_VISIT_PRICE_LABELS,
                 )
                 schedule_rules_changed = True
 
@@ -2294,7 +3220,12 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         detail="Недостаточно прав для редактирования этой заявки"
                     )
 
-                add_request_update("address", data.address, "ADDRESS_CHANGED")
+                add_request_update(
+                    "address",
+                    data.address,
+                    "ADDRESS_CHANGED",
+                    portal_label="адрес",
+                )
 
             # city
             if data.city is not None and data.city != req["city"]:
@@ -2304,7 +3235,12 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         detail="Недостаточно прав для редактирования этой заявки"
                     )
 
-                add_request_update("city", data.city, "CITY_CHANGED")
+                add_request_update(
+                    "city",
+                    data.city,
+                    "CITY_CHANGED",
+                    portal_label="город",
+                )
 
             # scheduled_at / желаемая дата выполнения
             scheduled_at_was_changed = False
@@ -2362,6 +3298,14 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         new_scheduled_at
                     )
 
+                    # Перенос времени — то, ради чего уведомления и делались:
+                    # клиент должен узнать об этом раньше, чем приедет монтажник.
+                    add_portal_change(
+                        "время работ",
+                        req["scheduled_at"],
+                        new_scheduled_at,
+                    )
+
                     if schedule_approval["status"] == SCHEDULE_APPROVAL_PENDING:
                         add_history(
                             "SCHEDULE_APPROVAL_REQUESTED",
@@ -2402,7 +3346,7 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     update_values.append(paid_at_val)
 
                     add_history("PAYMENT_UPDATED", f"is_paid={old_paid}", f"is_paid={new_paid}")
-                    
+
                     notify_request_payment_changed(
                         cursor=cursor,
                         request_id=request_id,
@@ -2437,13 +3381,49 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                         )
 
                 add_request_update("status", data.status, "STATUS_CHANGED")
-                
+
                 notify_request_status_changed(
                     cursor=cursor,
                     request_id=request_id,
                     old_status=req["status"],
                     new_status=data.status,
                     assigned_to=req.get("assigned_to"),
+                    actor_user_id=current_user["id"],
+                )
+
+                # Отмену клиенту показываем отдельным событием: у неё
+                # свой текст и она всплывает, а не просто ложится
+                # в колокольчик рядом с остальным.
+                if data.status == "CANCELLED":
+                    notify_portal_request_cancelled(
+                        cursor=cursor,
+                        request_id=request_id,
+                        client_id=req.get("client_id"),
+                        cancelled_by_client=False,
+                        client_name=portal_client_name,
+                        actor_user_id=current_user["id"],
+                    )
+                else:
+                    notify_portal_request_status_changed(
+                        cursor=cursor,
+                        request_id=request_id,
+                        client_id=req.get("client_id"),
+                        old_status=req["status"],
+                        new_status=data.status,
+                        client_name=portal_client_name,
+                        actor_user_id=current_user["id"],
+                    )
+
+            # Одно уведомление на всю правку, а не по одному на поле:
+            # менеджер обычно меняет время и адрес одним действием,
+            # и клиенту это одно событие, а не два.
+            if portal_changes:
+                notify_portal_request_updated(
+                    cursor=cursor,
+                    request_id=request_id,
+                    client_id=req.get("client_id"),
+                    changes=portal_changes,
+                    client_name=portal_client_name,
                     actor_user_id=current_user["id"],
                 )
 
@@ -2500,11 +3480,17 @@ def decide_request_schedule_approval(
             cursor.execute(
                 """
                 SELECT
-                    id,
-                    status,
-                    schedule_approval_status
-                FROM requests
-                WHERE id = %s AND is_deleted = 0
+                    r.id,
+                    r.client_id,
+                    r.status,
+                    r.scheduled_at,
+                    r.schedule_approval_status,
+
+                    c.name AS portal_client_name,
+                    c.company_name AS portal_client_company_name
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s AND r.is_deleted = 0
                 """,
                 (request_id,)
             )
@@ -2512,6 +3498,11 @@ def decide_request_schedule_approval(
 
             if not req:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            portal_client_name = (
+                req.get("portal_client_company_name")
+                or req.get("portal_client_name")
+            )
 
             if req["schedule_approval_status"] != SCHEDULE_APPROVAL_PENDING:
                 raise HTTPException(
@@ -2598,6 +3589,28 @@ def decide_request_schedule_approval(
                     actor_user_id=current_user["id"],
                 )
 
+                notify_portal_request_cancelled(
+                    cursor=cursor,
+                    request_id=request_id,
+                    client_id=req.get("client_id"),
+                    cancelled_by_client=False,
+                    client_name=portal_client_name,
+                    actor_user_id=current_user["id"],
+                )
+
+            # Причина согласования и комментарий администратора клиенту
+            # не уходят: это переписка внутри компании, она и в карточке
+            # ему не показывается.
+            notify_portal_request_schedule_approval(
+                cursor=cursor,
+                request_id=request_id,
+                client_id=req.get("client_id"),
+                is_approved=(data.status == SCHEDULE_APPROVAL_APPROVED),
+                scheduled_at=req.get("scheduled_at"),
+                client_name=portal_client_name,
+                actor_user_id=current_user["id"],
+            )
+
             connection.commit()
 
             return {
@@ -2625,13 +3638,16 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
             cursor.execute(
                 """
                 SELECT
-                    id,
-                    status,
-                    created_by,
-                    created_at,
-                    is_deleted
-                FROM requests
-                WHERE id = %s
+                    r.id,
+                    r.client_id,
+                    r.status,
+                    r.created_by,
+                    r.created_at,
+                    r.is_deleted,
+                    c.responsible_manager_id
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s
                 """,
                 (request_id,)
             )
@@ -2642,6 +3658,16 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
 
             if request["is_deleted"]:
                 raise HTTPException(status_code=400, detail="Заявка уже удалена")
+
+            access_context = build_request_access_context(cursor, current_user)
+
+            # Заявка подклиента, видимая только через родителя,
+            # удалению не подлежит.
+            if request_is_inherited_from_subclient(request, current_user, access_context):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Заявка подклиента доступна только для просмотра"
+                )
 
             can_delete = False
 
@@ -2696,7 +3722,7 @@ def delete_request(request_id: int, current_user: dict = Depends(get_current_use
 
             cursor.execute(
                 """
-                INSERT INTO request_history 
+                INSERT INTO request_history
                 (request_id, user_id, action, old_value, new_value)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
@@ -2763,7 +3789,7 @@ def restore_request(request_id: int, current_user: dict = Depends(get_current_us
 
             cursor.execute(
                 """
-                INSERT INTO request_history 
+                INSERT INTO request_history
                 (request_id, user_id, action, old_value, new_value)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
@@ -2795,14 +3821,18 @@ def restore_request(request_id: int, current_user: dict = Depends(get_current_us
 def assign_request(request_id: int, data: AssignRequest, current_user: dict = Depends(get_current_user)):
     if not can_manage_request_executors(current_user):
         raise HTTPException(status_code=403, detail="Недостаточно прав для назначения исполнителей")
-    
+
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
             # Проверяем заявку
             cursor.execute(
                 """
-                SELECT status, assigned_to, schedule_approval_status
+                SELECT
+                    client_id,
+                    status,
+                    assigned_to,
+                    schedule_approval_status
                 FROM requests
                 WHERE id = %s AND is_deleted = 0
                 """,
@@ -2812,7 +3842,9 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
 
             if not req:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
-            
+
+            portal_client_name = get_portal_client_name(cursor, req.get("client_id"))
+
             if req.get("schedule_approval_status") == SCHEDULE_APPROVAL_PENDING:
                 raise HTTPException(
                     status_code=400,
@@ -2856,7 +3888,7 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
 
                 cursor.execute(
                     """
-                    INSERT INTO request_history 
+                    INSERT INTO request_history
                     (request_id, user_id, action, old_value, new_value)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
@@ -2867,6 +3899,55 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
                         f"assigned_to={old_assigned_to}",
                         "assigned_to=NULL"
                     )
+                )
+
+                # Статус здесь возвращается в NEW, а записи STATUS_CHANGED
+                # не было: в журнале заявки смена статуса не отражалась,
+                # хотя /executors/assign и /complete её пишут. Дописываем,
+                # иначе клиент получит уведомление о статусе, которого
+                # нет в истории его же карточки.
+                if req["status"] != "NEW":
+                    cursor.execute(
+                        """
+                        INSERT INTO request_history
+                        (request_id, user_id, action, old_value, new_value)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            request_id,
+                            current_user["id"],
+                            "STATUS_CHANGED",
+                            req["status"],
+                            "NEW",
+                        )
+                    )
+
+                    notify_request_status_changed(
+                        cursor=cursor,
+                        request_id=request_id,
+                        old_status=req["status"],
+                        new_status="NEW",
+                        assigned_to=None,
+                        actor_user_id=current_user["id"],
+                    )
+
+                    notify_portal_request_status_changed(
+                        cursor=cursor,
+                        request_id=request_id,
+                        client_id=req.get("client_id"),
+                        old_status=req["status"],
+                        new_status="NEW",
+                        client_name=portal_client_name,
+                        actor_user_id=current_user["id"],
+                    )
+
+                notify_portal_request_executors(
+                    cursor=cursor,
+                    request_id=request_id,
+                    client_id=req.get("client_id"),
+                    executor_names=[],
+                    client_name=portal_client_name,
+                    actor_user_id=current_user["id"],
                 )
 
                 connection.commit()
@@ -2880,7 +3961,10 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
             # Та же проверка, что и в /executors/assign: флаг исполнителя,
             # подтверждён, активен, не удалён. Раньше здесь проверялись
             # только роль и флаг — уволенного можно было назначить на заявку.
-            validate_request_executor_ids(cursor, [data.technician_id])
+            technician_users = validate_request_executor_ids(
+                cursor,
+                [data.technician_id],
+            )
 
             cursor.execute(
                 """
@@ -2920,7 +4004,7 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
 
             cursor.execute(
                 """
-                INSERT INTO request_history 
+                INSERT INTO request_history
                 (request_id, user_id, action, old_value, new_value)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
@@ -2932,14 +4016,63 @@ def assign_request(request_id: int, data: AssignRequest, current_user: dict = De
                     f"assigned_to={data.technician_id}"
                 )
             )
-            
+
             notify_request_assigned(
                 cursor=cursor,
                 request_id=request_id,
                 technician_id=data.technician_id,
                 actor_user_id=current_user["id"],
             )
-            
+
+            # Та же недостающая запись, что и в ветке снятия исполнителя.
+            if req["status"] != "IN_PROGRESS":
+                cursor.execute(
+                    """
+                    INSERT INTO request_history
+                    (request_id, user_id, action, old_value, new_value)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        request_id,
+                        current_user["id"],
+                        "STATUS_CHANGED",
+                        req["status"],
+                        "IN_PROGRESS",
+                    )
+                )
+
+                notify_request_status_changed(
+                    cursor=cursor,
+                    request_id=request_id,
+                    old_status=req["status"],
+                    new_status="IN_PROGRESS",
+                    assigned_to=data.technician_id,
+                    actor_user_id=current_user["id"],
+                )
+
+                notify_portal_request_status_changed(
+                    cursor=cursor,
+                    request_id=request_id,
+                    client_id=req.get("client_id"),
+                    old_status=req["status"],
+                    new_status="IN_PROGRESS",
+                    client_name=portal_client_name,
+                    actor_user_id=current_user["id"],
+                )
+
+            notify_portal_request_executors(
+                cursor=cursor,
+                request_id=request_id,
+                client_id=req.get("client_id"),
+                executor_names=[
+                    user.get("name")
+                    for user in technician_users
+                    if user.get("name")
+                ],
+                client_name=portal_client_name,
+                actor_user_id=current_user["id"],
+            )
+
             connection.commit()
 
             return {
@@ -2965,7 +4098,7 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, work_type, status, assigned_to, is_deleted
+                SELECT id, client_id, work_type, status, assigned_to, is_deleted
                 FROM requests
                 WHERE id = %s
                 """,
@@ -3488,6 +4621,16 @@ def complete_request(request_id: int, current_user: dict = Depends(get_current_u
                 actor_user_id=current_user["id"],
             )
 
+            notify_portal_request_status_changed(
+                cursor=cursor,
+                request_id=request_id,
+                client_id=req.get("client_id"),
+                old_status="IN_PROGRESS",
+                new_status="COMPLETED",
+                client_name=get_portal_client_name(cursor, req.get("client_id")),
+                actor_user_id=current_user["id"],
+            )
+
             connection.commit()
 
             return {
@@ -3543,10 +4686,8 @@ def get_requests_calendar(
 
     try:
         with connection.cursor() as cursor:
-            user_city = None
-
-            if user_is_limited_executor(current_user):
-                user_city = get_current_user_city(cursor, current_user)
+            access_context = build_request_access_context(cursor, current_user)
+            user_city = access_context["user_city"]
 
             cursor.execute(
                 """
@@ -3669,6 +4810,7 @@ def get_requests_calendar(
                     row,
                     current_user,
                     user_city,
+                    access_context,
                 )
 
                 # Без права "Общий календарь заявок" видно только свои заявки.
@@ -3734,6 +4876,12 @@ def get_requests_calendar(
                     ),
 
                     "can_open_details": bool(can_open_details),
+
+                    "is_inherited_access": request_is_inherited_from_subclient(
+                        row,
+                        current_user,
+                        access_context,
+                    ),
                 })
 
             return {
@@ -3781,7 +4929,11 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     c.status AS client_status,
                     c.payment_type AS client_payment_type,
                     c.responsible_manager_id,
+                    c.parent_client_id,
                     responsible.name AS responsible_manager_name,
+
+                    parent_client.name AS parent_client_name,
+                    parent_client.company_name AS parent_client_company_name,
 
                     creator.name AS created_by_name,
                     creator.role AS created_by_role,
@@ -3800,6 +4952,9 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     ) AS current_user_is_executor
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
+                LEFT JOIN clients parent_client
+                    ON parent_client.id = c.parent_client_id
+                   AND parent_client.is_deleted = 0
                 LEFT JOIN users creator ON r.created_by = creator.id
                 LEFT JOIN users responsible ON c.responsible_manager_id = responsible.id
                 WHERE r.id = %s AND r.is_deleted = 0
@@ -3810,13 +4965,16 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
 
             if not request_data:
                 raise HTTPException(status_code=404, detail="Request not found")
-            
-            user_city = None
 
-            if user_is_limited_executor(current_user):
-                user_city = get_current_user_city(cursor, current_user)
+            access_context = build_request_access_context(cursor, current_user)
+            user_city = access_context["user_city"]
 
-            if not user_can_access_request(request_data, current_user, user_city):
+            if not user_can_access_request(
+                request_data,
+                current_user,
+                user_city,
+                access_context,
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для просмотра деталей этой заявки"
@@ -3824,7 +4982,7 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
 
             request_data = attach_vehicles_to_requests(cursor, [request_data])[0]
             request_data = attach_executors_to_requests(cursor, [request_data])[0]
-            attach_request_permissions(request_data, current_user)
+            attach_request_permissions(request_data, current_user, access_context)
 
             cursor.execute(
                 """
@@ -3859,7 +5017,15 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
             )
             history = cursor.fetchall()
 
-            if not can_view_price_fields(current_user):
+            # Для клиентской учётной записи история режется по белому списку,
+            # а ID исполнителей заменяются именами. Для сотрудников — как есть.
+            history = filter_request_history_for_client(
+                cursor,
+                history,
+                current_user,
+            )
+
+            if not user_can_view_request_prices(current_user):
                 request_data["total_price"] = None
                 price_lines = []
             else:
@@ -3890,6 +5056,8 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
 
             request_data["price_lines"] = price_lines
 
+            sanitize_request_for_client(request_data, current_user)
+
             return {
                 "request": request_data,
                 "vehicles": request_data["vehicles"],
@@ -3911,6 +5079,7 @@ def get_comments(request_id: int, current_user: dict = Depends(get_current_user)
                 """
                 SELECT
                     r.id,
+                    r.client_id,
                     r.city,
                     r.assigned_to,
                     r.is_paid,
@@ -3935,17 +5104,19 @@ def get_comments(request_id: int, current_user: dict = Depends(get_current_user)
             if not request:
                 raise HTTPException(status_code=404, detail="Заявка не найдена")
 
-            user_city = None
+            access_context = build_request_access_context(cursor, current_user)
 
-            if user_is_limited_executor(current_user):
-                user_city = get_current_user_city(cursor, current_user)
-
-            if not user_can_access_request(request, current_user, user_city):
+            if not user_can_access_request(
+                request,
+                current_user,
+                access_context["user_city"],
+                access_context,
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для просмотра комментариев этой заявки"
                 )
-            
+
             sql = """
             SELECT rc.id, u.name AS author, rc.message, rc.created_at
             FROM request_comments rc
@@ -4000,13 +5171,17 @@ def accept_request(
                 """
                 SELECT
                     r.id,
+                    r.client_id,
                     r.city,
                     r.status,
                     r.assigned_to,
                     r.is_paid,
                     r.is_deleted,
                     r.schedule_approval_status,
-                    c.payment_type AS client_payment_type
+                    c.payment_type AS client_payment_type,
+
+                    c.name AS portal_client_name,
+                    c.company_name AS portal_client_company_name
                 FROM requests r
                 LEFT JOIN clients c ON r.client_id = c.id
                 WHERE r.id = %s
@@ -4023,7 +5198,7 @@ def accept_request(
                     status_code=400,
                     detail="Нельзя принять удалённую заявку"
                 )
-            
+
             if request.get("schedule_approval_status") == SCHEDULE_APPROVAL_PENDING:
                 raise HTTPException(
                     status_code=400,
@@ -4131,6 +5306,53 @@ def accept_request(
                 actor_user_id=current_user["id"],
             )
 
+            # Запись SELF_ACCEPTED в истории есть, а STATUS_CHANGED не было —
+            # то же расхождение, что в /assign. Клиенту статус меняется
+            # на «Принято в работу», и в журнале это должно быть видно.
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    old_value,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "STATUS_CHANGED",
+                    "NEW",
+                    "IN_PROGRESS",
+                )
+            )
+
+            portal_client_name = (
+                request.get("portal_client_company_name")
+                or request.get("portal_client_name")
+            )
+
+            notify_portal_request_status_changed(
+                cursor=cursor,
+                request_id=request_id,
+                client_id=request.get("client_id"),
+                old_status="NEW",
+                new_status="IN_PROGRESS",
+                client_name=portal_client_name,
+                actor_user_id=current_user["id"],
+            )
+
+            notify_portal_request_executors(
+                cursor=cursor,
+                request_id=request_id,
+                client_id=request.get("client_id"),
+                executor_names=[current_user.get("name")],
+                client_name=portal_client_name,
+                actor_user_id=current_user["id"],
+            )
+
             connection.commit()
 
             return {
@@ -4138,6 +5360,197 @@ def accept_request(
                 "request_id": request_id,
                 "assigned_to": current_user["id"],
                 "status": "IN_PROGRESS"
+            }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        connection.close()
+
+
+@router.post("/{request_id}/portal/cancel")
+def cancel_portal_request(
+    request_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Отмена собственной заявки из личного кабинета.
+
+    Границы, принятые в решении Р18 (вариант А):
+      - только заявка своего клиента, не подклиента — ветка открыта
+        на чтение, действия по ней остаются у сотрудников;
+      - только статус NEW: как только заявку приняли в работу, отменять
+        её нужно через менеджера, иначе монтажник узнает об отмене,
+        уже выехав.
+
+    Блокировка клиента отмену НЕ запрещает. Режим чтения закрывает
+    создание новых обязательств, а не отзыв своих: заставлять
+    заблокированного клиента ждать выезда по ненужной заявке
+    бессмысленно.
+    """
+    if not is_client_user(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Эндпоинт предназначен для личного кабинета клиента",
+        )
+
+    if not can_cancel_portal_request(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для отмены заявки",
+        )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    r.id,
+                    r.client_id,
+                    r.status,
+                    r.assigned_to,
+                    r.created_by,
+                    r.is_deleted,
+                    c.responsible_manager_id
+                FROM requests r
+                LEFT JOIN clients c ON r.client_id = c.id
+                WHERE r.id = %s
+                  AND r.is_deleted = 0
+                """,
+                (request_id,),
+            )
+
+            request = cursor.fetchone()
+
+            if not request:
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            access_context = build_request_access_context(cursor, current_user)
+
+            if not user_can_access_request(
+                request,
+                current_user,
+                access_context["user_city"],
+                access_context,
+            ):
+                # 404, а не 403: клиенту не за чем знать, что заявка
+                # с таким номером вообще существует.
+                raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+            own_client_id = get_user_client_id(current_user)
+            request_client_id = request.get("client_id")
+
+            is_own_client_request = (
+                own_client_id is not None
+                and request_client_id is not None
+                and int(request_client_id) == int(own_client_id)
+            )
+
+            # Та же пара условий, что и во флаге can_cancel: своя заявка
+            # либо заявка ветки, заведённая из этого же кабинета.
+            # Правило продублировано намеренно — флаг подсказывает
+            # интерфейсу, а решает сервер.
+            created_by = request.get("created_by")
+            portal_user_ids = access_context.get("portal_user_ids") or set()
+
+            created_from_portal = (
+                created_by is not None and int(created_by) in portal_user_ids
+            )
+
+            if not is_own_client_request and not created_from_portal:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Эту заявку оформлял ваш менеджер. "
+                        "Отмену выполняет он же."
+                    ),
+                )
+
+            if str(request.get("status")) != "NEW":
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Отменить можно только заявку в статусе «В ожидании». "
+                        "Свяжитесь с вашим менеджером."
+                    ),
+                )
+
+            cursor.execute(
+                """
+                UPDATE requests
+                SET status = 'CANCELLED'
+                WHERE id = %s
+                  AND status = 'NEW'
+                  AND is_deleted = 0
+                """,
+                (request_id,),
+            )
+
+            # rowcount читаем сразу после UPDATE: следующий запрос его
+            # перезапишет. Та же защита от гонки, что и в accept_request —
+            # заявку могли принять в работу секунду назад.
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Заявку уже успели принять или изменить",
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO request_history (
+                    request_id,
+                    user_id,
+                    action,
+                    old_value,
+                    new_value
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    request_id,
+                    current_user["id"],
+                    "STATUS_CHANGED",
+                    "NEW",
+                    "CANCELLED",
+                ),
+            )
+
+            notify_request_status_changed(
+                cursor=cursor,
+                request_id=request_id,
+                old_status="NEW",
+                new_status="CANCELLED",
+                assigned_to=request.get("assigned_to"),
+                actor_user_id=current_user["id"],
+            )
+
+            # Отменивший исключается из рассылки внутри сервиса,
+            # а его коллеги по организации узнают: заявка общая,
+            # и отменил её не тот, кто создавал.
+            notify_portal_request_cancelled(
+                cursor=cursor,
+                request_id=request_id,
+                client_id=request.get("client_id"),
+                cancelled_by_client=True,
+                client_name=get_portal_client_name(
+                    cursor,
+                    request.get("client_id"),
+                ),
+                actor_user_id=current_user["id"],
+            )
+
+            connection.commit()
+
+            return {
+                "message": "Заявка отменена",
+                "request_id": request_id,
+                "status": "CANCELLED",
             }
 
     except HTTPException:

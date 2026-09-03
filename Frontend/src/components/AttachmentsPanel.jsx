@@ -75,10 +75,20 @@ const canManageAttachments = (user, entityType) =>
 		...getEntityAttachmentPermissions(entityType, 'delete'),
 	])
 
+// Учётная запись клиентского портала. Поле user_kind появится в ответе
+// логина на этапе 5, до тех пор проверка просто всегда даёт false —
+// в CRM работают только сотрудники.
+const isClientPortalUser = user =>
+	String(user?.user_kind || '').toUpperCase() === 'CLIENT' ||
+	String(user?.data_scope || '').toUpperCase() === 'CLIENT'
+
 // Права на конкретный файл считает бэкенд в attach_attachment_permissions().
 const canDownloadAttachment = attachment => Boolean(attachment?.can_download)
 const canRenameAttachment = attachment => Boolean(attachment?.can_rename)
 const canDeleteAttachment = attachment => Boolean(attachment?.can_delete)
+const canMarkAttachmentInternal = attachment =>
+	Boolean(attachment?.can_mark_internal)
+const attachmentIsInternal = attachment => Boolean(attachment?.is_internal)
 
 export default function AttachmentsPanel({ entityType, entityId }) {
 	const fileInputRef = useRef(null)
@@ -90,6 +100,13 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 	const [editingId, setEditingId] = useState(null)
 	const [editingName, setEditingName] = useState('')
+
+	// Режим загрузки. Сохраняется между файлами намеренно: когда монтажник
+	// выкладывает пачку служебных фото, отмечать каждое отдельно неудобно.
+	// Текущий режим всегда виден в подписи кнопки.
+	const [uploadAsInternal, setUploadAsInternal] = useState(false)
+
+	const [togglingInternalId, setTogglingInternalId] = useState(null)
 
 	const [successNotice, setSuccessNotice] = useState('')
 	const [isSuccessNoticeLeaving, setIsSuccessNoticeLeaving] = useState(false)
@@ -106,14 +123,26 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 		normalizedEntityType,
 	)
 
+	const isPortalUser = isClientPortalUser(user)
+
+	// Галочка «внутренний файл» — инструмент сотрудника.
+	const showInternalControls = canUploadCurrentEntity && !isPortalUser
+
 	const seesOnlyOwnAttachments =
 		!hasAnyPermission(user, ['attachments.view_all', 'attachments.manage']) &&
 		hasAnyPermission(user, ['attachments.view_own'])
 
-	const getAttachmentsDescription = () =>
-		seesOnlyOwnAttachments
-			? 'Вы видите только файлы, загруженные вами.'
-			: 'Документы, фото, чеки и другие файлы по этому объекту.'
+	const getAttachmentsDescription = () => {
+		if (seesOnlyOwnAttachments) {
+			return 'Вы видите только файлы, загруженные вами.'
+		}
+
+		if (isPortalUser) {
+			return 'Документы по этому объекту, открытые вам менеджером.'
+		}
+
+		return 'Документы, фото, чеки и другие файлы по этому объекту. Файлы с пометкой «Внутренний» клиенту в портале не видны.'
+	}
 
 	const getEmptyText = () =>
 		seesOnlyOwnAttachments
@@ -163,8 +192,11 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 			return
 		}
 
+		const markAsInternal = showInternalControls && uploadAsInternal
+
 		const formData = new FormData()
 		formData.append('file', file)
+		formData.append('is_internal', markAsInternal ? 'true' : 'false')
 
 		setUploading(true)
 		setError('')
@@ -267,6 +299,51 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 		}
 	}
 
+	const toggleAttachmentInternal = async attachment => {
+		const nextIsInternal = !attachmentIsInternal(attachment)
+		const fileName = attachment.display_name || attachment.original_filename
+
+		const confirmText = nextIsInternal
+			? `Скрыть файл "${fileName}" от клиента? В личном кабинете он перестанет быть виден.`
+			: `Открыть файл "${fileName}" клиенту? Он станет виден в личном кабинете.`
+
+		if (!window.confirm(confirmText)) return
+
+		setTogglingInternalId(attachment.id)
+		setError('')
+
+		try {
+			const res = await fetch(`${API_BASE_URL}/attachments/${attachment.id}`, {
+				method: 'PATCH',
+				headers: getJsonAuthHeaders(),
+				body: JSON.stringify({
+					is_internal: nextIsInternal,
+				}),
+			})
+
+			const data = await res.json().catch(() => null)
+
+			if (!res.ok) {
+				throw new Error(data?.detail || 'Не удалось изменить видимость файла')
+			}
+
+			setAttachments(prev =>
+				prev.map(item =>
+					item.id === attachment.id
+						? {
+								...item,
+								is_internal: nextIsInternal,
+							}
+						: item,
+				),
+			)
+		} catch (err) {
+			setError(err.message)
+		} finally {
+			setTogglingInternalId(null)
+		}
+	}
+
 	const deleteAttachment = async attachment => {
 		if (
 			!window.confirm(
@@ -325,6 +402,56 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 	return (
 		<div className='attachments-panel'>
+			<style>{`
+				.attachments-internal-toggle {
+					display: inline-flex;
+					align-items: center;
+					gap: 6px;
+					font-size: 12px;
+					font-weight: 600;
+					color: #7a5a00;
+					background: #fff8e1;
+					border: 1px solid #f2d98c;
+					border-radius: 14px;
+					padding: 4px 10px;
+					cursor: pointer;
+					user-select: none;
+					white-space: nowrap;
+				}
+
+				.attachments-internal-toggle input {
+					accent-color: #b47c00;
+					cursor: pointer;
+					margin: 0;
+				}
+
+				.attachments-upload-controls {
+					display: flex;
+					align-items: center;
+					gap: 10px;
+					flex-wrap: wrap;
+					justify-content: flex-end;
+				}
+
+				.attachments-internal-badge {
+					display: inline-block;
+					margin-left: 8px;
+					padding: 1px 8px;
+					border-radius: 10px;
+					font-size: 11px;
+					font-weight: 700;
+					background: #fff8e1;
+					color: #7a5a00;
+					border: 1px solid #f2d98c;
+					vertical-align: middle;
+					white-space: nowrap;
+				}
+
+				.attachments-item.is-internal {
+					background: #fffdf5;
+				}
+			`}</style>
+
 			<div className='attachments-panel-header'>
 				<div>
 					<h3>Прикрепленные файлы</h3>
@@ -332,7 +459,22 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 				</div>
 
 				{canUploadCurrentEntity && (
-					<div>
+					<div className='attachments-upload-controls'>
+						{showInternalControls && (
+							<label
+								className='attachments-internal-toggle'
+								title='Внутренние файлы не видны клиенту в личном кабинете'
+							>
+								<input
+									type='checkbox'
+									checked={uploadAsInternal}
+									onChange={e => setUploadAsInternal(e.target.checked)}
+									disabled={uploading}
+								/>
+								Внутренний файл
+							</label>
+						)}
+
 						<input
 							ref={fileInputRef}
 							type='file'
@@ -347,7 +489,11 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 							onClick={() => fileInputRef.current?.click()}
 							disabled={uploading}
 						>
-							{uploading ? 'Загрузка...' : '+ Добавить файл'}
+							{uploading
+								? 'Загрузка...'
+								: showInternalControls && uploadAsInternal
+									? '+ Добавить внутренний файл'
+									: '+ Добавить файл'}
 						</button>
 					</div>
 				)}
@@ -372,7 +518,12 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 			) : (
 				<div className='attachments-list'>
 					{attachments.map(file => (
-						<div key={file.id} className='attachments-item'>
+						<div
+							key={file.id}
+							className={`attachments-item ${
+								attachmentIsInternal(file) ? 'is-internal' : ''
+							}`}
+						>
 							<div className='attachments-file-icon'>📎</div>
 
 							<div className='attachments-file-main'>
@@ -405,6 +556,15 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 									<>
 										<div className='attachments-file-title'>
 											{file.display_name || file.original_filename}
+
+											{attachmentIsInternal(file) && !isPortalUser && (
+												<span
+													className='attachments-internal-badge'
+													title='Клиенту в личном кабинете этот файл не виден'
+												>
+													Внутренний
+												</span>
+											)}
 										</div>
 
 										<div className='attachments-file-meta'>
@@ -439,6 +599,22 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 											title='Скачать'
 										>
 											⬇
+										</button>
+									)}
+
+									{canMarkAttachmentInternal(file) && (
+										<button
+											type='button'
+											className='attachments-action-btn'
+											onClick={() => toggleAttachmentInternal(file)}
+											disabled={togglingInternalId === file.id}
+											title={
+												attachmentIsInternal(file)
+													? 'Открыть файл клиенту'
+													: 'Скрыть файл от клиента'
+											}
+										>
+											{attachmentIsInternal(file) ? '🔒' : '👁'}
 										</button>
 									)}
 

@@ -200,6 +200,25 @@ function SearchableSelect({
 	)
 }
 
+const EMPTY_FORM = {
+	type: 'TOO',
+	name: '',
+	company_name: '',
+	bin_iin: '',
+	phone: '',
+	email: '',
+	monitoring_login: '',
+	monitoring_password: '',
+
+	status: 'ACTIVE',
+	payment_type: 'PREPAYMENT',
+	responsible_manager_id: '',
+
+	is_subclient: false,
+	parent_client_id: '',
+	parent_source_name: '',
+}
+
 export default function CreateClientModal({
 	isOpen,
 	onClose,
@@ -208,28 +227,15 @@ export default function CreateClientModal({
 }) {
 	const isEditMode = !!editClient
 
-	const [formData, setFormData] = useState({
-		type: 'TOO',
-		name: '',
-		company_name: '',
-		bin_iin: '',
-		phone: '',
-		email: '',
-		monitoring_login: '',
-		monitoring_password: '',
-
-		status: 'ACTIVE',
-		payment_type: 'PREPAYMENT',
-		responsible_manager_id: '',
-
-		is_subclient: false,
-		parent_client_id: '',
-		parent_source_name: '',
-	})
+	const [formData, setFormData] = useState(EMPTY_FORM)
 
 	const [error, setError] = useState('')
 	const [loading, setLoading] = useState(false)
 	const [clientsList, setClientsList] = useState([])
+
+	// Клиент не может стать родителем сам себе или своему предку:
+	// сюда попадают его id и id всех его подклиентов.
+	const [forbiddenParentIds, setForbiddenParentIds] = useState([])
 
 	const [responsibleManagers, setResponsibleManagers] = useState([])
 
@@ -254,6 +260,33 @@ export default function CreateClientModal({
 			}
 		} catch (err) {
 			console.error('Ошибка загрузки клиентов:', err)
+		}
+	}
+
+	const fetchForbiddenParentIds = async clientId => {
+		try {
+			const res = await fetch(
+				`${API_BASE_URL}/clients/${clientId}/subclients`,
+				{
+					headers: getAuthHeaders(),
+				},
+			)
+
+			if (!res.ok) {
+				// Нет прав или эндпоинта — кольцо всё равно поймает бэкенд.
+				setForbiddenParentIds([Number(clientId)])
+				return
+			}
+
+			const data = await res.json()
+
+			setForbiddenParentIds([
+				Number(clientId),
+				...(Array.isArray(data) ? data.map(item => Number(item.id)) : []),
+			])
+		} catch (err) {
+			console.error('Ошибка загрузки подклиентов:', err)
+			setForbiddenParentIds([Number(clientId)])
 		}
 	}
 
@@ -285,6 +318,10 @@ export default function CreateClientModal({
 		}
 
 		if (isEditMode) {
+			// Родитель теперь определяется настоящей ссылкой parent_client_id,
+			// а не совпадением строкового имени из выгрузки.
+			const parentClientId = editClient.parent_client_id || ''
+
 			setFormData({
 				type: editClient.type || 'TOO',
 				name: editClient.name || '',
@@ -301,29 +338,15 @@ export default function CreateClientModal({
 				payment_type: editClient.payment_type || 'PREPAYMENT',
 				responsible_manager_id: editClient.responsible_manager_id || '',
 
-				is_subclient: Boolean(editClient.source_parent_client_name),
-				parent_client_id: '',
+				is_subclient: Boolean(parentClientId),
+				parent_client_id: parentClientId,
 				parent_source_name: editClient.source_parent_client_name || '',
 			})
+
+			fetchForbiddenParentIds(editClient.id)
 		} else {
-			setFormData({
-				type: 'TOO',
-				name: '',
-				bin_iin: '',
-				company_name: '',
-				phone: '',
-				email: '',
-				monitoring_login: '',
-				monitoring_password: '',
-
-				status: 'ACTIVE',
-				payment_type: 'PREPAYMENT',
-				responsible_manager_id: '',
-
-				is_subclient: false,
-				parent_client_id: '',
-				parent_source_name: '',
-			})
+			setFormData(EMPTY_FORM)
+			setForbiddenParentIds([])
 		}
 
 		setError('')
@@ -359,9 +382,13 @@ export default function CreateClientModal({
 			client.company_name || client.name || `Клиент #${client.id}`
 		const representative =
 			client.company_name && client.name ? ` — ${client.name}` : ''
-		const parent = client.source_parent_client_name
-			? ` / родитель: ${client.source_parent_client_name}`
-			: ''
+
+		const parentName =
+			client.parent_client_company_name ||
+			client.parent_client_name ||
+			client.source_parent_client_name
+
+		const parent = parentName ? ` / родитель: ${parentName}` : ''
 
 		return `${mainName}${representative}${parent}`
 	}
@@ -376,6 +403,8 @@ export default function CreateClientModal({
 			client.monitoring_login,
 			client.source_client_name,
 			client.source_parent_client_name,
+			client.parent_client_name,
+			client.parent_client_company_name,
 			client.source_inn,
 		]
 			.filter(Boolean)
@@ -409,6 +438,15 @@ export default function CreateClientModal({
 		return role || ''
 	}
 
+	// Себя и своих подклиентов родителем выбрать нельзя — иначе кольцо.
+	const parentClientOptions = clientsList.filter(
+		client => !forbiddenParentIds.includes(Number(client.id)),
+	)
+
+	const selectedParentClient = clientsList.find(
+		client => String(client.id) === String(formData.parent_client_id),
+	)
+
 	const handleParentClientSelect = parentClient => {
 		setFormData(prev => ({
 			...prev,
@@ -418,24 +456,8 @@ export default function CreateClientModal({
 	}
 
 	const resetForm = () => {
-		setFormData({
-			type: 'TOO',
-			name: '',
-			company_name: '',
-			bin_iin: '',
-			phone: '',
-			email: '',
-			monitoring_login: '',
-			monitoring_password: '',
-
-			status: 'ACTIVE',
-			payment_type: 'PREPAYMENT',
-			responsible_manager_id: '',
-
-			is_subclient: false,
-			parent_client_id: '',
-			parent_source_name: '',
-		})
+		setFormData(EMPTY_FORM)
+		setForbiddenParentIds([])
 		setError('')
 	}
 
@@ -471,7 +493,7 @@ export default function CreateClientModal({
 			return
 		}
 
-		if (formData.is_subclient && !formData.parent_source_name) {
+		if (formData.is_subclient && !formData.parent_client_id) {
 			setError('Выберите родительского клиента')
 			return
 		}
@@ -483,6 +505,18 @@ export default function CreateClientModal({
 				formData.type === 'INDIVIDUAL'
 					? formData.name.trim()
 					: formData.company_name.trim()
+
+			const parentClientId =
+				formData.is_subclient && formData.parent_client_id
+					? Number(formData.parent_client_id)
+					: null
+
+			// Имя родителя берём из выбранной опции, а если список ещё
+			// не догрузился — из того, что пришло с клиентом.
+			const parentSourceName = parentClientId
+				? getClientSourceName(selectedParentClient) ||
+					formData.parent_source_name
+				: null
 
 			const payload = {
 				type: formData.type,
@@ -517,12 +551,20 @@ export default function CreateClientModal({
 						? Number(formData.responsible_manager_id)
 						: undefined,
 
-				source_system: formData.is_subclient ? 'CRM' : null,
-				source_client_name: sourceClientName,
-				source_parent_client_name: formData.is_subclient
-					? formData.parent_source_name
-					: null,
-				source_inn: null,
+				// Настоящая связь с родителем. null снимает её.
+				parent_client_id: parentClientId,
+
+				// Поля выгрузки ГЛОНАСС Софт трогаем только при создании.
+				// Раньше редактирование импортированного клиента затирало
+				// source_system и source_client_name значениями из формы.
+				source_system: isEditMode
+					? undefined
+					: formData.is_subclient
+						? 'CRM'
+						: null,
+				source_client_name: isEditMode ? undefined : sourceClientName,
+				source_parent_client_name: parentSourceName,
+				source_inn: isEditMode ? undefined : null,
 			}
 
 			const url = isEditMode
@@ -709,59 +751,61 @@ export default function CreateClientModal({
 								</label>
 							</div>
 
-							{!isEditMode && (
-								<div className='create-client-subclient-block'>
-									<label
-										className={`create-client-subclient-pill ${
-											formData.is_subclient ? 'active' : ''
-										}`}
-									>
-										<input
-											type='checkbox'
-											checked={formData.is_subclient}
-											onChange={e => {
-												const checked = e.target.checked
+							<div className='create-client-subclient-block'>
+								<label
+									className={`create-client-subclient-pill ${
+										formData.is_subclient ? 'active' : ''
+									}`}
+								>
+									<input
+										type='checkbox'
+										checked={formData.is_subclient}
+										onChange={e => {
+											const checked = e.target.checked
 
-												setFormData(prev => ({
-													...prev,
-													is_subclient: checked,
-													parent_client_id: checked
-														? prev.parent_client_id
-														: '',
-													parent_source_name: checked
-														? prev.parent_source_name
-														: '',
-												}))
-											}}
-										/>
+											setFormData(prev => ({
+												...prev,
+												is_subclient: checked,
+												parent_client_id: checked ? prev.parent_client_id : '',
+												parent_source_name: checked
+													? prev.parent_source_name
+													: '',
+											}))
+										}}
+									/>
 
-										<span className='create-client-subclient-checkmark'>
-											{formData.is_subclient ? '✓' : ''}
+									<span className='create-client-subclient-checkmark'>
+										{formData.is_subclient ? '✓' : ''}
+									</span>
+
+									<span>Клиент является подклиентом</span>
+								</label>
+
+								{formData.is_subclient && (
+									<label className='create-client-field create-client-full create-client-parent-field'>
+										<span className='create-client-label required'>
+											Родительский клиент
 										</span>
 
-										<span>Клиент является подклиентом</span>
+										<SearchableSelect
+											value={formData.parent_client_id}
+											options={parentClientOptions}
+											placeholder='Напишите или выберите родительского клиента'
+											onChange={handleParentClientSelect}
+											getOptionValue={client => client.id}
+											getOptionLabel={getClientLabel}
+											getOptionSearchText={getClientSearchText}
+											emptyText='Родительский клиент не найден'
+										/>
+
+										<div className='create-client-note'>
+											Подклиент наследует параметры установки родителя, если у
+											него нет своих. Блокировка родителя закрывает создание
+											заявок и добавление машин всей ветке.
+										</div>
 									</label>
-
-									{formData.is_subclient && (
-										<label className='create-client-field create-client-full create-client-parent-field'>
-											<span className='create-client-label required'>
-												Родительский клиент
-											</span>
-
-											<SearchableSelect
-												value={formData.parent_client_id}
-												options={clientsList}
-												placeholder='Напишите или выберите родительского клиента'
-												onChange={handleParentClientSelect}
-												getOptionValue={client => client.id}
-												getOptionLabel={getClientLabel}
-												getOptionSearchText={getClientSearchText}
-												emptyText='Родительский клиент не найден'
-											/>
-										</label>
-									)}
-								</div>
-							)}
+								)}
+							</div>
 						</div>
 
 						<div className='create-client-card'>
@@ -884,6 +928,13 @@ export default function CreateClientModal({
 									<div className='create-client-note'>
 										Если выбран родительский клиент, ответственный обычно должен
 										совпадать с ответственным родителя.
+									</div>
+								)}
+
+								{isEditMode && canSetClientStatus && (
+									<div className='create-client-note'>
+										Разблокировать подклиента, пока заблокирован его родитель,
+										нельзя — блокировка наследуется сверху.
 									</div>
 								)}
 							</div>

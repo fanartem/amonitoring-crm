@@ -4,14 +4,39 @@ from pymysql.err import IntegrityError
 from app.database import get_connection
 from app.security import get_current_user, hash_password
 from app.permissions import (
+    CLIENT_PORTAL_ROLE,
+    DATA_SCOPE_CLIENT,
+    USER_KIND_EMPLOYEE,
     add_access_audit_log,
     has_any_permission,
     has_permission,
     is_owner,
     is_super_admin,
+    require_employee_user,
 )
 
-router = APIRouter(prefix="/admin", tags=["Admin Panel"])
+
+def ensure_employee_access(current_user: dict = Depends(get_current_user)):
+    """
+    Панель администрирования — внутренний раздел компании. Клиентская
+    учётная запись портала не должна открывать её ни при каких правах.
+
+    Стоит зависимостью на всём роутере: это дешевле и надёжнее, чем
+    помнить про проверку в каждом новом эндпоинте.
+    """
+    require_employee_user(
+        current_user,
+        detail="Панель администрирования доступна только сотрудникам",
+    )
+
+    return current_user
+
+
+router = APIRouter(
+    prefix="/admin",
+    tags=["Admin Panel"],
+    dependencies=[Depends(ensure_employee_access)],
+)
 
 
 def ensure_any_permission(
@@ -60,6 +85,31 @@ def ensure_employees_delete_access(current_user: dict):
     )
 
 
+def ensure_target_is_employee(user: dict):
+    """
+    Вторая половина защиты: выше мы закрыли вход клиенту, здесь закрываем
+    клиентскую учётку от изменений сотрудником через эту панель.
+
+    Без этой проверки супер-админ мог бы через PUT /admin/users/{id}
+    сменить роль клиентской учётки на ADMIN — и внешний человек получил бы
+    администратора CRM. Учётные записи портала управляются только в карточке
+    клиента, где рядом лежат его статус, ветка подклиентов и журнал.
+
+    Проверяем оба признака (тип и привязку к клиенту): в базе их связывает
+    CHECK chk_users_client_kind, но полагаться на одну колонку не хочется.
+    """
+    kind = str(user.get("user_kind") or USER_KIND_EMPLOYEE).strip().upper()
+
+    if kind != USER_KIND_EMPLOYEE or user.get("client_id"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Это учётная запись клиентского портала. "
+                "Управление — в карточке клиента, вкладка «Доступ в портал»."
+            ),
+        )
+
+
 def get_active_role(cursor, role_code: str) -> dict:
     normalized_role = str(role_code or "").strip().upper()
 
@@ -72,6 +122,7 @@ def get_active_role(cursor, role_code: str) -> dict:
             id,
             code,
             name,
+            data_scope,
             is_active,
             can_be_request_executor
         FROM roles
@@ -92,6 +143,25 @@ def get_active_role(cursor, role_code: str) -> dict:
     return role
 
 
+def ensure_role_is_for_employees(role: dict):
+    """
+    Роль портала нельзя выдать сотруднику. Проверяем и по коду, и по области
+    данных: если в Settings заведут вторую портальную роль с другим кодом,
+    её остановит data_scope = CLIENT.
+    """
+    if (
+        role.get("code") == CLIENT_PORTAL_ROLE
+        or str(role.get("data_scope") or "").strip().upper() == DATA_SCOPE_CLIENT
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Роль клиентского портала нельзя назначить сотруднику. "
+                "Учётные записи портала создаются в карточке клиента."
+            ),
+        )
+
+
 def get_user_for_admin_action(cursor, user_id: int) -> dict | None:
     cursor.execute(
         """
@@ -101,6 +171,8 @@ def get_user_for_admin_action(cursor, user_id: int) -> dict | None:
             u.name,
             u.role,
             u.city,
+            u.user_kind,
+            u.client_id,
             u.is_approved,
             u.is_active,
             u.deleted_at,
@@ -169,6 +241,9 @@ def get_pending_users(current_user: dict = Depends(get_current_user)):
 
     try:
         with connection.cursor() as cursor:
+            # user_kind = 'EMPLOYEE': клиентские учётки создаются админом
+            # сразу одобренными и сюда попасть не должны. Фильтр стоит
+            # на случай, если такая учётка окажется неодобренной.
             cursor.execute(
                 """
                 SELECT
@@ -190,6 +265,7 @@ def get_pending_users(current_user: dict = Depends(get_current_user)):
                 LEFT JOIN roles r ON r.code = u.role
                 LEFT JOIN user_security_flags usf ON usf.user_id = u.id
                 WHERE u.is_approved = 0
+                  AND u.user_kind = 'EMPLOYEE'
                   AND u.is_active = 1
                   AND u.deleted_at IS NULL
                 ORDER BY u.created_at DESC
@@ -227,6 +303,8 @@ def approve_user(user_id: int, current_user: dict = Depends(get_current_user)):
 
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
+
+            ensure_target_is_employee(user)
 
             if user.get("deleted_at") is not None or user.get("is_active") == 0:
                 raise HTTPException(
@@ -300,6 +378,8 @@ def reject_user(user_id: int, current_user: dict = Depends(get_current_user)):
 
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
+
+            ensure_target_is_employee(user)
 
             if user.get("is_owner"):
                 raise HTTPException(
@@ -381,6 +461,8 @@ def delete_user(user_id: int, current_user: dict = Depends(get_current_user)):
 
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
+
+            ensure_target_is_employee(user)
 
             if int(user_id) == int(current_user["id"]):
                 raise HTTPException(status_code=400, detail="Cannot delete yourself")
@@ -480,6 +562,8 @@ def update_user(
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
 
+            ensure_target_is_employee(user)
+
             if user.get("deleted_at") is not None:
                 raise HTTPException(
                     status_code=400,
@@ -523,7 +607,7 @@ def update_user(
                         "Либо сначала снимите флаг Супер-Админа."
                     ),
                 )
-            
+
             old_value = {
                 "email": user["email"],
                 "name": user["name"],
@@ -544,6 +628,12 @@ def update_user(
                     )
 
                 new_role = get_active_role(cursor, data["role"])
+
+                # Сотрудник не должен получить роль портала: у него нет
+                # client_id, и такая учётка оказалась бы наполовину клиентом —
+                # с областью данных CLIENT, но без клиента.
+                ensure_role_is_for_employees(new_role)
+
                 data["role"] = new_role["code"]
 
                 if user.get("is_owner") and data["role"] != user["role"]:
@@ -609,6 +699,11 @@ def update_user(
 
                 updates.append("hashed_password = %s")
                 values.append(hash_password(password))
+
+                # Без этого сброс пароля сотруднику не закрывает
+                # уже открытые сессии. Значение подставляется прямо
+                # в SQL — параметр здесь не нужен и не подставляется.
+                updates.append("token_version = token_version + 1")
 
             if "role" in data:
                 updates.append("role = %s")
@@ -679,6 +774,9 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
 
     try:
         with connection.cursor() as cursor:
+            # user_kind = 'EMPLOYEE' обязателен: клиентские учётки портала
+            # создаются сразу одобренными и без этого фильтра попали бы
+            # в список сотрудников вместе с кнопками управления.
             cursor.execute(
                 """
                 SELECT
@@ -703,6 +801,7 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
                 LEFT JOIN roles r ON r.code = u.role
                 LEFT JOIN user_security_flags usf ON usf.user_id = u.id
                 WHERE u.is_approved = 1
+                  AND u.user_kind = 'EMPLOYEE'
                 ORDER BY
                     u.deleted_at IS NOT NULL ASC,
                     u.is_active DESC,
