@@ -3,8 +3,8 @@ import { API_BASE_URL, getAuthHeaders } from '../api'
 
 // Значения action, которые пишет бэкенд: clients.py (карточка, статус,
 // оплата, ответственный, родитель, параметры установки), portal_users.py
-// и auth.py (учётные записи кабинета). Неизвестный код показываем как есть —
-// лучше сырой код, чем пустая строка.
+// и auth.py (учётные записи кабинета), vehicles.py (недостающий VIN).
+// Неизвестный код показываем как есть — лучше сырой код, чем пустая строка.
 const ACTION_LABELS = {
 	CLIENT_CREATED: 'Клиент создан',
 	CLIENT_UPDATED: 'Данные клиента изменены',
@@ -25,6 +25,12 @@ const ACTION_LABELS = {
 	PORTAL_USER_PERMISSIONS_UPDATED: 'Изменены доступы учётной записи портала',
 	PORTAL_PASSWORD_CHANGED: 'Пользователь портала сменил свой пароль',
 	SUBCLIENT_CREATED: 'Клиент добавил организацию в свою структуру',
+
+	// Пишется из POST /vehicles/{id}/vin, когда монтажник вписывает VIN
+	// машине, заведённой без него. Без этой строки менеджер видел бы
+	// в журнале сырой код, а появление VIN у машины должно быть заметным
+	// событием — по нему потом разбирают расхождения со складом.
+	VEHICLE_VIN_SET: 'Указан VIN автомобиля',
 }
 
 const FIELD_LABELS = {
@@ -42,6 +48,7 @@ const FIELD_LABELS = {
 	portal_user: 'Учётная запись портала',
 	portal_user_permissions: 'Доступы портала',
 	subclient: 'Подклиент',
+	vehicle_vin: 'VIN автомобиля',
 }
 
 const STATUS_VALUE_LABELS = {
@@ -296,6 +303,14 @@ export default function ClientHistoryModal({ isOpen, client, onClose }) {
 							const fieldLabel = getFieldLabel(row.field_name)
 							const hasChange = row.old_value !== null || row.new_value !== null
 
+							// «— → VIN» читается как потеря значения. Если старого
+							// значения не было, показываем только новое: это не
+							// изменение, а появление.
+							const hasOldValue =
+								row.old_value !== null &&
+								row.old_value !== undefined &&
+								row.old_value !== ''
+
 							return (
 								<div
 									key={row.id}
@@ -314,9 +329,16 @@ export default function ClientHistoryModal({ isOpen, client, onClose }) {
 									{hasChange && (
 										<div className='client-history-change'>
 											{fieldLabel && <strong>{fieldLabel}: </strong>}
-											{getValueLabel(row.old_value)}
-											<span className='client-history-arrow'>→</span>
-											{getValueLabel(row.new_value)}
+
+											{hasOldValue ? (
+												<>
+													{getValueLabel(row.old_value)}
+													<span className='client-history-arrow'>→</span>
+													{getValueLabel(row.new_value)}
+												</>
+											) : (
+												getValueLabel(row.new_value)
+											)}
 										</div>
 									)}
 
