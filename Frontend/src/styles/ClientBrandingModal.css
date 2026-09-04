@@ -1,0 +1,505 @@
+.cb-modal-window {
+	max-width: 860px;
+	width: 96%;
+}
+
+.cb-body {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.cb-empty {
+	padding: 30px 0;
+	text-align: center;
+	color: #8a919c;
+	font-size: 14px;
+}
+
+.cb-section {
+	border: 1px solid #e9edf3;
+	border-radius: 10px;
+	padding: 14px;
+	background: #fff;
+}
+
+.cb-section-title {
+	font-size: 14px;
+	font-weight: 700;
+	color: #2f3640;
+	margin-bottom: 10px;
+}
+
+.cb-hint {
+	font-size: 12px;
+	line-height: 1.5;
+	color: #6b7280;
+	margin-bottom: 10px;
+}
+
+.cb-hint.quiet {
+	color: #98a1ad;
+	margin-bottom: 0;
+}
+
+.cb-banner {
+	border-radius: 8px;
+	padding: 10px 12px;
+	font-size: 13px;
+	line-height: 1.45;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.cb-banner + .cb-banner {
+	margin-top: 8px;
+}
+
+.cb-banner.info {
+	background: #f4f7fb;
+	border: 1px solid #dce5f0;
+	color: #40506b;
+}
+
+.cb-banner.readonly {
+	background: #f4f6f8;
+	border: 1px solid #e0e4e8;
+	color: #555;
+}
+
+.cb-banner.warn {
+	background: #fff8e1;
+	border: 1px solid #f2d98c;
+	color: #7a5a00;
+}
+
+/* ---------------------------------------------------------------------------
+   Выключатель
+   --------------------------------------------------------------------------- */
+
+.cb-switch {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	cursor: pointer;
+}
+
+.cb-switch input {
+	margin-top: 3px;
+	width: 16px;
+	height: 16px;
+	cursor: pointer;
+}
+
+.cb-switch > span {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	font-size: 13px;
+	color: #2f3640;
+}
+
+.cb-switch-hint {
+	font-size: 12px;
+	line-height: 1.5;
+	color: #6b7280;
+	font-weight: 400;
+}
+
+/* ---------------------------------------------------------------------------
+   Логотип
+   --------------------------------------------------------------------------- */
+
+.cb-logo-row {
+	display: flex;
+	gap: 16px;
+	flex-wrap: wrap;
+	align-items: flex-start;
+}
+
+/* Шахматка под логотипом: без неё прозрачный PNG на белом выглядит
+   так же, как PNG с белой подложкой, и разницу замечают уже в шапке
+   у клиента, где фон цветной. */
+.cb-logo-preview {
+	width: 240px;
+	height: 96px;
+	flex-shrink: 0;
+	border: 1px solid #dfe4ec;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 8px;
+	background-color: #fff;
+	background-image:
+		linear-gradient(45deg, #eef1f5 25%, transparent 25%),
+		linear-gradient(-45deg, #eef1f5 25%, transparent 25%),
+		linear-gradient(45deg, transparent 75%, #eef1f5 75%),
+		linear-gradient(-45deg, transparent 75%, #eef1f5 75%);
+	background-size: 14px 14px;
+	background-position:
+		0 0,
+		0 7px,
+		7px -7px,
+		-7px 0;
+}
+
+.cb-logo-preview img {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+}
+
+.cb-logo-empty {
+	font-size: 12px;
+	color: #98a1ad;
+	background: #fff;
+	padding: 2px 8px;
+	border-radius: 6px;
+}
+
+.cb-logo-side {
+	flex: 1;
+	min-width: 260px;
+}
+
+.cb-logo-meta {
+	font-size: 12px;
+	color: #6b7280;
+	margin-bottom: 10px;
+	word-break: break-all;
+}
+
+.cb-logo-buttons {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-bottom: 8px;
+}
+
+.cb-btn {
+	border: 1px solid #c7d2fe;
+	background: #eef2ff;
+	color: #3730a3;
+	border-radius: 8px;
+	padding: 8px 14px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.cb-btn:hover:not(:disabled) {
+	background: #e0e7ff;
+}
+
+.cb-btn.danger {
+	border-color: #f0b4b4;
+	background: #fff5f5;
+	color: #a12727;
+}
+
+.cb-btn.danger:hover:not(:disabled) {
+	background: #ffe8e8;
+}
+
+.cb-btn:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.cb-link {
+	background: none;
+	border: none;
+	color: #2563eb;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	padding: 0;
+}
+
+.cb-link:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+   Цвет
+   --------------------------------------------------------------------------- */
+
+.cb-color-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-bottom: 10px;
+}
+
+.cb-color-input {
+	width: 54px;
+	height: 40px;
+	padding: 0;
+	border: 1px solid #d7dce3;
+	border-radius: 8px;
+	background: #fff;
+	cursor: pointer;
+}
+
+.cb-color-input:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.cb-color-hex {
+	border: 1px solid #d7dce3;
+	border-radius: 8px;
+	padding: 9px 12px;
+	font-size: 14px;
+	width: 130px;
+	text-transform: lowercase;
+	font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.cb-presets {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-bottom: 10px;
+}
+
+.cb-preset {
+	width: 30px;
+	height: 30px;
+	border-radius: 8px;
+	border: 2px solid rgba(0, 0, 0, 0.12);
+	cursor: pointer;
+	padding: 0;
+}
+
+.cb-preset.active {
+	border-color: #2f3640;
+	box-shadow: 0 0 0 3px rgba(47, 54, 64, 0.12);
+}
+
+.cb-preset:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+   Предпросмотр.
+   Только переменные --pb-*, никаких собственных цветов.
+   --------------------------------------------------------------------------- */
+
+.cb-preview {
+	border: 1px solid #dfe4ec;
+	border-radius: 10px;
+	overflow: hidden;
+	background: #fff;
+}
+
+.cb-preview-header {
+	background: var(--pb-header-bg);
+	color: var(--pb-header-text);
+	border-bottom: 1px solid var(--pb-header-border);
+	padding: 10px 16px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 14px;
+	flex-wrap: wrap;
+}
+
+.cb-preview-brand {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 14px;
+	font-weight: 700;
+}
+
+.cb-preview-brand img {
+	height: 28px;
+	max-width: 150px;
+	object-fit: contain;
+}
+
+.cb-preview-logo-stub {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 96px;
+	height: 26px;
+	border-radius: 5px;
+	border: 1px dashed currentColor;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.4px;
+	opacity: 0.75;
+}
+
+.cb-preview-user {
+	color: var(--pb-header-text-muted);
+	font-size: 12px;
+}
+
+.cb-preview-body {
+	display: flex;
+	min-height: 220px;
+}
+
+.cb-preview-side {
+	width: 165px;
+	flex-shrink: 0;
+	background: var(--pb-sidebar-bg);
+	border-right: 1px solid var(--pb-sidebar-border);
+	padding: 10px 8px;
+}
+
+.cb-preview-nav {
+	padding: 8px 11px;
+	border-radius: 7px;
+	font-size: 12px;
+	color: var(--pb-sidebar-text);
+	margin-bottom: 2px;
+}
+
+.cb-preview-nav.active {
+	background: var(--pb-sidebar-active-bg);
+	color: var(--pb-sidebar-text-active);
+	font-weight: 700;
+}
+
+.cb-preview-main {
+	flex: 1;
+	padding: 14px;
+	min-width: 0;
+}
+
+.cb-preview-soft {
+	background: var(--pb-soft-bg);
+	color: var(--pb-soft-text);
+	border: 1px solid var(--pb-border);
+	border-radius: 8px;
+	padding: 9px 11px;
+	font-size: 12px;
+	line-height: 1.5;
+	margin-bottom: 12px;
+}
+
+.cb-preview-card {
+	border: 1px solid var(--pb-border);
+	border-radius: 9px;
+	padding: 12px;
+}
+
+.cb-preview-card-title {
+	font-size: 14px;
+	font-weight: 700;
+	color: #2f3640;
+}
+
+.cb-preview-card-meta {
+	font-size: 12px;
+	color: #6b7280;
+	margin: 4px 0 10px;
+}
+
+.cb-preview-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.cb-preview-btn {
+	background: var(--pb-primary);
+	color: var(--pb-on-primary);
+	border-radius: 7px;
+	padding: 7px 14px;
+	font-size: 12px;
+	font-weight: 700;
+}
+
+.cb-preview-btn.ghost {
+	background: #fff;
+	color: var(--pb-link);
+	border: 1px solid var(--pb-border);
+}
+
+.cb-preview-link {
+	color: var(--pb-link);
+	font-size: 12px;
+	font-weight: 600;
+	text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------------------
+   Отчёт по контрасту
+   --------------------------------------------------------------------------- */
+
+.cb-report {
+	margin-top: 10px;
+	font-size: 12px;
+}
+
+.cb-report summary {
+	cursor: pointer;
+	color: #6b7280;
+	font-weight: 600;
+	padding: 4px 0;
+}
+
+.cb-report table {
+	border-collapse: collapse;
+	width: 100%;
+	margin-top: 6px;
+}
+
+.cb-report td {
+	padding: 5px 8px;
+	border-bottom: 1px solid #f0f2f6;
+	color: #4b5563;
+}
+
+.cb-report tr:last-child td {
+	border-bottom: none;
+}
+
+.cb-report-ratio {
+	font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.cb-chip {
+	display: inline-block;
+	width: 13px;
+	height: 13px;
+	border-radius: 4px;
+	border: 1px solid rgba(0, 0, 0, 0.15);
+	vertical-align: -2px;
+	margin: 0 5px;
+}
+
+.cb-ok {
+	color: #2f6b1a;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.cb-bad {
+	color: #b71c1c;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+	.cb-preview-side {
+		display: none;
+	}
+
+	.cb-logo-preview {
+		width: 100%;
+	}
+}

@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
 import '../styles/CreateRequestModal.css'
 import { getStoredUser, hasAnyPermission } from '../utils/access'
+import PendingAttachmentsPicker, {
+	uploadPendingAttachments,
+} from './PendingAttachmentsPicker'
 
 const mapTypeToUI = dbType => {
 	if (!dbType) return 'Физ. лицо'
@@ -88,6 +91,23 @@ const canDecideRequestScheduleApproval = user =>
 // Совпадает с PRICE_MANUAL_LINE_PERMISSION_CODES в prices.py.
 const canSetManualPriceLines = user =>
 	hasAnyPermission(user, ['prices.manual_lines', 'prices.manage'])
+
+// Совпадает с ATTACHMENT_UPLOAD_PERMISSION_CODES и
+// ENTITY_ATTACHMENT_PERMISSION_CODES['REQUEST']['upload'] в attachments.py.
+const canUploadRequestAttachments = user =>
+	hasAnyPermission(user, [
+		'attachments.upload',
+		'attachments.manage',
+		'requests.attachments.upload',
+		'requests.attachments.manage',
+	])
+
+// Галочка «внутренний файл» — инструмент сотрудника, как и в
+// AttachmentsPanel. Клиентские учётки в CRM не работают, но проверка
+// стоит там же, где и остальные: сервер всё равно принудительно
+// ставит is_internal = 0 для клиента.
+const canMarkAttachmentsInternal = user =>
+	String(user?.user_kind || 'EMPLOYEE').toUpperCase() === 'EMPLOYEE'
 
 function SearchableSelect({
 	value,
@@ -427,6 +447,8 @@ export default function CreateRequestModal({
 	const canBypassScheduleRules = canBypassRequestScheduleRules(user)
 	const canDecideScheduleApproval = canDecideRequestScheduleApproval(user)
 	const canEditPriceLines = canSetManualPriceLines(user)
+	const canAttachFiles = canUploadRequestAttachments(user)
+	const canMarkFilesInternal = canMarkAttachmentsInternal(user)
 
 	const [clientKind, setClientKind] = useState(
 		canCreateClient ? 'new' : 'existing',
@@ -494,6 +516,18 @@ export default function CreateRequestModal({
 	// Пока менеджер не тронул контакт руками, он следует за клиентом.
 	// Как только тронул — перестаёт: выбор человека важнее подстановки.
 	const [contactTouched, setContactTouched] = useState(false)
+
+	// Файлы, выбранные до создания заявки. Уходят на сервер отдельными
+	// запросами после успешного POST /requests — раньше просто некуда:
+	// id заявки ещё не существует.
+	const [pendingAttachments, setPendingAttachments] = useState([])
+	const [attachmentsError, setAttachmentsError] = useState('')
+
+	// Заполняется, если заявка создана, а часть файлов не загрузилась.
+	// Заявку в этот момент откатывать уже нельзя, поэтому окно остаётся
+	// открытым: человек либо повторяет загрузку, либо закрывает окно
+	// и прикрепляет файлы в деталях заявки.
+	const [createdRequestId, setCreatedRequestId] = useState(null)
 
 	const vehicleImportInputRef = useRef(null)
 	const vehicleImportNoticeTimeoutRef = useRef(null)
@@ -601,6 +635,10 @@ export default function CreateRequestModal({
 			setRequestVehicles([createEmptyRequestVehicle()])
 			setFormData(emptyForm)
 		}
+
+		setPendingAttachments([])
+		setAttachmentsError('')
+		setCreatedRequestId(null)
 	}, [isOpen, editRequestData, isEditMode])
 
 	useEffect(() => {
@@ -1457,6 +1495,9 @@ export default function CreateRequestModal({
 		setEditingPriceLineKey(null)
 		setEditingPriceLineValue('')
 		setVehicleImportNotice(null)
+		setPendingAttachments([])
+		setAttachmentsError('')
+		setCreatedRequestId(null)
 
 		if (vehicleImportNoticeTimeoutRef.current) {
 			clearTimeout(vehicleImportNoticeTimeoutRef.current)
@@ -1735,9 +1776,76 @@ export default function CreateRequestModal({
 		}
 	}
 
+	/**
+	 * Отправляет выбранные файлы к уже созданной заявке.
+	 * true — все доехали, false — окно должно остаться открытым.
+	 */
+	const sendPendingAttachments = async requestId => {
+		if (pendingAttachments.length === 0) return true
+
+		const total = pendingAttachments.length
+
+		const { failed } = await uploadPendingAttachments(
+			'REQUEST',
+			requestId,
+			pendingAttachments,
+		)
+
+		if (failed.length === 0) {
+			setPendingAttachments([])
+			setAttachmentsError('')
+			return true
+		}
+
+		// В списке остаётся только то, что не доехало: повтор не создаст
+		// вторых копий уже загруженных файлов.
+		setPendingAttachments(failed.map(entry => entry.item))
+		setCreatedRequestId(requestId)
+
+		setAttachmentsError(
+			[
+				`Заявка №${requestId} создана. Не загрузились файлы (${failed.length} из ${total}):`,
+				...failed.map(entry => `«${entry.item.file.name}»: ${entry.message}`),
+				'Повторите загрузку или закройте окно — файлы можно прикрепить в деталях заявки.',
+			].join('\n'),
+		)
+
+		return false
+	}
+
+	const retryPendingAttachments = async () => {
+		if (!createdRequestId) return
+
+		setLoading(true)
+		setAttachmentsError('')
+
+		try {
+			const uploaded = await sendPendingAttachments(createdRequestId)
+
+			// Список заявок обновляем в любом случае: заявка уже существует,
+			// и её файлы могли частично долететь.
+			onCreated()
+
+			if (uploaded) {
+				handleClose()
+			}
+		} catch (err) {
+			setAttachmentsError(err.message)
+		} finally {
+			setLoading(false)
+		}
+	}
+
 	const handleSubmit = async e => {
 		e.preventDefault()
 		setError('')
+
+		// Заявка уже создана и ждёт только файлов — второй раз её
+		// создавать нельзя (Enter в поле формы тоже приводит сюда).
+		if (createdRequestId) {
+			await retryPendingAttachments()
+			return
+		}
 
 		if (!validateForm()) return
 
@@ -2013,7 +2121,16 @@ export default function CreateRequestModal({
 				}).catch(err => console.error(err))
 			}
 
+			const attachmentsUploaded = await sendPendingAttachments(
+				requestData.request_id,
+			)
+
 			onCreated()
+
+			// Заявка создана в любом случае; окно закрываем, только если
+			// человеку больше нечего в нём делать.
+			if (!attachmentsUploaded) return
+
 			handleClose()
 		} catch (err) {
 			setError(err.message)
@@ -3742,6 +3859,25 @@ export default function CreateRequestModal({
 								</div>
 							)}
 
+							{!isEditMode && canAttachFiles && (
+								<div className='request-modal-card'>
+									<div className='request-modal-section-title'>
+										Файлы заявки
+									</div>
+
+									<PendingAttachmentsPicker
+										title=''
+										items={pendingAttachments}
+										onChange={setPendingAttachments}
+										error={attachmentsError}
+										onError={setAttachmentsError}
+										disabled={loading}
+										allowInternal={canMarkFilesInternal}
+										hint='Акт, доверенность, схема проезда, фото объекта. Файлы прикрепятся к заявке сразу после её создания. Отмеченные внутренними клиенту в личном кабинете не видны.'
+									/>
+								</div>
+							)}
+
 							{!isEditMode && (
 								<div className='request-modal-card'>
 									<div className='request-modal-section-title'>
@@ -3969,21 +4105,35 @@ export default function CreateRequestModal({
 						type='button'
 						onClick={handleClose}
 					>
-						Отмена
+						{createdRequestId ? 'Закрыть' : 'Отмена'}
 					</button>
 
-					<button
-						className='request-submit-btn'
-						type='button'
-						onClick={handleSubmit}
-						disabled={loading || clientRequestBlocked}
-					>
-						{loading
-							? 'Сохранение...'
-							: isEditMode
-								? 'Сохранить изменения'
-								: 'Создать заявку'}
-					</button>
+					{/* Заявка уже создана — остаётся только повторить файлы.
+					    Кнопку «Создать заявку» в этом состоянии показывать
+					    нельзя: её нажмут и получат вторую такую же заявку. */}
+					{createdRequestId ? (
+						<button
+							className='request-submit-btn'
+							type='button'
+							onClick={retryPendingAttachments}
+							disabled={loading || pendingAttachments.length === 0}
+						>
+							{loading ? 'Загрузка...' : 'Повторить загрузку файлов'}
+						</button>
+					) : (
+						<button
+							className='request-submit-btn'
+							type='button'
+							onClick={handleSubmit}
+							disabled={loading || clientRequestBlocked}
+						>
+							{loading
+								? 'Сохранение...'
+								: isEditMode
+									? 'Сохранить изменения'
+									: 'Создать заявку'}
+						</button>
+					)}
 				</div>
 			</div>
 		</div>

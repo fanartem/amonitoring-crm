@@ -171,9 +171,9 @@ export default function PortalSubclients() {
 				}
 
 				.portal-sub-btn.primary {
-					background: #5e9424;
-					border-color: #5e9424;
-					color: #fff;
+					background: var(--pb-primary, #5e9424);
+					border-color: var(--pb-primary, #5e9424);
+					color: var(--pb-on-primary, #fff);
 					font-weight: 600;
 				}
 

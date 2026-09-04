@@ -2,10 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../../api'
 import {
 	canCreatePortalSubclient,
+	canUploadPortalAttachments,
 	canViewPortalPrices,
 	canViewPortalSubclients,
 	getStoredUser,
 } from '../../utils/access'
+import PendingAttachmentsPicker, {
+	uploadPendingAttachments,
+} from '../PendingAttachmentsPicker'
 import './styles/PortalModal.css'
 
 // Создание заявки клиентом.
@@ -380,6 +384,7 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 	const canSeePrices = canViewPortalPrices(currentUser)
 	const hasOrgSection = canViewPortalSubclients(currentUser)
 	const canCreateOrg = canCreatePortalSubclient(currentUser)
+	const canAttachFiles = canUploadPortalAttachments(currentUser)
 
 	const [clients, setClients] = useState([])
 	const [ownClientId, setOwnClientId] = useState(null)
@@ -393,6 +398,16 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 	// потом не пройдёт, организация уже существует — второй раз её
 	// создавать нельзя, иначе получим дубль. Запоминаем и переиспользуем.
 	const [createdClient, setCreatedClient] = useState(null)
+
+	// Файлы, выбранные до создания заявки: id для загрузки появляется
+	// только после успешного POST /portal/requests.
+	const [attachments, setAttachments] = useState([])
+	const [attachmentsError, setAttachmentsError] = useState('')
+
+	// Та же логика, что и с организацией выше: заявка уже создана, и
+	// повторно её создавать нельзя. Заполняется, только если часть файлов
+	// не доехала — тогда окно остаётся открытым ради повторной попытки.
+	const [createdRequest, setCreatedRequest] = useState(null)
 
 	const [cities, setCities] = useState([])
 
@@ -435,6 +450,7 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 	const scheduleSectionRef = useRef(null)
 	const vehiclesSectionRef = useRef(null)
 	const contactSectionRef = useRef(null)
+	const attachmentsSectionRef = useRef(null)
 
 	const [errorAnchor, setErrorAnchor] = useState('top')
 
@@ -490,7 +506,9 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 						? contactSectionRef.current
 						: anchor === 'vehicles'
 							? vehiclesSectionRef.current
-							: null
+							: anchor === 'attachments'
+								? attachmentsSectionRef.current
+								: null
 
 		// Скобки здесь обязательны: без них || связывает сильнее тернарника,
 		// условием становится «поле найдено ИЛИ якорь org», и любое найденное
@@ -1037,8 +1055,85 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 		return res.json()
 	}
 
+	/**
+	 * Отправляет выбранные файлы к уже созданной заявке.
+	 * true — все доехали, false — окно должно остаться открытым.
+	 */
+	const sendAttachments = async requestId => {
+		if (attachments.length === 0) return true
+
+		const total = attachments.length
+
+		const { failed } = await uploadPendingAttachments(
+			'REQUEST',
+			requestId,
+			attachments,
+		)
+
+		if (failed.length === 0) {
+			setAttachments([])
+			setAttachmentsError('')
+			return true
+		}
+
+		// В списке остаётся только то, что не загрузилось: повтор не создаст
+		// вторых копий уже принятых файлов.
+		setAttachments(failed.map(entry => entry.item))
+
+		setAttachmentsError(
+			failed
+				.map(entry => `«${entry.item.file.name}»: ${entry.message}`)
+				.join('\n'),
+		)
+
+		showError(
+			`Заявка №${requestId} создана, но не загрузились файлы (${failed.length} из ${total}). ` +
+				'Повторите загрузку или закройте окно — файлы можно приложить в самой заявке.',
+			'attachments',
+		)
+
+		return false
+	}
+
+	const retryAttachments = async () => {
+		if (!createdRequest) return
+
+		setSubmitting(true)
+		setError('')
+
+		try {
+			const uploaded = await sendAttachments(createdRequest.request_id)
+
+			if (uploaded) {
+				onCreated(createdRequest)
+			}
+		} catch (err) {
+			showError(err.message, 'attachments')
+		} finally {
+			setSubmitting(false)
+		}
+	}
+
+	// Закрытие окна, когда заявка уже создана: список заявок нужно
+	// обновить, иначе клиент не увидит только что созданную заявку.
+	const handleDismiss = () => {
+		if (createdRequest) {
+			onCreated(createdRequest)
+			return
+		}
+
+		onClose()
+	}
+
 	const handleSubmit = async e => {
 		e.preventDefault()
+
+		// Заявка уже создана и ждёт только файлов. Второй раз её создавать
+		// нельзя — Enter в любом поле формы тоже приводит сюда.
+		if (createdRequest) {
+			await retryAttachments()
+			return
+		}
 
 		const validationError = validate()
 
@@ -1108,7 +1203,18 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 				throw new Error(await readError(res, 'Не удалось создать заявку'))
 			}
 
-			onCreated(await res.json())
+			const created = await res.json()
+
+			const attachmentsUploaded = await sendAttachments(created.request_id)
+
+			// Заявка создана в любом случае. Окно закрываем, только если
+			// человеку больше нечего в нём делать.
+			if (!attachmentsUploaded) {
+				setCreatedRequest(created)
+				return
+			}
+
+			onCreated(created)
 		} catch (err) {
 			showError(err.message)
 		} finally {
@@ -1134,7 +1240,7 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 						</div>
 					</div>
 
-					<button className='pm-close' type='button' onClick={onClose}>
+					<button className='pm-close' type='button' onClick={handleDismiss}>
 						&times;
 					</button>
 				</div>
@@ -1864,6 +1970,41 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 							</div>
 						</div>
 
+						{/* ---------- Файлы ---------- */}
+
+						{canAttachFiles && (
+							<div className='pm-section' ref={attachmentsSectionRef}>
+								<div className='pm-section-head'>
+									<span className='pm-section-mark' />
+									<span className='pm-section-title'>Файлы</span>
+
+									{attachments.length > 0 && (
+										<span className='pm-section-count'>
+											{attachments.length} шт.
+										</span>
+									)}
+								</div>
+
+								<div className='pm-section-body'>
+									<PendingAttachmentsPicker
+										title=''
+										hint='Доверенность, схема проезда, фото объекта — всё, что поможет монтажнику. Файлы прикрепятся к заявке сразу после её создания.'
+										items={attachments}
+										onChange={setAttachments}
+										error={attachmentsError}
+										onError={setAttachmentsError}
+										disabled={submitting}
+									/>
+
+									<div className='pm-hint'>
+										{createdRequest
+											? `Заявка №${createdRequest.request_id} уже создана — осталось догрузить файлы.`
+											: 'Необязательно. Файлы увидит ваш менеджер и монтажник.'}
+									</div>
+								</div>
+							</div>
+						)}
+
 						{/* ---------- Комментарий ---------- */}
 
 						<div className='pm-section'>
@@ -1891,18 +2032,30 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 						<button
 							type='button'
 							className='pm-btn'
-							onClick={onClose}
+							onClick={handleDismiss}
 							disabled={submitting}
 						>
-							Отмена
+							{createdRequest ? 'Закрыть' : 'Отмена'}
 						</button>
 
+						{/* Заявка уже создана — кнопку «Создать заявку» показывать
+						    нельзя: её нажмут и получат вторую такую же заявку. */}
 						<button
 							type='submit'
 							className='pm-btn primary'
-							disabled={submitting || settingsLoading || !isConfigured}
+							disabled={
+								createdRequest
+									? submitting || attachments.length === 0
+									: submitting || settingsLoading || !isConfigured
+							}
 						>
-							{submitting ? 'Создание...' : 'Создать заявку'}
+							{createdRequest
+								? submitting
+									? 'Загрузка...'
+									: 'Повторить загрузку файлов'
+								: submitting
+									? 'Создание...'
+									: 'Создать заявку'}
 						</button>
 					</div>
 				</form>

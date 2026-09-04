@@ -8,9 +8,20 @@
    и своя палитра, и общий .modal-window тянул бы за собой чужие правила.
 
    Палитра:
-     зелёный  #5e9424 — основное действие, взят из кнопок CRM;
-     синий    #1e4b9c — справочная информация, «не вы это заполняете»;
+     акцент   var(--pb-primary, #5e9424) — основное действие. Переменную
+              ставит portalTheme.js тем клиентам, кому настроен брендинг;
+              у остальных её нет, срабатывает запасной зелёный, и окно
+              выглядит ровно как раньше. Запасные значения не менять —
+              это единственное, что защищает сегодняшний вид;
+     синий    #1e4b9c — справочная информация, «не вы это заполняете».
+              НЕ темизируется намеренно: это второй смысловой цвет, а не
+              украшение. Если он поедет за брендом, подсказка перестанет
+              отличаться от действия;
      фон тела #f4f6f9 — чтобы белые карточки разделов читались как карточки.
+
+   Также не темизируются: красный (ошибка, обязательное поле), оранжевый
+   (предупреждение) и зелёный у .pm-banner.success. Успех обязан выглядеть
+   успехом даже у клиента с красным фирменным цветом.
    ========================================================================= */
 
 .pm-overlay {
@@ -49,8 +60,15 @@
 	justify-content: space-between;
 	gap: 16px;
 	padding: 15px 20px;
-	background: linear-gradient(135deg, #5e9424 0%, #4d7c1c 100%);
-	color: #fff;
+	/* Второй стоп — «наведённый» оттенок акцента: у тёмного цвета он
+	   светлее, у светлого темнее, и градиент остаётся заметным в обе
+	   стороны. */
+	background: linear-gradient(
+		135deg,
+		var(--pb-primary, #5e9424) 0%,
+		var(--pb-primary-hover, #4d7c1c) 100%
+	);
+	color: var(--pb-on-primary, #fff);
 	flex-shrink: 0;
 }
 
@@ -69,8 +87,11 @@
 
 .pm-close {
 	border: none;
-	background: rgba(255, 255, 255, 0.16);
-	color: #fff;
+	/* Подложка из цвета надписей, а не из белого: на светлой заливке
+	   надписи становятся тёмными, и белая полупрозрачная плашка
+	   под ними исчезает. */
+	background: var(--pb-header-btn-bg, rgba(255, 255, 255, 0.16));
+	color: var(--pb-on-primary, #fff);
 	width: 30px;
 	height: 30px;
 	border-radius: 8px;
@@ -81,7 +102,7 @@
 }
 
 .pm-close:hover {
-	background: rgba(255, 255, 255, 0.28);
+	background: var(--pb-header-btn-bg-hover, rgba(255, 255, 255, 0.28));
 }
 
 /* ---------- Тело ---------- */
@@ -120,7 +141,7 @@
 	width: 4px;
 	height: 15px;
 	border-radius: 3px;
-	background: #5e9424;
+	background: var(--pb-primary, #5e9424);
 	flex-shrink: 0;
 }
 
@@ -194,8 +215,8 @@
 .pm-select:focus,
 .pm-textarea:focus {
 	outline: none;
-	border-color: #5e9424;
-	box-shadow: 0 0 0 3px rgba(94, 148, 36, 0.13);
+	border-color: var(--pb-primary, #5e9424);
+	box-shadow: 0 0 0 3px var(--pb-focus-ring, rgba(94, 148, 36, 0.13));
 }
 
 .pm-input:disabled,
@@ -254,9 +275,9 @@
 }
 
 .pm-tab.active {
-	border-color: #5e9424;
-	background: #f1f7e9;
-	color: #43690f;
+	border-color: var(--pb-primary, #5e9424);
+	background: var(--pb-soft-bg, #f1f7e9);
+	color: var(--pb-soft-text, #43690f);
 }
 
 /* ---------- Строки «ключ — значение» ---------- */
@@ -375,14 +396,14 @@
 }
 
 .pm-btn.primary {
-	background: #5e9424;
-	border-color: #5e9424;
-	color: #fff;
+	background: var(--pb-primary, #5e9424);
+	border-color: var(--pb-primary, #5e9424);
+	color: var(--pb-on-primary, #fff);
 }
 
 .pm-btn.primary:hover:not(:disabled) {
-	background: #527f1f;
-	border-color: #527f1f;
+	background: var(--pb-primary-hover, #527f1f);
+	border-color: var(--pb-primary-hover, #527f1f);
 }
 
 .pm-btn.danger {
@@ -407,7 +428,9 @@
 	border: none;
 	background: none;
 	padding: 0;
-	color: #1e4b9c;
+	/* Ссылка-действие идёт за брендом — в отличие от синего
+	   справочного блока, который остаётся синим всегда. */
+	color: var(--pb-link, #1e4b9c);
 	font-size: 12.5px;
 	font-weight: 600;
 	cursor: pointer;
@@ -470,7 +493,7 @@
 }
 
 .pm-dropdown-row:hover {
-	background: #f4f8ee;
+	background: var(--pb-soft-bg, #f4f8ee);
 }
 
 .pm-dropdown-empty {

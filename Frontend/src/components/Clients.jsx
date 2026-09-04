@@ -9,6 +9,7 @@ import RequestDetailModal from './RequestDetailModal'
 import AttachmentsPanel from './AttachmentsPanel'
 import AttachEquipmentToVehicleModal from './AttachEquipmentToVehicleModal'
 import ClientInstallationSettingsModal from './ClientInstallationSettingsModal'
+import ClientBrandingModal from './ClientBrandingModal'
 import PortalUsersModal from './PortalUsersModal'
 import ClientHistoryModal from './ClientHistoryModal'
 import { getWorkTypeLabel, getWorkTypeColor } from '../utils/workTypes'
@@ -76,6 +77,7 @@ export default function Clients() {
 	const [installationSettingsClient, setInstallationSettingsClient] =
 		useState(null)
 	const [portalUsersClient, setPortalUsersClient] = useState(null)
+	const [brandingClient, setBrandingClient] = useState(null)
 	const [historyClient, setHistoryClient] = useState(null)
 
 	const [responsibleManagers, setResponsibleManagers] = useState([])
@@ -144,6 +146,21 @@ export default function Clients() {
 		'clients.history.view',
 	])
 
+	// Совпадает с BRANDING_MANAGE_PERMISSION_CODES в client_branding.py.
+	//
+	// Здесь проверка только про кнопку. Настоящее решение принимает сервер:
+	// он сверяет и право, и область данных — виден ли вообще этот клиент.
+	// Отдельного флага can_manage_branding в /clients пока нет, поэтому
+	// область добавляем через can_open_details, на котором стоят и
+	// остальные действия карточки.
+	const canManageClientBranding = hasAnyPermission(currentUser, [
+		'clients.branding.manage',
+		'clients.manage',
+	])
+
+	const canManageBrandingForClient = client =>
+		canManageClientBranding && Boolean(client?.can_open_details)
+
 	// Фильтр «Ответственный» и выпадающий список в карточке клиента берут данные
 	// из /users/responsible-managers. Показываем их тем, кто видит чужих клиентов:
 	// роли с областью «свои клиенты» фильтр по ответственному не нужен —
@@ -210,7 +227,8 @@ export default function Clients() {
 	const getClientEffectiveStatus = client =>
 		String(client?.effective_status || client?.status || 'ACTIVE')
 
-	const isClientBlockedByParent = client => Boolean(client?.is_blocked_by_parent)
+	const isClientBlockedByParent = client =>
+		Boolean(client?.is_blocked_by_parent)
 
 	const getClientOwnRequestCount = client =>
 		Number(client?.own_request_count ?? client?.request_count ?? 0)
@@ -2989,7 +3007,9 @@ export default function Clients() {
 									)}
 
 									{client.__isSearchMatch && (
-										<span className='client-search-match-badge'>совпадение</span>
+										<span className='client-search-match-badge'>
+											совпадение
+										</span>
 									)}
 								</div>
 
@@ -4079,6 +4099,7 @@ export default function Clients() {
 							canDeleteClient ||
 							canViewPortalUsers ||
 							canViewClientHistory ||
+							canManageBrandingForClient(selectedClient) ||
 							canViewClientInstallationSettings(selectedClient)) && (
 							<div className='client-edit-btn-wrapper'>
 								{canEditClient(selectedClient) && (
@@ -4126,6 +4147,18 @@ export default function Clients() {
 										disabled={clientActionLoading}
 									>
 										👤 Настройка пользователей
+									</button>
+								)}
+
+								{/* Оформление стоит рядом с пользователями кабинета: обе
+								    настройки про то, каким клиент видит портал. */}
+								{canManageBrandingForClient(selectedClient) && (
+									<button
+										className='client-install-settings-btn client-detail-action-btn'
+										onClick={() => setBrandingClient(selectedClient)}
+										disabled={clientActionLoading}
+									>
+										🎨 Оформление кабинета
 									</button>
 								)}
 
@@ -5474,6 +5507,12 @@ export default function Clients() {
 				isOpen={Boolean(historyClient)}
 				client={historyClient}
 				onClose={() => setHistoryClient(null)}
+			/>
+
+			<ClientBrandingModal
+				isOpen={Boolean(brandingClient)}
+				client={brandingClient}
+				onClose={() => setBrandingClient(null)}
 			/>
 
 			<AttachEquipmentToVehicleModal

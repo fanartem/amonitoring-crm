@@ -1,5 +1,8 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router'
+
+import { API_BASE_URL, getAuthHeaders } from '../../api'
+import { applyPortalTheme } from '../../utils/portalTheme'
 
 import PortalSidebar from './PortalSidebar'
 import PortalHeader from './PortalHeader'
@@ -31,6 +34,12 @@ import {
 // PortalNotificationsProvider оборачивает всё содержимое: опрос уведомлений
 // один на кабинет, и всплывающие окна он рисует сам. Провайдер обязан быть
 // внутри роутера — он умеет открывать заявку по клику.
+//
+// Оформление (логотип и цвет) грузится здесь одним запросом на весь
+// кабинет. Переменные темы ставятся на КОРЕНЬ документа, а не на .portal-app:
+// всплывающие уведомления и модальные окна рисуются выше по дереву, и на
+// корне их достанет тоже. Снимаем при размонтировании — иначе после выхода
+// из кабинета фирменный цвет остался бы висеть на странице входа.
 
 const PortalLandingRedirect = () => (
 	<Navigate to={resolveLandingRoute()} replace />
@@ -41,6 +50,52 @@ export default function PortalApp({ user }) {
 
 	const readOnly = isPortalReadOnly(currentUser)
 	const blockedByParent = isPortalBlockedByParent(currentUser)
+
+	const [branding, setBranding] = useState(null)
+
+	useEffect(() => {
+		let cancelled = false
+		let removeTheme = () => {}
+
+		const loadBranding = async () => {
+			try {
+				const res = await fetch(`${API_BASE_URL}/portal/branding`, {
+					headers: getAuthHeaders(),
+				})
+
+				if (!res.ok) return
+
+				const data = await res.json()
+
+				if (cancelled) return
+
+				setBranding(data)
+
+				// Цвет может быть не задан при загруженном логотипе — тогда
+				// шапка остаётся нашей, а логотип клиента уже стоит. Это
+				// рабочее состояние, а не половинчатое.
+				if (data?.is_enabled && data?.base_color) {
+					removeTheme = applyPortalTheme(
+						document.documentElement,
+						data.base_color,
+					)
+				}
+			} catch (err) {
+				// Оформление — украшение. Сломать из-за него вход в кабинет
+				// было бы обменом плохим в любую сторону.
+				console.error('Не удалось загрузить оформление кабинета:', err)
+			}
+		}
+
+		loadBranding()
+
+		return () => {
+			cancelled = true
+			removeTheme()
+		}
+	}, [])
+
+	const logoDataUrl = branding?.is_enabled ? branding.logo_data_url : null
 
 	return (
 		<PortalNotificationsProvider>
@@ -58,7 +113,7 @@ export default function PortalApp({ user }) {
 					}
 				`}</style>
 
-				<PortalHeader user={currentUser} />
+				<PortalHeader user={currentUser} logoDataUrl={logoDataUrl} />
 
 				{readOnly && (
 					<div className='portal-readonly-banner'>

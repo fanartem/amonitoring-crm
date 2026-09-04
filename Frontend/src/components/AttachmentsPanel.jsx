@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { API_BASE_URL, getAuthHeaders, getJsonAuthHeaders } from '../api'
-import { getStoredUser, hasAnyPermission } from '../utils/access'
+import {
+	canUploadPortalAttachments,
+	getStoredUser,
+	hasAnyPermission,
+} from '../utils/access'
 import '../styles/AttachmentsPanel.css'
 
 const formatFileSize = bytes => {
@@ -61,19 +65,32 @@ const getEntityAttachmentPermissions = (entityType, action) => {
 	return [`${prefix}.manage`]
 }
 
+// У клиентской учётной записи своя пара кодов — решение Р54(А).
+// Списки не смешиваем: у сотрудника attachments.upload означает «файлы
+// всех доступных карточек», у клиента — «файлы своих заявок».
+// Те же ветки стоят в user_can_upload_attachment в attachments.py.
 const canUploadAttachments = (user, entityType) =>
-	hasAnyPermission(user, [
-		'attachments.upload',
-		'attachments.manage',
-		...getEntityAttachmentPermissions(entityType, 'upload'),
-	])
+	isClientPortalUser(user)
+		? canUploadPortalAttachments(user)
+		: hasAnyPermission(user, [
+				'attachments.upload',
+				'attachments.manage',
+				...getEntityAttachmentPermissions(entityType, 'upload'),
+			])
 
+// Переименование и удаление чужих файлов клиенту недоступны ни при каких
+// правах: по решению Р55 он распоряжается только своим файлом и только
+// 2 минуты. Само разрешение приходит с сервера в can_rename/can_delete,
+// здесь — только общий признак «может ли распоряжаться файлами вообще»,
+// от которого зависят подсказки в интерфейсе.
 const canManageAttachments = (user, entityType) =>
-	hasAnyPermission(user, [
-		'attachments.manage',
-		...getEntityAttachmentPermissions(entityType, 'rename'),
-		...getEntityAttachmentPermissions(entityType, 'delete'),
-	])
+	isClientPortalUser(user)
+		? false
+		: hasAnyPermission(user, [
+				'attachments.manage',
+				...getEntityAttachmentPermissions(entityType, 'rename'),
+				...getEntityAttachmentPermissions(entityType, 'delete'),
+			])
 
 // Учётная запись клиентского портала. Поле user_kind появится в ответе
 // логина на этапе 5, до тех пор проверка просто всегда даёт false —
@@ -90,7 +107,13 @@ const canMarkAttachmentInternal = attachment =>
 	Boolean(attachment?.can_mark_internal)
 const attachmentIsInternal = attachment => Boolean(attachment?.is_internal)
 
-export default function AttachmentsPanel({ entityType, entityId }) {
+export default function AttachmentsPanel({
+	entityType,
+	entityId,
+	// Пустая строка убирает собственный заголовок панели: в кабинете
+	// клиента она вложена в секцию, у которой заголовок уже есть.
+	title = 'Прикрепленные файлы',
+}) {
 	const fileInputRef = useRef(null)
 
 	const [attachments, setAttachments] = useState([])
@@ -144,10 +167,19 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 		return 'Документы, фото, чеки и другие файлы по этому объекту. Файлы с пометкой «Внутренний» клиенту в портале не видны.'
 	}
 
-	const getEmptyText = () =>
-		seesOnlyOwnAttachments
-			? 'У вас пока нет загруженных файлов по этому объекту.'
-			: 'Файлы пока не прикреплены'
+	const getEmptyText = () => {
+		if (seesOnlyOwnAttachments) {
+			return 'У вас пока нет загруженных файлов по этому объекту.'
+		}
+
+		if (isPortalUser) {
+			return canUploadCurrentEntity
+				? 'Файлов пока нет. Вы можете приложить свои — их увидит ваш менеджер.'
+				: 'Файлов по этой заявке пока нет.'
+		}
+
+		return 'Файлы пока не прикреплены'
+	}
 
 	useEffect(() => {
 		if (!normalizedEntityType || !entityId) return
@@ -454,7 +486,7 @@ export default function AttachmentsPanel({ entityType, entityId }) {
 
 			<div className='attachments-panel-header'>
 				<div>
-					<h3>Прикрепленные файлы</h3>
+					{title && <h3>{title}</h3>}
 					<p>{getAttachmentsDescription()}</p>
 				</div>
 

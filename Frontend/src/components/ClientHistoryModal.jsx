@@ -3,7 +3,8 @@ import { API_BASE_URL, getAuthHeaders } from '../api'
 
 // Значения action, которые пишет бэкенд: clients.py (карточка, статус,
 // оплата, ответственный, родитель, параметры установки), portal_users.py
-// и auth.py (учётные записи кабинета), vehicles.py (недостающий VIN).
+// и auth.py (учётные записи кабинета), vehicles.py (недостающий VIN),
+// client_branding.py (оформление кабинета).
 // Неизвестный код показываем как есть — лучше сырой код, чем пустая строка.
 const ACTION_LABELS = {
 	CLIENT_CREATED: 'Клиент создан',
@@ -16,6 +17,12 @@ const ACTION_LABELS = {
 	RESPONSIBLE_CHANGED: 'Изменён ответственный',
 	INSTALLATION_SETTINGS_UPDATED: 'Изменены параметры установки',
 	INSTALLATION_SETTINGS_RESET: 'Параметры установки сброшены',
+
+	// Пишутся из client_branding.py. Оформление меняют редко, но вопрос
+	// «кто поставил клиенту этот логотип» возникает обычно тогда, когда
+	// ответить на него уже некому.
+	BRANDING_CHANGED: 'Изменено оформление кабинета',
+	BRANDING_LOGO_CHANGED: 'Изменён логотип кабинета',
 
 	PORTAL_USER_CREATED: 'Создана учётная запись портала',
 	PORTAL_USER_ENABLED: 'Учётная запись портала включена',
@@ -49,6 +56,8 @@ const FIELD_LABELS = {
 	portal_user_permissions: 'Доступы портала',
 	subclient: 'Подклиент',
 	vehicle_vin: 'VIN автомобиля',
+	portal_branding: 'Оформление кабинета',
+	portal_logo: 'Логотип кабинета',
 }
 
 const STATUS_VALUE_LABELS = {

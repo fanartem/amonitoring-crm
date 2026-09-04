@@ -21,8 +21,7 @@ from app.permissions import (
 
 from app.routers.requests import (
     user_can_access_request,
-    user_is_limited_executor,
-    get_current_user_city,
+    build_request_access_context,
 )
 
 router = APIRouter(prefix="/attachments", tags=["Attachments"])
@@ -132,6 +131,26 @@ CLIENT_ATTACHMENTS_VIEW_OWN_PERMISSION_CODES = [
     "clients.view_own",
 ]
 
+# Права кабинета клиента.
+#
+# Решение Р54(А): у клиентской учётной записи своя пара кодов, а не общий
+# с сотрудниками attachments.view. Причина простая — эти списки живут
+# рядом, но означают разное: сотруднику право открывает файлы всех
+# карточек, до которых дотягивается его область данных, клиенту —
+# только файлы его собственных заявок. Смешав их в один код, мы бы
+# не смогли отключить файлы одному клиенту, не задев сотрудников.
+#
+# Карточки клиентов в кабинете эти права НЕ открывают: доступ к сущности
+# CLIENT проверяется по кодам clients.*, которых у роли CLIENT_PORTAL нет,
+# поэтому файлы карточки остаются внутренними без отдельной блокировки.
+PORTAL_ATTACHMENT_VIEW_PERMISSION_CODES = [
+    "portal.attachments.view",
+]
+
+PORTAL_ATTACHMENT_UPLOAD_PERMISSION_CODES = [
+    "portal.attachments.upload",
+]
+
 
 def normalize_entity_type(entity_type: str) -> str:
     value = str(entity_type or "").strip().upper()
@@ -213,14 +232,25 @@ def can_manage_attachment_by_permission(attachment: dict, current_user: dict) ->
 def user_can_view_attachment(attachment: dict, current_user: dict) -> bool:
     entity_type = normalize_entity_type(attachment.get("entity_type"))
 
-    # 0. Клиентская учётная запись не видит внутренние файлы никогда —
-    # даже с attachments.view_all. Свои собственные загрузки видит всегда:
-    # клиент не должен терять доступ к тому, что сам же и принёс.
+    # 0. Клиентская учётная запись считается по своим правилам и до
+    # сотрудничьих кодов не доходит.
     if is_client_user(current_user):
+        # Внутренний файл не виден никогда — даже с attachments.view_all,
+        # если его когда-нибудь выдадут клиентской роли по ошибке.
         if attachment_is_internal(attachment) and not attachment_is_owner(
             attachment, current_user
         ):
             return False
+
+        # Свою собственную загрузку клиент видит всегда: он не должен
+        # терять доступ к тому, что сам же и принёс.
+        if attachment_is_owner(attachment, current_user):
+            return True
+
+        return has_any_permission(
+            current_user,
+            PORTAL_ATTACHMENT_VIEW_PERMISSION_CODES,
+        )
 
     # 1. Право работать с файлами этой сущности вообще.
     if not user_has_any_permission(
@@ -245,6 +275,12 @@ def user_can_view_attachment(attachment: dict, current_user: dict) -> bool:
 def user_can_upload_attachment(entity_type: str, current_user: dict) -> bool:
     entity_type = normalize_entity_type(entity_type)
 
+    if is_client_user(current_user):
+        return has_any_permission(
+            current_user,
+            PORTAL_ATTACHMENT_UPLOAD_PERMISSION_CODES,
+        )
+
     return user_has_any_permission(
         current_user,
         [
@@ -259,6 +295,16 @@ def user_can_update_attachment(attachment: dict, current_user: dict) -> bool:
 
     if not user_can_view_attachment(attachment, current_user):
         return False
+
+    # Решение Р55: в кабинете действует то же правило, что и в CRM для
+    # обычного сотрудника, — свой файл и только 2 минуты. Прописано явно,
+    # а не выведено из отсутствия сотрудничьих кодов: право вроде
+    # attachments.manage, случайно выданное клиентской роли, иначе
+    # открыло бы переименование чужих файлов.
+    if is_client_user(current_user):
+        return attachment_is_owner(
+            attachment, current_user
+        ) and attachment_is_within_time_limit(attachment)
 
     if user_has_any_permission(
         current_user,
@@ -290,6 +336,13 @@ def user_can_delete_attachment(attachment: dict, current_user: dict) -> bool:
 
     if not user_can_view_attachment(attachment, current_user):
         return False
+
+    # Решение Р55: клиент удаляет только свой файл и только 2 минуты.
+    # can_delete_attachment() ниже писалась под роли сотрудников, и
+    # прогонять через неё клиентскую учётку — значит зависеть от того,
+    # что она сделает с ролью, которой не знает.
+    if is_client_user(current_user):
+        return attachment_is_owner(attachment, current_user) and within_time_limit
 
     if user_has_any_permission(
         current_user,
@@ -439,12 +492,22 @@ def user_can_access_request_entity(
     if not request:
         return False
 
-    user_city = None
+    # Полный контекст доступа, а не только город.
+    #
+    # Раньше здесь считался один город — для областей CLIENT и
+    # RESPONSIBLE_CLIENTS этого мало: обе решают доступ по набору id
+    # клиентов, и без контекста набор пустой, то есть «не видно ничего».
+    # Клиент в кабинете не получал файлы ни одной своей заявки, а
+    # менеджер с областью «ответственный за клиентов» — файлы заявок
+    # своих же клиентов.
+    access_context = build_request_access_context(cursor, current_user)
 
-    if user_is_limited_executor(current_user):
-        user_city = get_current_user_city(cursor, current_user)
-
-    return user_can_access_request(request, current_user, user_city)
+    return user_can_access_request(
+        request,
+        current_user,
+        access_context.get("user_city"),
+        access_context,
+    )
 
 
 def user_can_access_attachment_entity(

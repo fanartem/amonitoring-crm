@@ -5,10 +5,12 @@ import { getWorkTypeLabel, getWorkTypeColor } from '../../utils/workTypes'
 import {
 	canCreatePortalComment,
 	canCreatePortalRequest,
+	canViewPortalAttachments,
 	getStoredUser,
 	getUserClientId,
 	isPortalReadOnly,
 } from '../../utils/access'
+import AttachmentsPanel from '../AttachmentsPanel'
 import PortalCreateRequestModal from './PortalCreateRequestModal'
 import { usePortalNotifications } from './PortalNotificationsContext'
 import './styles/PortalShell.css'
@@ -98,6 +100,7 @@ export default function PortalRequests() {
 	const currentUser = getStoredUser()
 	const ownClientId = getUserClientId(currentUser)
 	const canComment = canCreatePortalComment(currentUser)
+	const canSeeFiles = canViewPortalAttachments(currentUser)
 
 	// Право на создание и режим чтения — разные вещи. Право снимает
 	// администратор, режим чтения включается блокировкой обслуживания,
@@ -362,9 +365,9 @@ export default function PortalRequests() {
 				}
 
 				.portal-req-filter.active {
-					border-color: #cfe6b8;
-					background: #f0f7e8;
-					color: #3f6b1a;
+					border-color: var(--pb-border, #cfe6b8);
+					background: var(--pb-soft-bg, #f0f7e8);
+					color: var(--pb-soft-text, #3f6b1a);
 					font-weight: 600;
 				}
 
@@ -453,9 +456,9 @@ export default function PortalRequests() {
 				}
 
 				.portal-req-btn.primary {
-					background: #5e9424;
-					border-color: #5e9424;
-					color: #fff;
+					background: var(--pb-primary, #5e9424);
+					border-color: var(--pb-primary, #5e9424);
+					color: var(--pb-on-primary, #fff);
 					font-weight: 600;
 				}
 
@@ -913,6 +916,26 @@ export default function PortalRequests() {
 											))
 										)}
 									</div>
+
+									{/* Файлы заявки.
+
+									    Панель та же, что в CRM: список, загрузка и права
+									    на каждый файл считает сервер, а не интерфейс.
+									    Внутренние файлы сюда не попадают — их отсекает
+									    user_can_view_attachment до выдачи списка. */}
+									{canSeeFiles && (
+										<div className='portal-req-section'>
+											<div className='portal-req-section-title'>
+												Файлы заявки
+											</div>
+
+											<AttachmentsPanel
+												title=''
+												entityType='REQUEST'
+												entityId={detailRequest.id}
+											/>
+										</div>
+									)}
 
 									{detailRequest.can_view_prices &&
 										(detail.price_lines || []).length > 0 && (

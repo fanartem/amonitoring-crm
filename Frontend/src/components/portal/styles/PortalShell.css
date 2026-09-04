@@ -1,12 +1,24 @@
 /* =========================================================================
    Шапка кабинета, колокольчик и всплывающие уведомления.
 
-   Цвет шапки — тот же #5a8a1f, что у сайдбара: раньше шапка была белым
+   Цвет шапки — тот же, что у сайдбара: раньше шапка была белым
    прямоугольником со шрифтом по умолчанию и рядом с зелёным сайдбаром
    читалась как чужой элемент.
 
    Префикс pn- (portal notifications) для колокольчика и всплывающих,
    portal-header- для самой шапки.
+
+   --------------------------------------------------------------------
+   ФИРМЕННОЕ ОФОРМЛЕНИЕ
+
+   Цвета записаны как var(--pb-*, «как было»). Переменные ставит
+   portalTheme.js — но только тем клиентам, кому настроили брендинг.
+   У всех остальных переменных нет, срабатывает запасное значение,
+   и кабинет выглядит ровно как раньше, до символа.
+
+   Поэтому: НЕ заменяйте запасные значения на новые «правильные» —
+   это единственное, что защищает сегодняшний вид от расчёта, который
+   его никто не просил менять.
    ========================================================================= */
 
 .portal-header {
@@ -16,13 +28,30 @@
 	gap: 16px;
 	flex-wrap: wrap;
 	padding: 10px 20px;
-	background: #81b836;
-	color: #fff;
+	background: var(--pb-header-bg, #81b836);
+	color: var(--pb-header-text, #fff);
 	border-bottom: none;
 }
 
 .portal-header-brand {
+	display: flex;
+	align-items: center;
+	gap: 12px;
 	min-width: 0;
+}
+
+.portal-header-brand-text {
+	min-width: 0;
+}
+
+/* Логотип клиента. Высота фиксированная, ширина — какая получится:
+   логотипы приходят разной пропорции, и подгонять их по ширине значит
+   растягивать чужой знак. max-width спасает от совсем длинных. */
+.portal-header-logo {
+	height: 30px;
+	max-width: 180px;
+	object-fit: contain;
+	flex-shrink: 0;
 }
 
 .portal-header-title {
@@ -35,7 +64,7 @@
 .portal-header-client {
 	font-size: 15px;
 	font-weight: 600;
-	color: #fff;
+	color: var(--pb-header-text, #fff);
 	margin-top: 2px;
 	line-height: 1.35;
 	word-break: break-word;
@@ -57,13 +86,13 @@
 .portal-header-user-name {
 	font-size: 13px;
 	font-weight: 600;
-	color: #fff;
+	color: var(--pb-header-text, #fff);
 	word-break: break-word;
 }
 
 .portal-header-user-email {
 	font-size: 11.5px;
-	color: rgba(255, 255, 255, 0.75);
+	color: var(--pb-header-text-muted, rgba(255, 255, 255, 0.75));
 	word-break: break-all;
 }
 
@@ -82,14 +111,17 @@
 	height: 36px;
 	border: none;
 	border-radius: 9px;
-	background: rgba(255, 255, 255, 0.14);
-	color: #fff;
+	/* Подложка из цвета надписей, а не из белого: на светлой шапке
+	   надписи становятся тёмными, и белая полупрозрачная подложка
+	   под ними просто исчезает. */
+	background: var(--pb-header-btn-bg, rgba(255, 255, 255, 0.14));
+	color: var(--pb-header-text, #fff);
 	cursor: pointer;
 	transition: background 0.15s;
 }
 
 .pn-bell-btn:hover {
-	background: rgba(255, 255, 255, 0.26);
+	background: var(--pb-header-btn-bg-hover, rgba(255, 255, 255, 0.26));
 }
 
 .pn-bell-badge {
@@ -106,7 +138,8 @@
 	font-weight: 700;
 	line-height: 18px;
 	text-align: center;
-	box-shadow: 0 0 0 2px #5a8a1f;
+	/* Обводка счётчика цветом шапки — она вырезает бейдж из фона. */
+	box-shadow: 0 0 0 2px var(--pb-header-bg, #5a8a1f);
 }
 
 .pn-dropdown {
@@ -193,15 +226,15 @@
 }
 
 .pn-item:hover {
-	background: #f6f9f1;
+	background: var(--pb-soft-bg, #f6f9f1);
 }
 
 .pn-item.unread {
-	background: #f4f8ee;
+	background: var(--pb-soft-bg, #f4f8ee);
 }
 
 .pn-item.unread:hover {
-	background: #edf4e3;
+	background: var(--pb-sidebar-hover-bg, #edf4e3);
 }
 
 .pn-item-main {
@@ -233,7 +266,7 @@
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
-	background: #5a8a1f;
+	background: var(--pb-primary, #5a8a1f);
 	flex-shrink: 0;
 	margin-top: 5px;
 }
@@ -258,7 +291,7 @@
 	gap: 8px;
 	background: #fff;
 	border: 1px solid #e0e5ea;
-	border-left: 4px solid #5a8a1f;
+	border-left: 4px solid var(--pb-primary, #5a8a1f);
 	border-radius: 11px;
 	box-shadow: 0 12px 30px rgba(0, 0, 0, 0.19);
 	padding: 11px 12px;
@@ -320,8 +353,10 @@
 /* ---------- Подсветка изменённой заявки в списке ---------- */
 
 .portal-req-card.pn-changed {
-	border-color: #cfe6b8;
-	box-shadow: 0 0 0 2px rgba(90, 138, 31, 0.13);
+	border-color: var(--pb-border, #cfe6b8);
+	/* Кольцо оставляем полупрозрачным зелёным: пересчитывать его из
+	   переменной нечем — rgba() не собирается из hex средствами CSS. */
+	box-shadow: 0 0 0 2px var(--pb-focus-ring, rgba(90, 138, 31, 0.13));
 }
 
 .pn-changed-note {
@@ -331,10 +366,10 @@
 	margin-top: 10px;
 	padding: 8px 10px;
 	border-radius: 8px;
-	background: #f4f8ee;
-	border: 1px solid #dfeacd;
+	background: var(--pb-soft-bg, #f4f8ee);
+	border: 1px solid var(--pb-border, #dfeacd);
 	font-size: 12.5px;
-	color: #43690f;
+	color: var(--pb-soft-text, #43690f);
 	line-height: 1.45;
 }
 
@@ -346,8 +381,8 @@
 	letter-spacing: 0.03em;
 	padding: 2px 7px;
 	border-radius: 9px;
-	background: #5a8a1f;
-	color: #fff;
+	background: var(--pb-primary, #5a8a1f);
+	color: var(--pb-on-primary, #fff);
 	white-space: nowrap;
 	margin-left: 8px;
 }
@@ -363,6 +398,11 @@
 		display: none;
 	}
 
+	.portal-header-logo {
+		height: 24px;
+		max-width: 120px;
+	}
+
 	.pn-dropdown {
 		width: calc(100vw - 24px);
 		right: -8px;
@@ -375,3 +415,61 @@
 		width: auto;
 	}
 }
+
+/* ===========================================================================
+   ДОБАВИТЬ В КОНЕЦ frontend/src/components/portal/styles/PortalShell.css
+
+   Сайдбар кабинета в фирменных цветах.
+
+   ПОЧЕМУ ЗДЕСЬ, А НЕ В App.css / index.css.
+
+   Класс .sidebar общий: им пользуются и CRM, и кабинет (PortalSidebar.jsx
+   намеренно собран на тех же классах, чтобы не заводить второй набор
+   стилей). Правки в App.css или index.css перекрасили бы заодно и сайдбар
+   сотрудников — а заодно потребовали бы внести их ДВАЖДЫ: эти два файла
+   содержат одинаковый блок сайдбара, уже разошедшийся по ширине
+   (150px против 175px). Любая правка там — это правка, которую легко
+   сделать в одном файле и забыть во втором.
+
+   Здесь же всё живёт в одном месте и действует только внутри .portal-app.
+   Специфичность .portal-app .sidebar (0,2,0) выше, чем .sidebar (0,1,0),
+   поэтому файл подключения этих стилей не требует ничего менять в порядке
+   импортов.
+
+   Запасные значения — сегодняшние цвета кабинета. Клиенту без брендинга
+   переменные не приходят, и сайдбар выглядит ровно как раньше.
+   =========================================================================== */
+
+.portal-app .sidebar {
+	background-color: var(--pb-sidebar-bg, #5a8a1f);
+}
+
+.portal-app .sidebar .nav-item,
+.portal-app .sidebar .menu-btn {
+	color: var(--pb-sidebar-text-muted, rgba(255, 255, 255, 0.8));
+}
+
+.portal-app .sidebar .nav-item:hover,
+.portal-app .sidebar .menu-btn:hover {
+	color: var(--pb-sidebar-text, #fff);
+	background: var(--pb-sidebar-hover-bg, rgba(255, 255, 255, 0.08));
+}
+
+/* Активный пункт.
+ *
+ * Сегодня это полупрозрачная белая подложка. В фирменной теме — заливка
+ * основным цветом: он светлее сайдбара (сайдбар считается как основной
+ * цвет минус 18% яркости), и потому активный пункт читается как
+ * подсвеченный, а не как «чуть другое пятно».
+ *
+ * Правило перебивает мобильный блок с background: transparent —
+ * у того специфичность ниже. */
+.portal-app .sidebar .nav-item.active {
+	color: var(--pb-sidebar-text-active, #fff);
+	background: var(--pb-sidebar-active-bg, rgba(255, 255, 255, 0.12));
+	border-left-color: var(--pb-sidebar-text-active, #fff);
+}
+
+/* Мобильного блока здесь нет намеренно: там .nav-item получает
+   width: 240px !important при сайдбаре в 65px, но панель стоит с
+   overflow: hidden, и лишняя заливка просто обрезается. */

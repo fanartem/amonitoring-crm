@@ -192,8 +192,8 @@ export default function PortalProfile() {
 				}
 
 				.portal-submit-btn {
-					background: #5e9424;
-					color: #fff;
+					background: var(--pb-primary, #5e9424);
+					color: var(--pb-on-primary, #fff);
 					border: none;
 					border-radius: 6px;
 					padding: 10px 18px;

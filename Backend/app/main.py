@@ -24,6 +24,7 @@ from app.routers import (
     portal,
     portal_requests,
     portal_notifications,
+    client_branding,
 )
 
 load_dotenv()
@@ -67,6 +68,8 @@ app.include_router(portal_users.router)
 app.include_router(portal.router)
 app.include_router(portal_requests.router)
 app.include_router(portal_notifications.router)
+app.include_router(client_branding.router)
+app.include_router(client_branding.portal_router)
 
 @app.get("/", include_in_schema=False)
 def main_root():

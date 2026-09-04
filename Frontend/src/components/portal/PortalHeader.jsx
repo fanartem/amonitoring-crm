@@ -16,14 +16,18 @@ import './styles/PortalShell.css'
 //
 // Раньше это был белый прямоугольник с текстом по умолчанию — рядом
 // с зелёным сайдбаром он выглядел как чужой элемент. Теперь цвет тот же,
-// что у сайдбара (#5a8a1f), и шапка читается с ним как одна панель.
+// что у сайдбара, и шапка читается с ним как одна панель.
+//
+// Логотип приходит готовой строкой data-URI из PortalApp: запрос за
+// оформлением один на весь кабинет, и шапка в него не ходит.
+// Решение Р60(А): в шапке только логотип клиента, нашего знака рядом нет.
 //
 // Колокольчик живёт здесь же и берёт данные из общего провайдера:
 // собственного опроса у него нет.
 
 const DROPDOWN_LIMIT = 15
 
-export default function PortalHeader({ user }) {
+export default function PortalHeader({ user, logoDataUrl = null }) {
 	const navigate = useNavigate()
 
 	const currentUser = user || getStoredUser()
@@ -112,9 +116,21 @@ export default function PortalHeader({ user }) {
 	return (
 		<header className='portal-header'>
 			<div className='portal-header-brand'>
-				<div className='portal-header-title'>Личный кабинет</div>
+				{logoDataUrl && (
+					<img
+						className='portal-header-logo'
+						src={logoDataUrl}
+						alt={clientName || 'Логотип организации'}
+					/>
+				)}
 
-				{clientName && <div className='portal-header-client'>{clientName}</div>}
+				<div className='portal-header-brand-text'>
+					<div className='portal-header-title'>Личный кабинет</div>
+
+					{clientName && (
+						<div className='portal-header-client'>{clientName}</div>
+					)}
+				</div>
 			</div>
 
 			<div className='portal-header-right'>

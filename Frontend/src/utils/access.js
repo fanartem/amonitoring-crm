@@ -314,3 +314,9 @@ export const canAccessRoute = (routeKey, user = getStoredUser()) => {
 			return false
 	}
 }
+
+export const canViewPortalAttachments = user =>
+	hasAnyPermission(user, ['portal.attachments.view'])
+
+export const canUploadPortalAttachments = user =>
+	hasAnyPermission(user, ['portal.attachments.upload'])

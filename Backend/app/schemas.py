@@ -650,3 +650,11 @@ class UserRoleUpdate(BaseModel):
     role: str
     city: str | None = None
     reason: str | None = None
+
+class ClientBrandingUpdate(BaseModel):
+    # Выключатель без потери настроек: цвет и логотип остаются в базе,
+    # кабинет при этом выглядит стандартно.
+    is_enabled: bool = True
+ 
+    # None или пустая строка — «цвет не задан», стандартное оформление.
+    base_color: str | None = None

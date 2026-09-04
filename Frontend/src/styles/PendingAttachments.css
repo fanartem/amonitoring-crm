@@ -1,0 +1,198 @@
+.pending-attachments {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.pending-attachments-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.pending-attachments-title {
+	font-size: 13px;
+	font-weight: 700;
+	color: #2f3640;
+}
+
+.pending-attachments-hint {
+	margin-top: 4px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: #6b7280;
+	max-width: 620px;
+}
+
+.pending-attachments-add-btn {
+	flex-shrink: 0;
+	border: 1px solid #c7d2fe;
+	background: #eef2ff;
+	color: #3730a3;
+	border-radius: 8px;
+	padding: 7px 14px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	white-space: nowrap;
+	transition:
+		background 0.15s ease,
+		border-color 0.15s ease;
+}
+
+.pending-attachments-add-btn:hover:not(:disabled) {
+	background: #e0e7ff;
+	border-color: #a5b4fc;
+}
+
+.pending-attachments-add-btn:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.pending-attachments-error {
+	border: 1px solid #f0b4b4;
+	background: #fff5f5;
+	color: #a12727;
+	border-radius: 8px;
+	padding: 8px 12px;
+	font-size: 12px;
+	line-height: 1.5;
+	/* Причин отказа может быть несколько — по одной на файл. */
+	white-space: pre-line;
+}
+
+.pending-attachments-empty {
+	border: 1px dashed #d7dce3;
+	border-radius: 8px;
+	padding: 12px 14px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: #8a919c;
+}
+
+.pending-attachments-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.pending-attachments-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	border: 1px solid #e3e7ee;
+	border-radius: 8px;
+	background: #ffffff;
+	padding: 8px 10px;
+}
+
+.pending-attachments-item.is-internal {
+	background: #fffdf5;
+	border-color: #f2d98c;
+}
+
+.pending-attachments-file-icon {
+	flex-shrink: 0;
+	font-size: 16px;
+	line-height: 1;
+}
+
+.pending-attachments-file-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.pending-attachments-file-name {
+	font-size: 13px;
+	font-weight: 600;
+	color: #2f3640;
+	/* Имена вроде «Акт выполненных работ ТОО ... .pdf» не должны
+	   разрывать строку модалки. */
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pending-attachments-file-meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 2px;
+	font-size: 11px;
+	color: #8a919c;
+}
+
+.pending-attachments-internal-badge {
+	padding: 1px 8px;
+	border-radius: 10px;
+	font-size: 11px;
+	font-weight: 700;
+	background: #fff8e1;
+	color: #7a5a00;
+	border: 1px solid #f2d98c;
+	white-space: nowrap;
+}
+
+.pending-attachments-internal-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+	font-size: 12px;
+	font-weight: 600;
+	color: #7a5a00;
+	background: #fff8e1;
+	border: 1px solid #f2d98c;
+	border-radius: 14px;
+	padding: 4px 10px;
+	cursor: pointer;
+	user-select: none;
+	white-space: nowrap;
+}
+
+.pending-attachments-internal-toggle input {
+	accent-color: #b47c00;
+	cursor: pointer;
+	margin: 0;
+}
+
+.pending-attachments-remove-btn {
+	flex-shrink: 0;
+	width: 26px;
+	height: 26px;
+	border: 1px solid #f0b4b4;
+	background: #fff5f5;
+	color: #a12727;
+	border-radius: 6px;
+	font-size: 16px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 0;
+}
+
+.pending-attachments-remove-btn:hover:not(:disabled) {
+	background: #ffe8e8;
+}
+
+.pending-attachments-remove-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.pending-attachments-counter {
+	font-size: 11px;
+	color: #8a919c;
+}
+
+@media (max-width: 640px) {
+	.pending-attachments-add-btn {
+		width: 100%;
+	}
+
+	.pending-attachments-internal-toggle {
+		order: 3;
+	}
+}
