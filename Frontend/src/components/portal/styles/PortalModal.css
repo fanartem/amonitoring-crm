@@ -518,3 +518,70 @@
 		flex: 1 1 auto;
 	}
 }
+
+/* ---------------------------------------------------------------------------
+   Липкий баннер ошибки.
+
+   .pm-body — единственный прокручиваемый контейнер окна, поэтому sticky
+   внутри него держит баннер у верхнего края формы, а не у края экрана.
+   Нужен именно он: форма длинная, и уехав вниз, человек переставал
+   видеть, что вообще пошло не так.
+   --------------------------------------------------------------------------- */
+
+.pm-banner.pm-sticky {
+	position: sticky;
+	top: 0;
+	z-index: 6;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	box-shadow: 0 6px 16px rgba(15, 23, 42, 0.14);
+}
+
+.pm-banner-text {
+	flex: 1;
+	min-width: 0;
+}
+
+.pm-banner-close {
+	flex-shrink: 0;
+	background: rgba(0, 0, 0, 0.06);
+	border: none;
+	border-radius: 6px;
+	width: 22px;
+	height: 22px;
+	line-height: 1;
+	font-size: 16px;
+	color: inherit;
+	cursor: pointer;
+	padding: 0;
+}
+
+.pm-banner-close:hover {
+	background: rgba(0, 0, 0, 0.12);
+}
+
+/* ---------------------------------------------------------------------------
+   Поле, на котором споткнулась проверка
+   --------------------------------------------------------------------------- */
+
+.pm-input.pm-invalid,
+.pm-select.pm-invalid,
+.pm-textarea.pm-invalid {
+	border-color: #d64545;
+	background: #fffafa;
+}
+
+.pm-input.pm-invalid:focus,
+.pm-select.pm-invalid:focus,
+.pm-textarea.pm-invalid:focus {
+	border-color: #d64545;
+	box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.16);
+}
+
+/* Карточка ТС целиком: у машины ошибка может быть в любом из пяти полей,
+   и рамка помогает найти нужную карточку среди полусотни. */
+.pm-card.pm-card-invalid {
+	border-color: #e9a5a5;
+	box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.1);
+}

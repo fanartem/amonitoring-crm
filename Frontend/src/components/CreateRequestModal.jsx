@@ -476,6 +476,13 @@ export default function CreateRequestModal({
 		work_time: '',
 		schedule_approval_reason: '',
 
+		// Контактное лицо ЗАЯВКИ, а не карточки клиента. У клиента
+		// в карточке обычно бухгалтер или директор, а монтажника
+		// на объекте встречает водитель или завгар — и у каждой
+		// заявки он свой.
+		contact_name: '',
+		contact_phone: '',
+
 		platform: '',
 		manager_comment: '',
 	})
@@ -483,6 +490,10 @@ export default function CreateRequestModal({
 	const [error, setError] = useState('')
 	const [missingFields, setMissingFields] = useState([])
 	const [loading, setLoading] = useState(false)
+
+	// Пока менеджер не тронул контакт руками, он следует за клиентом.
+	// Как только тронул — перестаёт: выбор человека важнее подстановки.
+	const [contactTouched, setContactTouched] = useState(false)
 
 	const vehicleImportInputRef = useRef(null)
 	const vehicleImportNoticeTimeoutRef = useRef(null)
@@ -515,6 +526,9 @@ export default function CreateRequestModal({
 		work_date: '',
 		work_time: '',
 		schedule_approval_reason: '',
+
+		contact_name: '',
+		contact_phone: '',
 
 		platform: '',
 		manager_comment: '',
@@ -569,6 +583,14 @@ export default function CreateRequestModal({
 				work_time: scheduledAt.time,
 				schedule_approval_reason:
 					editRequestData.schedule_approval_reason || '',
+
+				// У заявок, созданных до появления полей, контакта нет.
+				// Подставляем контакт клиента: менеджер увидит, кого
+				// система считает контактным лицом, и сможет поправить.
+				contact_name:
+					editRequestData.contact_name || editRequestData.client_name || '',
+				contact_phone:
+					editRequestData.contact_phone || editRequestData.phone || '',
 
 				platform: editRequestData.platform || '',
 				manager_comment: '',
@@ -724,6 +746,46 @@ export default function CreateRequestModal({
 			cancelled = true
 		}
 	}, [isOpen, isEditMode, installationSettingsSourceClientId])
+
+	// Выбирает ли клиент время работ. У части клиентов (банки) время
+	// определяет договор, и сервер подставит ближайший рабочий слот сам.
+	// Отсутствие настроек читаем как «выбирает» — то же правило, что
+	// на бэкенде: молчание значит «как у всех».
+	//
+	// В режиме редактирования параметры не грузятся вовсе, и это верно:
+	// у существующей заявки время уже есть, стирать его нельзя.
+	const scheduleTimeRequired =
+		clientInstallationSettings?.settings?.schedule_time_required !== false
+
+	// Новый клиент: контакт заявки повторяет то, что менеджер вводит
+	// в карточке, пока он не начал править контакт отдельно.
+	useEffect(() => {
+		if (!isOpen || isEditMode) return
+		if (clientKind !== 'new') return
+		if (contactTouched) return
+
+		setFormData(prev => {
+			if (
+				prev.contact_name === prev.client_name &&
+				prev.contact_phone === prev.phone
+			) {
+				return prev
+			}
+
+			return {
+				...prev,
+				contact_name: prev.client_name,
+				contact_phone: prev.phone,
+			}
+		})
+	}, [
+		isOpen,
+		isEditMode,
+		clientKind,
+		contactTouched,
+		formData.client_name,
+		formData.phone,
+	])
 
 	const fetchClients = async () => {
 		try {
@@ -1053,6 +1115,18 @@ export default function CreateRequestModal({
 		clearMissingField(name)
 	}
 
+	// Контакт заявки правится отдельно от карточки клиента: с этого
+	// момента подстановка из клиента его больше не трогает.
+	const handleContactChange = e => {
+		const { name, value } = e.target
+
+		setContactTouched(true)
+
+		setFormData(prev => ({ ...prev, [name]: value }))
+
+		clearMissingField(name)
+	}
+
 	const getClientLabel = client => {
 		if (!client) return ''
 
@@ -1156,6 +1230,12 @@ export default function CreateRequestModal({
 				email: client.email || '',
 				company_name: client.company_name || '',
 				payment_type: client.payment_type || 'PREPAYMENT',
+
+				// Контакт заявки предзаполняем контактом клиента, но только
+				// если менеджер ещё не вписал свой: смена клиента не должна
+				// затирать уже введённое вручную.
+				contact_name: contactTouched ? prev.contact_name : client.name || '',
+				contact_phone: contactTouched ? prev.contact_phone : client.phone || '',
 			}))
 
 			fetchClientVehicles(client.id)
@@ -1362,6 +1442,7 @@ export default function CreateRequestModal({
 
 	const handleClose = () => {
 		setClientKind(canCreateClient ? 'new' : 'existing')
+		setContactTouched(false)
 		setError('')
 		setMissingFields([])
 		setClientVehicles([])
@@ -1423,6 +1504,12 @@ export default function CreateRequestModal({
 		if (!formData.city.trim()) required.push('city')
 		if (!formData.platform.trim()) required.push('platform')
 
+		// Контакт заявки обязателен. Сервер при пустом значении подставит
+		// контакт клиента, но молча соглашаться на это не стоит: смысл
+		// блока в том, чтобы менеджер осознанно указал, кого встречать.
+		if (!formData.contact_name.trim()) required.push('contact_name')
+		if (!formData.contact_phone.trim()) required.push('contact_phone')
+
 		if (clientRequestBlocked) {
 			setError(
 				'Клиент заблокирован. Создание заявки для заблокированного клиента запрещено.',
@@ -1454,12 +1541,19 @@ export default function CreateRequestModal({
 			required.push('parent_client_id')
 		}
 
-		if (!formData.work_date) {
-			required.push('work_date')
-		}
+		// Пустые дата и время допустимы только вместе и только у клиента,
+		// которому время назначаем мы. Половина значения — всегда ошибка:
+		// из даты без часа заявку не поставить в календарь.
+		const scheduleIsEmpty = !formData.work_date && !formData.work_time
 
-		if (!formData.work_time) {
-			required.push('work_time')
+		if (scheduleTimeRequired || !scheduleIsEmpty) {
+			if (!formData.work_date) {
+				required.push('work_date')
+			}
+
+			if (!formData.work_time) {
+				required.push('work_time')
+			}
 		}
 
 		if (
@@ -1523,7 +1617,11 @@ export default function CreateRequestModal({
 			return false
 		}
 
-		if (scheduleWasChanged && !HALF_HOUR_OPTIONS.includes(formData.work_time)) {
+		if (
+			scheduleWasChanged &&
+			formData.work_time &&
+			!HALF_HOUR_OPTIONS.includes(formData.work_time)
+		) {
 			setMissingFields(['work_time'])
 			setError(
 				'Время начала работ должно быть в диапазоне с 08:00 до 20:00 с шагом 30 минут.',
@@ -1531,7 +1629,7 @@ export default function CreateRequestModal({
 			return false
 		}
 
-		if (scheduleWasChanged && !canBypassScheduleRules) {
+		if (scheduledAt && scheduleWasChanged && !canBypassScheduleRules) {
 			const selectedComparable = localDateTimeToComparable(scheduledAt)
 			const minimumComparable = getMinimumScheduleComparable(
 				formData,
@@ -1713,6 +1811,8 @@ export default function CreateRequestModal({
 						? formData.visit_price_code || 'ON_SITE_CITY'
 						: null,
 				platform: formData.platform.trim(),
+				contact_name: formData.contact_name.trim(),
+				contact_phone: formData.contact_phone.trim(),
 				scheduled_at: scheduledAt || null,
 				schedule_approval_reason:
 					scheduledAt && !isWorkingScheduleTime(scheduledAt)
@@ -2673,7 +2773,7 @@ export default function CreateRequestModal({
 
 									<label className='request-modal-field'>
 										<span className='request-modal-label required'>
-											Контактный номер
+											Телефон клиента
 										</span>
 										<input
 											className={fieldClass('phone')}
@@ -2726,6 +2826,44 @@ export default function CreateRequestModal({
 											)}
 										</label>
 									)}
+								</div>
+							</div>
+
+							<div className='request-modal-card'>
+								<div className='request-modal-section-title'>
+									Контактное лицо заявки
+								</div>
+
+								<div className='request-modal-grid'>
+									<label className='request-modal-field'>
+										<span className='request-modal-label required'>
+											ФИО контактного лица
+										</span>
+
+										<input
+											className={fieldClass('contact_name')}
+											type='text'
+											name='contact_name'
+											value={formData.contact_name}
+											onChange={handleContactChange}
+											placeholder='Кто встречает на объекте'
+										/>
+									</label>
+
+									<label className='request-modal-field'>
+										<span className='request-modal-label required'>
+											Телефон для связи
+										</span>
+
+										<input
+											className={fieldClass('contact_phone')}
+											type='tel'
+											name='contact_phone'
+											value={formData.contact_phone}
+											onChange={handleContactChange}
+											placeholder='+7 ___ ___ __ __'
+										/>
+									</label>
 								</div>
 							</div>
 
@@ -2785,8 +2923,11 @@ export default function CreateRequestModal({
 									</label>
 
 									<div className='request-modal-field request-datetime-field'>
-										<span className='request-modal-label required'>
+										<span
+											className={`request-modal-label ${scheduleTimeRequired ? 'required' : ''}`}
+										>
 											Выберите дату и время
+											{!scheduleTimeRequired && ' (необязательно)'}
 										</span>
 
 										<div className='request-datetime-controls'>
@@ -2856,6 +2997,15 @@ export default function CreateRequestModal({
 												))}
 											</select>
 										</div>
+
+										{!scheduleTimeRequired && (
+											<span className='request-modal-hint'>
+												По договору этого клиента время назначаем мы. Оставьте
+												поля пустыми — заявка встанет на ближайшее рабочее время
+												с учётом дороги (пн–пт, 10:00–17:30). Если время
+												согласовано с клиентом, укажите его здесь.
+											</span>
+										)}
 									</div>
 
 									{getScheduledAtValue(formData) &&

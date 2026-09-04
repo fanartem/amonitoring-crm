@@ -1201,6 +1201,7 @@ def load_client_installation_settings_row(cursor, client_id: int) -> dict | None
             has_beacon,
             beacon_subscription_months,
             vin_required,
+            schedule_time_required,
             created_at,
             updated_at
         FROM client_installation_settings
@@ -1256,6 +1257,11 @@ def build_installation_settings_payload(
             # Отсутствие значения читаем как «обязателен»: настройка
             # может только ослабить требование, и только осознанно.
             "vin_required": bool(row.get("vin_required", 1)),
+
+            # Снятая галочка не отменяет время, а перестаёт спрашивать его
+            # у клиента: при создании заявки подставится ближайший рабочий
+            # слот. Календарь и сортировка продолжают работать.
+            "schedule_time_required": bool(row.get("schedule_time_required", 1)),
 
             "updated_at": row.get("updated_at") or row.get("created_at"),
         },
@@ -1350,6 +1356,12 @@ def describe_installation_settings(payload: dict) -> str:
         "VIN обязателен"
         if settings.get("vin_required", True)
         else "VIN необязателен при создании заявки"
+    )
+
+    parts.append(
+        "клиент выбирает время работ"
+        if settings.get("schedule_time_required", True)
+        else "время работ подставляется автоматически"
     )
 
     if payload.get("source") == "INHERITED":
@@ -3295,6 +3307,11 @@ def update_client_installation_settings(
             # равно не получится — проверка стоит в /requests/{id}/complete.
             vin_required = bool(data.vin_required)
 
+            # Снятая галочка убирает поле времени из кабинета клиента.
+            # Само время никуда не девается — оно подставляется ближайшим
+            # рабочим слотом в момент создания заявки.
+            schedule_time_required = bool(data.schedule_time_required)
+
             # Блокировка и подписка трекера существуют только вместе с трекером.
             has_blocking = bool(data.has_blocking) if gps_price_code else False
 
@@ -3343,10 +3360,11 @@ def update_client_installation_settings(
                     has_beacon,
                     beacon_subscription_months,
                     vin_required,
+                    schedule_time_required,
                     created_by,
                     updated_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     visit_type = VALUES(visit_type),
                     visit_price_code = VALUES(visit_price_code),
@@ -3357,6 +3375,7 @@ def update_client_installation_settings(
                     has_beacon = VALUES(has_beacon),
                     beacon_subscription_months = VALUES(beacon_subscription_months),
                     vin_required = VALUES(vin_required),
+                    schedule_time_required = VALUES(schedule_time_required),
                     updated_by = VALUES(updated_by)
                 """,
                 (
@@ -3370,6 +3389,7 @@ def update_client_installation_settings(
                     1 if has_beacon else 0,
                     beacon_months,
                     1 if vin_required else 0,
+                    1 if schedule_time_required else 0,
                     current_user["id"],
                     current_user["id"],
                 ),

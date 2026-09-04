@@ -1495,56 +1495,11 @@ def client_vin_is_required(cursor, client_id: int | None) -> bool:
     """
     Обязателен ли VIN при создании заявки для этого клиента.
 
-    Правило наследования повторяет resolve_client_installation_settings
-    из clients.py: берём параметры ближайшего по цепочке клиента,
-    У КОТОРОГО ОНИ ЗАДАНЫ, и читаем его галочку. Не «ближайшего, где
-    галочка снята» — иначе настройка деда перебивала бы настройку отца.
-
-    Параметров нет нигде по цепочке — VIN обязателен. Отсутствие
-    настройки не должно ослаблять требование: молчание значит «как
-    у всех», а не «можно без VIN».
+    Правило наследования и поведение при отсутствии параметров —
+    в client_installation_flag_is_enabled: оно общее для всех настроек
+    «что клиент обязан указать», и второй его копии быть не должно.
     """
-    if not client_id:
-        return True
-
-    cursor.execute(
-        """
-        WITH RECURSIVE client_chain AS (
-            SELECT
-                c.id,
-                c.parent_client_id,
-                0 AS depth
-            FROM clients c
-            WHERE c.id = %s
-
-            UNION ALL
-
-            SELECT
-                p.id,
-                p.parent_client_id,
-                chain.depth + 1
-            FROM clients p
-            INNER JOIN client_chain chain
-                ON p.id = chain.parent_client_id
-            WHERE p.is_deleted = 0
-              AND chain.depth < %s
-        )
-        SELECT cis.vin_required
-        FROM client_chain
-        INNER JOIN client_installation_settings cis
-            ON cis.client_id = client_chain.id
-        ORDER BY client_chain.depth ASC
-        LIMIT 1
-        """,
-        (int(client_id), CLIENT_PORTAL_TREE_MAX_DEPTH),
-    )
-
-    row = cursor.fetchone()
-
-    if not row:
-        return True
-
-    return to_bool(row.get("vin_required"))
+    return client_installation_flag_is_enabled(cursor, client_id, "vin_required")
 
 
 def vehicle_vin_is_empty(vehicle: dict | None) -> bool:
@@ -1612,3 +1567,90 @@ def describe_vehicle_without_vin(vehicle: dict, index: int | None = None) -> str
         parts.append(plate)
 
     return " · ".join(parts) or "автомобиль"
+
+# ============================================================================
+# Настройки договора, которые решают, что клиент ОБЯЗАН указать при создании
+# заявки.
+#
+# Таких настроек уже две — vin_required и schedule_time_required, — и правило
+# наследования у них одно: берём параметры ближайшего по цепочке клиента,
+# У КОТОРОГО ОНИ ЗАДАНЫ, и читаем нужную колонку. Не «ближайшего, где галочка
+# снята»: иначе настройка деда перебивала бы настройку отца.
+#
+# Отсутствие параметров где-либо по цепочке означает «требуется». Молчание —
+# это «как у всех», а не разрешение пропустить поле.
+# ============================================================================
+
+# Белый список: имя колонки подставляется в SQL, и приходить снаружи оно
+# не должно никогда.
+CLIENT_INSTALLATION_FLAG_COLUMNS = {
+    "vin_required",
+    "schedule_time_required",
+}
+
+
+def client_installation_flag_is_enabled(cursor, client_id: int | None, column: str) -> bool:
+    """
+    Значение флага параметров установки с учётом наследования по дереву.
+
+    Возвращает True, если параметров нет нигде по цепочке.
+    """
+    if column not in CLIENT_INSTALLATION_FLAG_COLUMNS:
+        raise ValueError(f"Неизвестная настройка параметров установки: {column}")
+
+    if not client_id:
+        return True
+
+    cursor.execute(
+        f"""
+        WITH RECURSIVE client_chain AS (
+            SELECT
+                c.id,
+                c.parent_client_id,
+                0 AS depth
+            FROM clients c
+            WHERE c.id = %s
+
+            UNION ALL
+
+            SELECT
+                p.id,
+                p.parent_client_id,
+                chain.depth + 1
+            FROM clients p
+            INNER JOIN client_chain chain
+                ON p.id = chain.parent_client_id
+            WHERE p.is_deleted = 0
+              AND chain.depth < %s
+        )
+        SELECT cis.{column} AS flag_value
+        FROM client_chain
+        INNER JOIN client_installation_settings cis
+            ON cis.client_id = client_chain.id
+        ORDER BY client_chain.depth ASC
+        LIMIT 1
+        """,
+        (int(client_id), CLIENT_PORTAL_TREE_MAX_DEPTH),
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        return True
+
+    return to_bool(row.get("flag_value"))
+
+
+def client_schedule_time_is_required(cursor, client_id: int | None) -> bool:
+    """
+    Выбирает ли клиент время работ сам.
+
+    False означает не «время не нужно», а «время не спрашиваем у клиента»:
+    оно подставляется ближайшим рабочим слотом при создании заявки.
+    Календарь и сортировка продолжают работать на этом времени.
+    """
+    return client_installation_flag_is_enabled(
+        cursor,
+        client_id,
+        "schedule_time_required",
+    )

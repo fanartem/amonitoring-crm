@@ -11,6 +11,14 @@ class RequestCreate(BaseModel):
     city: str | None = None
     platform: str
     address: str | None = None
+
+    # Контактное лицо ЗАЯВКИ, не карточки клиента. Необязательно
+    # на уровне схемы: если фронт прислал пусто, сервер подставит
+    # контакт клиента — так старые интеграции не ломаются, а поле
+    # в базе не остаётся пустым.
+    contact_name: str | None = None
+    contact_phone: str | None = None
+    
     scheduled_at: datetime | None = None
     schedule_approval_reason: str | None = None
     vehicles: list["RequestVehicleInput"]
@@ -22,6 +30,8 @@ class RequestUpdate(BaseModel):
     address: str | None = None
     city: str | None = None
     platform: str | None = None
+    contact_name: str | None = None
+    contact_phone: str | None = None
     scheduled_at: datetime | None = None
     schedule_approval_reason: str | None = None
     status: str | None = None
@@ -168,7 +178,12 @@ class PortalRequestCreate(BaseModel):
     client_id: int | None = None
     city: str
     address: str | None = None
-    scheduled_at: datetime
+
+    contact_name: str | None = None
+    contact_phone: str | None = None
+    
+    scheduled_at: datetime | None = None
+
     schedule_approval_reason: str | None = None
     comment: str | None = None
     vehicles: list["PortalRequestVehicleInput"] = []
@@ -222,16 +237,21 @@ class ClientInstallationSettingsUpdate(BaseModel):
 
     sensors: list["ClientInstallationSensorInput"] = []
 
-    # По умолчанию True: старый фронт, который поля не присылает,
-    # продолжает сохранять обязательный VIN, а не снимает требование молча.
+    # Обе настройки по умолчанию True: старый фронт, который полей
+    # не присылает, продолжает требовать VIN и выбор времени, а не
+    # снимает требования молча.
     vin_required: bool = True
+    schedule_time_required: bool = True
 
 class VehicleCreate(BaseModel):
     client_id: int
     brand: str
     model: str
     plate_number: str
-    vin: str
+    # Пустой VIN допустим: у части клиентов его на момент заведения
+    # машины не знает никто. Требование проверяет create_vehicle
+    # через client_vin_is_required.
+    vin: str | None = None
     year: int | None = None
     type: str | None = None
 

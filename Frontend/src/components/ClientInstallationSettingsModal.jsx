@@ -35,6 +35,10 @@ const EMPTY_FORM = {
 	// По умолчанию VIN обязателен: снимают требование точечно
 	// и осознанно, а не по недосмотру при заведении шаблона.
 	vin_required: true,
+
+	// По умолчанию клиент выбирает время работ сам. Снимают галочку
+	// тем, у кого время по договору определяем мы, — банкам.
+	schedule_time_required: true,
 }
 
 const formatDateTime = value => {
@@ -147,6 +151,7 @@ export default function ClientInstallationSettingsModal({
 						// правило, что на бэкенде: молчание значит «как
 						// у всех», а не «можно без VIN».
 						vin_required: loaded.vin_required !== false,
+						schedule_time_required: loaded.schedule_time_required !== false,
 					})
 				} else {
 					setUpdatedAt(null)
@@ -298,6 +303,7 @@ export default function ClientInstallationSettingsModal({
 					? Number(form.beacon_subscription_months || 0)
 					: 0,
 				vin_required: Boolean(form.vin_required),
+				schedule_time_required: Boolean(form.schedule_time_required),
 				sensors: sensors
 					.filter(sensor => sensor.name.trim())
 					.map(sensor => ({
@@ -385,6 +391,7 @@ export default function ClientInstallationSettingsModal({
 						loaded.beacon_subscription_months || 0,
 					),
 					vin_required: loaded.vin_required !== false,
+					schedule_time_required: loaded.schedule_time_required !== false,
 				})
 			} else {
 				setForm({ ...EMPTY_FORM, gps_price_code: trackers[0]?.code || '' })
@@ -609,9 +616,66 @@ export default function ClientInstallationSettingsModal({
 											>
 												<strong>VIN всё равно потребуется</strong>
 												<span>
-													Заявку можно будет создать без VIN, но привязать оборудование и завершить работы
-													без VIN не получится: система не даст. VIN впишет
-													монтажник на месте или ответственный менеджер.
+													Заявку можно будет создать без VIN, но привязать
+													оборудование и завершить работы без VIN не получится:
+													система не даст. VIN впишет монтажник на месте или
+													ответственный менеджер.
+												</span>
+											</div>
+										)}
+									</div>
+
+									<div className='vehicle-field vehicle-full'>
+										<span className='vehicle-label'>
+											Время работ при создании заявки
+										</span>
+
+										<div className='client-install-radio-list'>
+											{[
+												{ value: true, label: 'Клиент выбирает время' },
+												{ value: false, label: 'Подставлять автоматически' },
+											].map(option => (
+												<label
+													key={String(option.value)}
+													className={`client-install-radio ${
+														form.schedule_time_required === option.value
+															? 'active'
+															: ''
+													}`}
+												>
+													<input
+														type='radio'
+														name='schedule_time_required'
+														checked={
+															form.schedule_time_required === option.value
+														}
+														disabled={isReadOnly}
+														onChange={() =>
+															updateForm('schedule_time_required', option.value)
+														}
+													/>
+													{option.label}
+												</label>
+											))}
+										</div>
+
+										{form.schedule_time_required ? (
+											<span className='client-install-hint'>
+												Обычный порядок: клиент сам указывает дату и время работ
+												в кабинете.
+											</span>
+										) : (
+											<div
+												className='client-install-banner none'
+												style={{ marginTop: 10, marginBottom: 0 }}
+											>
+												<strong>Время подставится само</strong>
+												<span>
+													В кабинете клиента поля даты и времени не будет —
+													останутся только город и адрес. При создании заявки
+													система поставит ближайшее рабочее время с учётом
+													запаса на дорогу: пн–пт, 10:00–17:30, шаг 30 минут.
+													Диспетчер может передвинуть его как обычно.
 												</span>
 											</div>
 										)}

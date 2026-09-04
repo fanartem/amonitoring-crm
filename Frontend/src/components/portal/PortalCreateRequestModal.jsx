@@ -30,6 +30,20 @@ const WORK_DAY_END_MINUTES = 17 * 60 + 30
 const MAX_VEHICLES = 50
 const VEHICLE_SEARCH_DEBOUNCE_MS = 350
 
+// Запас на дорогу из requests.py (VISIT_MINIMUM_LEAD_MINUTES).
+// Раньше это правило знал только сервер, и клиент спокойно выбирал
+// время, на котором заявка потом падала.
+const VISIT_MINIMUM_LEAD_MINUTES = {
+	ON_SITE_CITY: 25,
+	ON_SITE_OUTSIDE_CITY: 120,
+	BUSINESS_TRIP_KM: 300,
+}
+
+// Как часто пересчитываем «ближайшее доступное время». Форму заполняют
+// долго, и без этого через полчаса список времени снова разойдётся
+// с сервером.
+const CLOCK_TICK_MS = 60 * 1000
+
 const VISIT_TYPE_LABELS = {
 	IN_OFFICE: 'В офисе',
 	ON_SITE: 'Выезд к клиенту',
@@ -76,14 +90,107 @@ const buildTimeOptions = () => {
 
 const TIME_OPTIONS = buildTimeOptions()
 
-const getTodayString = () => {
-	const now = new Date()
+// Сервер живёт во времени Алматы. Брать локальное время браузера нельзя:
+// у клиента в другом часовом поясе «сегодня» и «сейчас» окажутся другими,
+// и форма разрешит то, что сервер отклонит.
+const getAlmatyNow = () => {
+	const formatter = new Intl.DateTimeFormat('en-CA', {
+		timeZone: 'Asia/Almaty',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		hourCycle: 'h23',
+	})
 
-	const year = now.getFullYear()
-	const month = String(now.getMonth() + 1).padStart(2, '0')
-	const day = String(now.getDate()).padStart(2, '0')
+	const parts = Object.fromEntries(
+		formatter
+			.formatToParts(new Date())
+			.filter(part => part.type !== 'literal')
+			.map(part => [part.type, part.value]),
+	)
 
-	return `${year}-${month}-${day}`
+	return {
+		date: `${parts.year}-${parts.month}-${parts.day}`,
+		minutes: Number(parts.hour) * 60 + Number(parts.minute),
+	}
+}
+
+const addDays = (dateString, days) => {
+	const [year, month, day] = dateString.split('-').map(Number)
+	const date = new Date(Date.UTC(year, month - 1, day))
+
+	date.setUTCDate(date.getUTCDate() + days)
+
+	return [
+		date.getUTCFullYear(),
+		String(date.getUTCMonth() + 1).padStart(2, '0'),
+		String(date.getUTCDate()).padStart(2, '0'),
+	].join('-')
+}
+
+const minutesToTime = minutes =>
+	`${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(
+		minutes % 60,
+	).padStart(2, '0')}`
+
+const timeToMinutes = value => {
+	const match = String(value || '').match(/^(\d{2}):(\d{2})$/)
+
+	if (!match) return null
+
+	return Number(match[1]) * 60 + Number(match[2])
+}
+
+const formatDateForHuman = dateString => {
+	const [year, month, day] = String(dateString || '').split('-')
+
+	return year ? `${day}.${month}.${year}` : ''
+}
+
+/**
+ * Ближайшее время, которое примет сервер.
+ *
+ * Повторяет get_next_available_schedule_slot из requests.py: «сейчас плюс
+ * запас на дорогу», округление вверх до получаса, окно 08:00-20:00.
+ * Ровно то же считает validate_request_schedule, поэтому форма запрещает
+ * не больше и не меньше сервера.
+ */
+const computeEarliestSlot = (visitType, visitPriceCode) => {
+	const now = getAlmatyNow()
+
+	const leadMinutes =
+		visitType === 'ON_SITE'
+			? (VISIT_MINIMUM_LEAD_MINUTES[visitPriceCode] ??
+				VISIT_MINIMUM_LEAD_MINUTES.ON_SITE_CITY)
+			: 0
+
+	let date = now.date
+	let minutes = now.minutes + leadMinutes
+
+	while (minutes >= 24 * 60) {
+		minutes -= 24 * 60
+		date = addDays(date, 1)
+	}
+
+	if (minutes % TIME_STEP_MINUTES !== 0) {
+		minutes += TIME_STEP_MINUTES - (minutes % TIME_STEP_MINUTES)
+	}
+
+	if (minutes >= 24 * 60) {
+		minutes -= 24 * 60
+		date = addDays(date, 1)
+	}
+
+	if (minutes < TIME_START_MINUTES) {
+		minutes = TIME_START_MINUTES
+	} else if (minutes > TIME_END_MINUTES) {
+		date = addDays(date, 1)
+		minutes = TIME_START_MINUTES
+	}
+
+	return { date, minutes, time: minutesToTime(minutes) }
 }
 
 // Собираем строку без часового пояса: сервер работает во времени Алматы
@@ -299,12 +406,137 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 	const [comment, setComment] = useState('')
 	const [approvalReason, setApprovalReason] = useState('')
 
+	// Контактное лицо заявки: кого встретит монтажник. Отдельно от
+	// карточки организации — там обычно бухгалтер или директор,
+	// а на объекте машину показывает водитель или завгар.
+	const [contactName, setContactName] = useState('')
+	const [contactPhone, setContactPhone] = useState('')
+
+	// Пока клиент не тронул поля руками, они следуют за организацией.
+	const [contactTouched, setContactTouched] = useState(false)
+
 	const [rows, setRows] = useState([createEmptyRow()])
 
 	const [error, setError] = useState('')
+
+	// Счётчик показов ошибки. Нужен, чтобы прокрутка сработала и когда
+	// текст ошибки повторился: сам по себе error тогда не меняется,
+	// а пользователь уже мог уйти вниз формы.
+	const [errorNonce, setErrorNonce] = useState(0)
+
 	const [submitting, setSubmitting] = useState(false)
 
-	const today = useMemo(getTodayString, [])
+	const bodyRef = useRef(null)
+
+	// Секции формы: к ним прокручиваем, когда ошибка относится к одной
+	// из них. Общая ошибка (отказ сервера, ненастроенный договор) уводит
+	// наверх, к баннеру.
+	const orgSectionRef = useRef(null)
+	const scheduleSectionRef = useRef(null)
+	const vehiclesSectionRef = useRef(null)
+	const contactSectionRef = useRef(null)
+
+	const [errorAnchor, setErrorAnchor] = useState('top')
+
+	// Идентификатор поля, на котором споткнулась проверка. Отдельно от
+	// текста ошибки: сообщение отвечает «что не так», подсветка —
+	// «где именно». На форме в полсотни полей одного текста мало.
+	const [errorField, setErrorField] = useState(null)
+
+	const showError = (message, anchor = 'top', field = null) => {
+		setError(message)
+		setErrorAnchor(anchor)
+		setErrorField(field)
+		setErrorNonce(value => value + 1)
+	}
+
+	// Подсветку снимаем, как только человек начал править именно это поле.
+	// Баннер оставляем: он уйдёт при следующей отправке или по крестику.
+	const clearFieldError = field =>
+		setErrorField(prev => (prev === field ? null : prev))
+
+	const fieldClass = (base, field) =>
+		errorField === field ? `${base} pm-invalid` : base
+
+	// Один обработчик на всё тело формы вместо onChange в каждом из
+	// полутора десятков полей: подсветка снимается, как только начали
+	// править именно то поле, на которое ругались.
+	const handleFieldInput = event => {
+		if (event.target?.classList?.contains('pm-invalid')) {
+			setErrorField(null)
+		}
+	}
+
+	const vehicleFieldName = (row, field) => `vehicle.${row.key}.${field}`
+
+	const vehicleHasError = row =>
+		typeof errorField === 'string' &&
+		errorField.startsWith(`vehicle.${row.key}.`)
+
+	const scrollToAnchor = anchor => {
+		const body = bodyRef.current
+
+		if (!body) return
+
+		// Поле важнее секции: если знаем конкретный input, ведём к нему.
+		const invalidNode = body.querySelector('.pm-invalid, .pm-card-invalid')
+
+		const sectionNode =
+			anchor === 'org'
+				? orgSectionRef.current
+				: anchor === 'schedule'
+					? scheduleSectionRef.current
+					: anchor === 'contact'
+						? contactSectionRef.current
+						: anchor === 'vehicles'
+							? vehiclesSectionRef.current
+							: null
+
+		// Скобки здесь обязательны: без них || связывает сильнее тернарника,
+		// условием становится «поле найдено ИЛИ якорь org», и любое найденное
+		// поле уводило прокрутку к секции организации — а её у клиента без
+		// подклиентов нет вовсе, и форма прыгала в самый верх.
+		const target = invalidNode || sectionNode
+
+		if (!target) {
+			body.scrollTo({ top: 0, behavior: 'smooth' })
+			return
+		}
+
+		// offsetTop не годится: у .pm-body нет position, и точкой отсчёта
+		// оказался бы overlay. Считаем смещение через прямоугольники.
+		const offset =
+			target.getBoundingClientRect().top -
+			body.getBoundingClientRect().top +
+			body.scrollTop
+
+		// К полю подводим с большим запасом: сверху висит липкий баннер
+		// с ошибкой, и без отступа он бы закрыл подпись поля.
+		const padding = invalidNode ? 96 : 12
+
+		body.scrollTo({ top: Math.max(offset - padding, 0), behavior: 'smooth' })
+	}
+
+	// Баннер с ошибкой стоит первым в теле формы. Форма длинная, кнопка
+	// «Создать заявку» — внизу, и без прокрутки нажатие выглядит так,
+	// будто ничего не произошло.
+	useEffect(() => {
+		if (!error) return
+
+		scrollToAnchor(errorAnchor)
+	}, [errorNonce, error, errorAnchor, errorField]) // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Тикающие часы: от них зависит список доступного времени.
+	const [clockTick, setClockTick] = useState(0)
+
+	useEffect(() => {
+		const intervalId = setInterval(
+			() => setClockTick(value => value + 1),
+			CLOCK_TICK_MS,
+		)
+
+		return () => clearInterval(intervalId)
+	}, [])
 
 	// Своя организация в списке не участвует: заявки из кабинета
 	// оформляются на организации структуры, а не на головную.
@@ -375,7 +607,31 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 
 	const readError = async (res, fallback) => {
 		const data = await res.json().catch(() => null)
-		return data?.detail || fallback
+		const detail = data?.detail
+
+		if (typeof detail === 'string' && detail.trim()) return detail
+
+		// При 422 FastAPI отдаёт detail массивом объектов вида
+		// {loc, msg, type}. Прежний код передавал этот массив в Error,
+		// и пользователь видел «[object Object]» вместо причины.
+		if (Array.isArray(detail)) {
+			const text = detail
+				.map(item => {
+					const field = Array.isArray(item?.loc)
+						? item.loc.filter(part => part !== 'body').join(' → ')
+						: ''
+
+					const message = item?.msg || item?.detail || ''
+
+					return [field, message].filter(Boolean).join(': ')
+				})
+				.filter(Boolean)
+				.join('; ')
+
+			return text || fallback
+		}
+
+		return fallback
 	}
 
 	const fetchClients = async () => {
@@ -446,24 +702,86 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 
 			setSettings(await res.json())
 		} catch (err) {
-			setError(err.message)
+			showError(err.message)
 			setSettings(null)
 		} finally {
 			setSettingsLoading(false)
 		}
 	}
 
+	// Организация меняется — вместе с ней меняется и предлагаемый контакт,
+	// но только пока клиент не вписал свой.
+	useEffect(() => {
+		if (!settings || contactTouched) return
+
+		setContactName(settings.default_contact_name || '')
+		setContactPhone(settings.default_contact_phone || '')
+	}, [settings, contactTouched])
+
 	const contract = settings?.settings || null
 	const isConfigured = Boolean(settings?.is_configured)
 	const visitType = contract?.visit_type || null
 	const needsAddress = visitType === 'ON_SITE'
-	const needsApprovalReason = !isWorkingScheduleTime(dateValue, timeValue)
 	const needsCompanyFields = COMPANY_TYPES.includes(newClient.type)
 
 	// Отсутствие флага читаем как «обязателен» — ровно так же, как это
 	// делает сервер: молчание настроек значит «как у всех», а не «можно
 	// без VIN».
 	const vinRequired = contract?.vin_required !== false
+
+	// Выбирает ли клиент время работ. У части клиентов (банки) время
+	// определяет договор, и его подставляет сервер ближайшим рабочим
+	// слотом — тогда полей даты и времени в форме нет вовсе.
+	const scheduleTimeRequired = contract?.schedule_time_required !== false
+
+	// Согласование нерабочего времени существует только там, где время
+	// выбирают руками. Автослот всегда попадает в рабочее окно.
+	const needsApprovalReason =
+		scheduleTimeRequired && !isWorkingScheduleTime(dateValue, timeValue)
+
+	// Ближайшее время, которое примет сервер. Пересчитывается при смене
+	// договора и раз в минуту по часам.
+	const earliestSlot = useMemo(
+		() => computeEarliestSlot(visitType, contract?.visit_price_code),
+		[visitType, contract?.visit_price_code, clockTick],
+	)
+
+	const selectedTimeMinutes = timeToMinutes(timeValue)
+
+	const isTimeOptionDisabled = option => {
+		if (!dateValue) return false
+		if (dateValue > earliestSlot.date) return false
+		if (dateValue < earliestSlot.date) return true
+
+		return (timeToMinutes(option) ?? 0) < earliestSlot.minutes
+	}
+
+	// Выбор мог стать недоступным: сменился тип выезда, прошло время,
+	// клиент вернулся к форме через час. Молча оставлять неверное
+	// значение нельзя — сервер откажет уже после нажатия кнопки.
+	useEffect(() => {
+		if (!scheduleTimeRequired) return
+
+		if (dateValue && dateValue < earliestSlot.date) {
+			setDateValue('')
+			setTimeValue('')
+			return
+		}
+
+		if (
+			dateValue === earliestSlot.date &&
+			selectedTimeMinutes !== null &&
+			selectedTimeMinutes < earliestSlot.minutes
+		) {
+			setTimeValue('')
+		}
+	}, [
+		scheduleTimeRequired,
+		dateValue,
+		selectedTimeMinutes,
+		earliestSlot.date,
+		earliestSlot.minutes,
+	])
 
 	const chosenVehicleIds = rows
 		.filter(row => row.mode === 'existing' && row.vehicle)
@@ -486,28 +804,63 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 	}
 
 	const validateOrganization = () => {
-		if (!hasOrgSection || createdClient) return ''
+		if (!hasOrgSection || createdClient) return null
 
 		if (orgMode === 'existing') {
-			if (!selectedClientId) return 'Выберите организацию из вашей структуры'
-			return ''
+			if (!selectedClientId) {
+				return invalid(
+					'Выберите организацию из вашей структуры',
+					'org',
+					'org.client',
+				)
+			}
+
+			return null
 		}
 
-		if (!newClient.name.trim())
-			return 'Организация: укажите ФИО контактного лица'
-		if (!newClient.phone.trim())
-			return 'Организация: укажите контактный телефон'
+		if (!newClient.name.trim()) {
+			return invalid(
+				'Организация: укажите ФИО контактного лица',
+				'org',
+				'org.name',
+			)
+		}
+
+		if (!newClient.phone.trim()) {
+			return invalid(
+				'Организация: укажите контактный телефон',
+				'org',
+				'org.phone',
+			)
+		}
 
 		if (needsCompanyFields && !newClient.company_name.trim()) {
-			return 'Организация: укажите наименование для ТОО или ИП'
+			return invalid(
+				'Организация: укажите наименование для ТОО или ИП',
+				'org',
+				'org.company_name',
+			)
 		}
 
 		if (needsCompanyFields && !newClient.bin_iin.trim()) {
-			return 'Организация: для ТОО и ИП обязателен БИН/ИИН'
+			return invalid(
+				'Организация: для ТОО и ИП обязателен БИН/ИИН',
+				'org',
+				'org.bin_iin',
+			)
 		}
 
-		return ''
+		return null
 	}
+
+	// Валидация возвращает не только текст, но и секцию, к которой нужно
+	// прокрутить форму. Иначе на длинной форме сообщение вверху не говорит,
+	// где именно искать незаполненное поле.
+	const invalid = (message, anchor, field = null) => ({
+		message,
+		anchor,
+		field,
+	})
 
 	const validate = () => {
 		const orgError = validateOrganization()
@@ -515,27 +868,80 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 		if (orgError) return orgError
 
 		if (!isConfigured) {
-			return (
+			return invalid(
 				settings?.not_configured_message ||
-				'Параметры установки не согласованы. Обратитесь к вашему менеджеру.'
+					'Параметры установки не согласованы. Обратитесь к вашему менеджеру.',
+				'top',
 			)
 		}
 
-		if (!dateValue || !timeValue) return 'Укажите дату и время работ'
-		if (!city) return 'Выберите город'
+		if (scheduleTimeRequired && !dateValue) {
+			return invalid('Укажите дату работ', 'schedule', 'schedule.date')
+		}
+
+		if (scheduleTimeRequired && !timeValue) {
+			return invalid('Укажите время работ', 'schedule', 'schedule.time')
+		}
+
+		if (
+			scheduleTimeRequired &&
+			dateValue &&
+			selectedTimeMinutes !== null &&
+			(dateValue < earliestSlot.date ||
+				(dateValue === earliestSlot.date &&
+					selectedTimeMinutes < earliestSlot.minutes))
+		) {
+			return invalid(
+				'Это время уже недоступно. Ближайшее возможное: ' +
+					`${formatDateForHuman(earliestSlot.date)} ${earliestSlot.time}.`,
+				'schedule',
+				'schedule.time',
+			)
+		}
+
+		if (!city) return invalid('Выберите город', 'schedule', 'schedule.city')
 
 		if (needsAddress && !address.trim()) {
-			return 'По вашему договору работы выполняются с выездом. Укажите адрес.'
+			return invalid(
+				'По вашему договору работы выполняются с выездом. Укажите адрес.',
+				'schedule',
+				'schedule.address',
+			)
 		}
 
 		if (needsApprovalReason && !approvalReason.trim()) {
-			return 'Выбранное время нерабочее. Укажите причину — её увидит ваш менеджер.'
+			return invalid(
+				'Выбранное время нерабочее. Укажите причину — её увидит ваш менеджер.',
+				'schedule',
+				'schedule.reason',
+			)
 		}
 
-		if (rows.length === 0) return 'Добавьте хотя бы одно ТС'
+		if (!contactName.trim()) {
+			return invalid(
+				'Укажите, кто встретит монтажника',
+				'contact',
+				'contact.name',
+			)
+		}
+
+		if (!contactPhone.trim()) {
+			return invalid(
+				'Укажите телефон контактного лица',
+				'contact',
+				'contact.phone',
+			)
+		}
+
+		if (rows.length === 0) {
+			return invalid('Добавьте хотя бы одно ТС', 'vehicles')
+		}
 
 		if (rows.length > MAX_VEHICLES) {
-			return `За одну заявку можно оформить не больше ${MAX_VEHICLES} ТС`
+			return invalid(
+				`За одну заявку можно оформить не больше ${MAX_VEHICLES} ТС`,
+				'vehicles',
+			)
 		}
 
 		const seenVins = new Set()
@@ -545,32 +951,67 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 			const number = index + 1
 
 			if (row.mode === 'existing') {
-				if (!row.vehicle) return `ТС ${number}: выберите машину из списка`
+				if (!row.vehicle) {
+					return invalid(
+						`ТС ${number}: выберите машину из списка`,
+						'vehicles',
+						vehicleFieldName(row, 'picker'),
+					)
+				}
+
 				continue
 			}
 
 			const vin = row.vin.trim().toUpperCase()
 
-			if (!vin && vinRequired) return `ТС ${number}: укажите VIN`
+			if (!vin && vinRequired) {
+				return invalid(
+					`ТС ${number}: укажите VIN`,
+					'vehicles',
+					vehicleFieldName(row, 'vin'),
+				)
+			}
 
 			// Пустой VIN — это ещё не значение, повторов среди пустых не бывает.
 			// Проверяем на дубль только то, что действительно вписали.
 			if (vin) {
-				if (seenVins.has(vin)) return `VIN ${vin} указан дважды`
+				if (seenVins.has(vin)) {
+					return invalid(
+						`ТС ${number}: VIN ${vin} уже указан у другого автомобиля заявки`,
+						'vehicles',
+						vehicleFieldName(row, 'vin'),
+					)
+				}
 
 				seenVins.add(vin)
 			}
 
-			if (!row.brand.trim() || !row.model.trim()) {
-				return `ТС ${number}: укажите марку и модель`
+			if (!row.brand.trim()) {
+				return invalid(
+					`ТС ${number}: укажите марку`,
+					'vehicles',
+					vehicleFieldName(row, 'brand'),
+				)
+			}
+
+			if (!row.model.trim()) {
+				return invalid(
+					`ТС ${number}: укажите модель`,
+					'vehicles',
+					vehicleFieldName(row, 'model'),
+				)
 			}
 
 			if (row.year && (Number(row.year) < 1900 || Number(row.year) > 2100)) {
-				return `ТС ${number}: некорректный год выпуска`
+				return invalid(
+					`ТС ${number}: некорректный год выпуска`,
+					'vehicles',
+					vehicleFieldName(row, 'year'),
+				)
 			}
 		}
 
-		return ''
+		return invalid('', null, null)
 	}
 
 	const createSubclient = async () => {
@@ -601,8 +1042,13 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 
 		const validationError = validate()
 
-		if (validationError) {
-			setError(validationError)
+		if (validationError.message) {
+			showError(
+				validationError.message,
+				validationError.anchor,
+				validationError.field,
+			)
+
 			return
 		}
 
@@ -625,9 +1071,15 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 
 			const payload = {
 				client_id: clientIdForRequest,
-				scheduled_at: buildScheduledAt(dateValue, timeValue),
+				// Пустое время сервер поймёт правильно: у этого клиента
+				// он подставит ближайший рабочий слот сам.
+				scheduled_at: scheduleTimeRequired
+					? buildScheduledAt(dateValue, timeValue)
+					: null,
 				city,
 				address: needsAddress ? address.trim() : null,
+				contact_name: contactName.trim(),
+				contact_phone: contactPhone.trim(),
 				comment: comment.trim() || null,
 				schedule_approval_reason: needsApprovalReason
 					? approvalReason.trim()
@@ -658,7 +1110,7 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 
 			onCreated(await res.json())
 		} catch (err) {
-			setError(err.message)
+			showError(err.message)
 		} finally {
 			setSubmitting(false)
 		}
@@ -688,8 +1140,29 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 				</div>
 
 				<form onSubmit={handleSubmit} style={{ display: 'contents' }}>
-					<div className='pm-body'>
-						{error && <div className='pm-banner error'>{error}</div>}
+					<div
+						className='pm-body'
+						ref={bodyRef}
+						onInput={handleFieldInput}
+						onChange={handleFieldInput}
+					>
+						{error && (
+							<div className='pm-banner error pm-sticky'>
+								<span className='pm-banner-text'>{error}</span>
+
+								<button
+									type='button'
+									className='pm-banner-close'
+									title='Скрыть'
+									onClick={() => {
+										setError('')
+										setErrorField(null)
+									}}
+								>
+									&times;
+								</button>
+							</div>
+						)}
 
 						{createdClient && (
 							<div className='pm-banner success'>
@@ -701,7 +1174,7 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 						{/* ---------- Организация ---------- */}
 
 						{hasOrgSection && !createdClient && (
-							<div className='pm-section'>
+							<div className='pm-section' ref={orgSectionRef}>
 								<div className='pm-section-head'>
 									<span className='pm-section-mark' />
 									<span className='pm-section-title'>{organizationTitle}</span>
@@ -737,9 +1210,12 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 												</label>
 
 												<select
-													className='pm-select'
+													className={fieldClass('pm-select', 'org.client')}
 													value={selectedClientId}
-													onChange={e => setSelectedClientId(e.target.value)}
+													onChange={e => {
+														setSelectedClientId(e.target.value)
+														clearFieldError('org.client')
+													}}
 												>
 													<option value=''>Выберите организацию</option>
 
@@ -794,13 +1270,17 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 														</label>
 
 														<input
-															className='pm-input'
+															className={fieldClass(
+																'pm-input',
+																'org.company_name',
+															)}
 															value={newClient.company_name}
-															onChange={e =>
+															onChange={e => {
 																updateNewClient({
 																	company_name: e.target.value,
 																})
-															}
+																clearFieldError('org.company_name')
+															}}
 															placeholder='ТОО «Пример»'
 														/>
 													</div>
@@ -811,13 +1291,14 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 														</label>
 
 														<input
-															className='pm-input'
+															className={fieldClass('pm-input', 'org.bin_iin')}
 															value={newClient.bin_iin}
-															onChange={e =>
+															onChange={e => {
 																updateNewClient({
 																	bin_iin: e.target.value.replace(/\D/g, ''),
 																})
-															}
+																clearFieldError('org.bin_iin')
+															}}
 															placeholder='12 цифр'
 														/>
 													</div>
@@ -831,11 +1312,12 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 													</label>
 
 													<input
-														className='pm-input'
+														className={fieldClass('pm-input', 'org.name')}
 														value={newClient.name}
-														onChange={e =>
+														onChange={e => {
 															updateNewClient({ name: e.target.value })
-														}
+															clearFieldError('org.name')
+														}}
 													/>
 												</div>
 
@@ -845,11 +1327,12 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 													</label>
 
 													<input
-														className='pm-input'
+														className={fieldClass('pm-input', 'org.phone')}
 														value={newClient.phone}
-														onChange={e =>
+														onChange={e => {
 															updateNewClient({ phone: e.target.value })
-														}
+															clearFieldError('org.phone')
+														}}
 														placeholder='+7 ___ ___ __ __'
 													/>
 												</div>
@@ -987,66 +1470,93 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 
 						{/* ---------- Когда и где ---------- */}
 
-						<div className='pm-section'>
+						<div className='pm-section' ref={scheduleSectionRef}>
 							<div className='pm-section-head'>
 								<span className='pm-section-mark' />
-								<span className='pm-section-title'>Когда и где</span>
+								<span className='pm-section-title'>
+									{scheduleTimeRequired ? 'Когда и где' : 'Где'}
+								</span>
 							</div>
 
 							<div className='pm-section-body'>
-								<div className='pm-grid pm-field'>
-									<div className='pm-col'>
-										<label className='pm-label'>
-											Дата<span className='req'>*</span>
-										</label>
+								{scheduleTimeRequired ? (
+									<>
+										<div className='pm-grid pm-field'>
+											<div className='pm-col'>
+												<label className='pm-label'>
+													Дата<span className='req'>*</span>
+												</label>
 
-										<input
-											type='date'
-											className='pm-input'
-											value={dateValue}
-											min={today}
-											onChange={e => setDateValue(e.target.value)}
-										/>
-									</div>
+												<input
+													type='date'
+													className={fieldClass('pm-input', 'schedule.date')}
+													value={dateValue}
+													min={earliestSlot.date}
+													onChange={e => setDateValue(e.target.value)}
+												/>
+											</div>
 
-									<div className='pm-col'>
-										<label className='pm-label'>
-											Время<span className='req'>*</span>
-										</label>
+											<div className='pm-col'>
+												<label className='pm-label'>
+													Время<span className='req'>*</span>
+												</label>
 
-										<select
-											className='pm-select'
-											value={timeValue}
-											onChange={e => setTimeValue(e.target.value)}
-										>
-											<option value=''>Выберите время</option>
+												<select
+													className={fieldClass('pm-select', 'schedule.time')}
+													value={timeValue}
+													onChange={e => setTimeValue(e.target.value)}
+												>
+													<option value=''>Выберите время</option>
 
-											{TIME_OPTIONS.map(option => (
-												<option key={option} value={option}>
-													{option}
-												</option>
-											))}
-										</select>
-									</div>
-								</div>
-
-								{needsApprovalReason && (
-									<div className='pm-field'>
-										<div className='pm-banner warn'>
-											Выбранное время вне рабочих часов (пн–пт, 10:00–17:30).
-											Заявку подтвердит руководитель — укажите причину.
+													{TIME_OPTIONS.map(option => (
+														<option
+															key={option}
+															value={option}
+															disabled={isTimeOptionDisabled(option)}
+														>
+															{option}
+														</option>
+													))}
+												</select>
+											</div>
 										</div>
 
-										<label className='pm-label'>
-											Причина<span className='req'>*</span>
-										</label>
+										<div className='pm-hint'>
+											Ближайшее доступное время:{' '}
+											{formatDateForHuman(earliestSlot.date)}{' '}
+											{earliestSlot.time}
+											{visitType === 'ON_SITE'
+												? ' — с учётом времени на дорогу по вашему договору.'
+												: '.'}
+										</div>
 
-										<input
-											className='pm-input'
-											value={approvalReason}
-											onChange={e => setApprovalReason(e.target.value)}
-											placeholder='Например: машины доступны только в выходной'
-										/>
+										{needsApprovalReason && (
+											<div className='pm-field'>
+												<div className='pm-banner warn'>
+													Выбранное время вне рабочих часов (пн–пт,
+													10:00–17:30). Заявку подтвердит руководитель — укажите
+													причину.
+												</div>
+
+												<label className='pm-label'>
+													Причина<span className='req'>*</span>
+												</label>
+
+												<input
+													className={fieldClass('pm-input', 'schedule.reason')}
+													value={approvalReason}
+													onChange={e => setApprovalReason(e.target.value)}
+													placeholder='Например: машины доступны только в выходной'
+												/>
+											</div>
+										)}
+									</>
+								) : (
+									<div className='pm-banner info'>
+										Время работ по вашему договору назначаем мы. Заявка встанет
+										на ближайшее рабочее время с учётом дороги — пн–пт,
+										10:00–17:30. Точное время вы увидите в списке заявок сразу
+										после создания.
 									</div>
 								)}
 
@@ -1056,7 +1566,7 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 									</label>
 
 									<select
-										className='pm-select'
+										className={fieldClass('pm-select', 'schedule.city')}
 										value={city}
 										onChange={e => setCity(e.target.value)}
 									>
@@ -1077,7 +1587,7 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 										</label>
 
 										<input
-											className='pm-input'
+											className={fieldClass('pm-input', 'schedule.address')}
 											value={address}
 											onChange={e => setAddress(e.target.value)}
 											placeholder='Улица, дом, ориентир'
@@ -1093,9 +1603,60 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 							</div>
 						</div>
 
+						{/* ---------- Контактное лицо ---------- */}
+
+						<div className='pm-section' ref={contactSectionRef}>
+							<div className='pm-section-head'>
+								<span className='pm-section-mark' />
+								<span className='pm-section-title'>Контактное лицо</span>
+							</div>
+
+							<div className='pm-section-body'>
+								<div className='pm-hint'>
+									Кого встретит монтажник и по какому номеру с ним связаться.
+									Можно указать водителя или ответственного на месте — данные
+									вашей организации при этом не меняются.
+								</div>
+
+								<div className='pm-grid pm-field'>
+									<div className='pm-col'>
+										<label className='pm-label'>
+											ФИО<span className='req'>*</span>
+										</label>
+
+										<input
+											className={fieldClass('pm-input', 'contact.name')}
+											value={contactName}
+											onChange={e => {
+												setContactTouched(true)
+												setContactName(e.target.value)
+											}}
+											placeholder='Кто встречает на месте'
+										/>
+									</div>
+
+									<div className='pm-col'>
+										<label className='pm-label'>
+											Телефон<span className='req'>*</span>
+										</label>
+
+										<input
+											className={fieldClass('pm-input', 'contact.phone')}
+											value={contactPhone}
+											onChange={e => {
+												setContactTouched(true)
+												setContactPhone(e.target.value)
+											}}
+											placeholder='+7 ___ ___ __ __'
+										/>
+									</div>
+								</div>
+							</div>
+						</div>
+
 						{/* ---------- Автомобили ---------- */}
 
-						<div className='pm-section'>
+						<div className='pm-section' ref={vehiclesSectionRef}>
 							<div className='pm-section-head'>
 								<span className='pm-section-mark' />
 								<span className='pm-section-title'>Автомобили</span>
@@ -1112,7 +1673,12 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 								)}
 
 								{rows.map((row, index) => (
-									<div key={row.key} className='pm-card'>
+									<div
+										key={row.key}
+										className={`pm-card ${
+											vehicleHasError(row) ? 'pm-card-invalid' : ''
+										}`}
+									>
 										<div className='pm-card-head'>
 											<span className='pm-card-title'>ТС {index + 1}</span>
 
@@ -1169,7 +1735,10 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 													</label>
 
 													<input
-														className='pm-input'
+														className={fieldClass(
+															'pm-input',
+															vehicleFieldName(row, 'vin'),
+														)}
 														value={row.vin}
 														onChange={e =>
 															updateRow(row.key, {
@@ -1198,7 +1767,10 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 														</label>
 
 														<input
-															className='pm-input'
+															className={fieldClass(
+																'pm-input',
+																vehicleFieldName(row, 'brand'),
+															)}
 															value={row.brand}
 															onChange={e =>
 																updateRow(row.key, { brand: e.target.value })
@@ -1212,7 +1784,10 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 														</label>
 
 														<input
-															className='pm-input'
+															className={fieldClass(
+																'pm-input',
+																vehicleFieldName(row, 'model'),
+															)}
 															value={row.model}
 															onChange={e =>
 																updateRow(row.key, { model: e.target.value })
@@ -1240,7 +1815,10 @@ export default function PortalCreateRequestModal({ onClose, onCreated }) {
 														<label className='pm-label'>Год выпуска</label>
 
 														<input
-															className='pm-input'
+															className={fieldClass(
+																'pm-input',
+																vehicleFieldName(row, 'year'),
+															)}
 															value={row.year}
 															onChange={e =>
 																updateRow(row.key, {

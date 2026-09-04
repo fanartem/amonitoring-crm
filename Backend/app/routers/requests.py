@@ -52,6 +52,10 @@ from app.permissions import (
     client_vin_is_required,
     describe_vehicle_without_vin,
     find_request_vehicles_without_vin,
+
+    # Настраиваемая видимость выбора времени. Правило наследования там же,
+    # где и у VIN: один вопрос — один ответ на всю систему.
+    client_schedule_time_is_required,
 )
 
 # Правило «кто может править машины этого клиента» живёт в vehicles.py
@@ -650,6 +654,36 @@ def get_request_delete_seconds_left(request: dict) -> int:
 
     return max(0, int(REQUEST_DELETE_TIME_LIMIT_SECONDS - elapsed_seconds))
 
+def resolve_request_contact(
+    contact_name: str | None,
+    contact_phone: str | None,
+    client: dict | None,
+) -> tuple[str | None, str | None]:
+    """
+    Контактное лицо заявки: кого встречает монтажник.
+
+    Отдельная пара полей у заявки, а не ссылка на карточку клиента.
+    В карточке клиента обычно сидит бухгалтер или директор, а на объекте
+    монтажника встречает водитель или завгар — и у каждой заявки он свой.
+
+    Пусто пришло — подставляем контакт клиента. Обязательность живёт
+    в интерфейсе, где её можно объяснить человеку; сервер отвечает лишь
+    за то, чтобы поле не осталось пустым. Значение сохраняется как СНИМОК:
+    сменится телефон в карточке клиента — в старых заявках останется тот,
+    по которому реально договаривались.
+    """
+    name = str(contact_name or "").strip()
+    phone = str(contact_phone or "").strip()
+
+    if not name:
+        name = str((client or {}).get("name") or "").strip()
+
+    if not phone:
+        phone = str((client or {}).get("phone") or "").strip()
+
+    return name or None, phone or None
+
+
 def normalize_scheduled_at(value: datetime | None):
     if value is None:
         return None
@@ -843,6 +877,100 @@ def is_working_schedule_time(value: datetime) -> bool:
     request_time = value.time()
 
     return WORK_DAY_START <= request_time <= WORK_DAY_END
+
+
+# Сколько дней вперёд ищем рабочий слот. Четырнадцати хватает
+# на любые новогодние выходные; больше — признак ошибки в данных,
+# и уезжать в бесконечный цикл из-за неё нельзя.
+AUTO_SCHEDULE_MAX_SEARCH_DAYS = 14
+
+
+def get_next_working_slot(value: datetime) -> datetime:
+    """
+    Ближайший слот внутри рабочего окна: пн-пт, 10:00-17:30, шаг 30 минут.
+
+    Отличается от get_next_available_schedule_slot тем, к какому окну
+    округляет. Та работает по SCHEDULE_TIME_START/END (08:00-20:00) —
+    это границы, в которых человеку РАЗРЕШЕНО выбрать время. Здесь
+    время выбирает система, и она обязана попасть в рабочее окно:
+    иначе build_schedule_approval_data потребует причину согласования,
+    а спросить её не у кого — клиент этого поля вообще не видел.
+    """
+    slot = ceil_to_half_hour(value)
+
+    for _ in range(AUTO_SCHEDULE_MAX_SEARCH_DAYS + 1):
+        # Выходной — сразу на утро следующего дня.
+        if slot.weekday() >= 5:
+            slot = (slot + timedelta(days=1)).replace(
+                hour=WORK_DAY_START.hour,
+                minute=WORK_DAY_START.minute,
+                second=0,
+                microsecond=0,
+            )
+            continue
+
+        slot_time = slot.time()
+
+        # Слишком рано — подтягиваем к началу этого же рабочего дня.
+        if slot_time < WORK_DAY_START:
+            slot = slot.replace(
+                hour=WORK_DAY_START.hour,
+                minute=WORK_DAY_START.minute,
+                second=0,
+                microsecond=0,
+            )
+            continue
+
+        # Рабочий день кончился — на утро следующего.
+        if slot_time > WORK_DAY_END:
+            slot = (slot + timedelta(days=1)).replace(
+                hour=WORK_DAY_START.hour,
+                minute=WORK_DAY_START.minute,
+                second=0,
+                microsecond=0,
+            )
+            continue
+
+        return slot
+
+    # Досюда доходим только при испорченных константах рабочего дня.
+    return slot
+
+
+def resolve_auto_scheduled_at(
+    visit_type: str,
+    visit_price_code: str | None,
+) -> datetime:
+    """
+    Время работ для клиента, который его не выбирает.
+
+    Считается ровно по тому же правилу, которое видит менеджер в CRM:
+    «сейчас плюс запас на дорогу», округлённое вверх до получаса. Запас
+    берётся из VISIT_MINIMUM_LEAD_MINUTES — 25 минут по городу, 2 часа
+    за городом, 5 часов на командировку. В офис ехать не нужно, там
+    запас нулевой.
+
+    Дальше результат подтягивается в рабочее окно. Примеры:
+      создано в 11:00 по городу  -> сегодня 11:30
+      создано в 17:00 по городу  -> сегодня 17:30 (край дня включительно)
+      создано в 17:20 по городу  -> завтра 10:00
+      создано в пятницу в 18:00  -> понедельник 10:00
+    """
+    now = almaty_now().replace(second=0, microsecond=0)
+
+    lead_minutes = 0
+
+    if visit_type == "ON_SITE":
+        normalized_code = (
+            normalize_visit_price_code(visit_price_code) or VISIT_PRICE_CODE_CITY
+        )
+
+        lead_minutes = VISIT_MINIMUM_LEAD_MINUTES.get(
+            normalized_code,
+            VISIT_MINIMUM_LEAD_MINUTES[VISIT_PRICE_CODE_CITY],
+        )
+
+    return get_next_working_slot(now + timedelta(minutes=lead_minutes))
 
 
 def build_schedule_approval_data(
@@ -1039,6 +1167,8 @@ CLIENT_VISIBLE_HISTORY_ACTIONS = {
     "SCHEDULED_AT_CHANGED",
     "ADDRESS_CHANGED",
     "CITY_CHANGED",
+    "CONTACT_NAME_CHANGED",
+    "CONTACT_PHONE_CHANGED",
     "PLATFORM_CHANGED",
     "VISIT_TYPE_CHANGED",
     "ASSIGNED",
@@ -1972,24 +2102,25 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
 
     scheduled_at = normalize_scheduled_at(data.scheduled_at)
 
-    if scheduled_at is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Необходимо указать желаемую дату и время выполнения работ"
+    # Пустое время — не обязательно ошибка: у части клиентов время
+    # подставляет система. Но узнать это можно только по параметрам
+    # договора, а для них нужен курсор — поэтому разбор перенесён
+    # внутрь, после проверки клиента.
+    schedule_approval = None
+
+    if scheduled_at is not None:
+        validate_request_schedule(
+            scheduled_at=scheduled_at,
+            visit_type=data.visit_type,
+            visit_price_code=visit_price_code,
+            current_user=current_user,
         )
 
-    validate_request_schedule(
-        scheduled_at=scheduled_at,
-        visit_type=data.visit_type,
-        visit_price_code=visit_price_code,
-        current_user=current_user,
-    )
-
-    schedule_approval = build_schedule_approval_data(
-        scheduled_at=scheduled_at,
-        current_user=current_user,
-        reason=data.schedule_approval_reason,
-    )
+        schedule_approval = build_schedule_approval_data(
+            scheduled_at=scheduled_at,
+            current_user=current_user,
+            reason=data.schedule_approval_reason,
+        )
 
     connection = get_connection()
 
@@ -2004,7 +2135,12 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     parent_client_id,
                     created_by,
                     responsible_manager_id,
-                    is_deleted
+                    is_deleted,
+
+                    -- Запасное значение для контактного лица заявки,
+                    -- если менеджер стёр предзаполненные поля.
+                    name,
+                    phone
                 FROM clients
                 WHERE id = %s
                 """,
@@ -2029,6 +2165,34 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                 raise HTTPException(
                     status_code=403,
                     detail="Недостаточно прав для создания заявки по этому клиенту"
+                )
+
+            # Время работ. У большинства клиентов его выбирают руками,
+            # и тогда сюда мы приходим с уже проверенным значением.
+            # У части клиентов (банки) время определяет договор: заявка,
+            # созданная в рабочее окно, закрывается в тот же день, и час
+            # менеджеру банка выбирать бессмысленно.
+            #
+            # Совсем без времени обойтись нельзя — на нём стоит календарь
+            # и сортировка, — поэтому подставляем ближайший рабочий слот.
+            if scheduled_at is None:
+                if client_schedule_time_is_required(cursor, int(client["id"])):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Необходимо указать желаемую дату и время выполнения работ"
+                    )
+
+                scheduled_at = resolve_auto_scheduled_at(
+                    data.visit_type,
+                    visit_price_code,
+                )
+
+                # Слот заведомо в рабочем окне, поэтому согласование
+                # не потребуется и причина не нужна.
+                schedule_approval = build_schedule_approval_data(
+                    scheduled_at=scheduled_at,
+                    current_user=current_user,
+                    reason=None,
                 )
 
             # Проверяем все автомобили до создания заявки
@@ -2099,6 +2263,13 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     detail="Необходимо выбрать платформу мониторинга"
                 )
 
+            # Контактное лицо заявки. Пусто — берём из карточки клиента.
+            contact_name, contact_phone = resolve_request_contact(
+                data.contact_name,
+                data.contact_phone,
+                client,
+            )
+
             # шапка заявки
             cursor.execute(
                 """
@@ -2110,6 +2281,8 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     address,
                     city,
                     platform,
+                    contact_name,
+                    contact_phone,
                     scheduled_at,
                     schedule_approval_status,
                     schedule_approval_reason,
@@ -2123,7 +2296,7 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     created_by,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     data.client_id,
@@ -2133,6 +2306,8 @@ def create_request(data: RequestCreate, current_user: dict = Depends(get_current
                     data.address,
                     data.city,
                     platform,
+                    contact_name,
+                    contact_phone,
                     scheduled_at,
                     schedule_approval["status"],
                     schedule_approval["reason"],
@@ -2519,6 +2694,8 @@ def get_requests(status: str = Query(None), current_user: dict = Depends(get_cur
                     r.address,
                     r.city,
                     r.platform,
+                    r.contact_name,
+                    r.contact_phone,
                     r.scheduled_at,
                     r.schedule_approval_status,
                     r.schedule_approval_reason,
@@ -2617,6 +2794,8 @@ def get_deleted_requests(current_user: dict = Depends(get_current_user)):
                     r.address,
                     r.city,
                     r.platform,
+                    r.contact_name,
+                    r.contact_phone,
                     r.scheduled_at,
                     r.schedule_approval_status,
                     r.schedule_approval_reason,
@@ -3076,6 +3255,8 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     r.address,
                     r.city,
                     r.platform,
+                    r.contact_name,
+                    r.contact_phone,
                     r.scheduled_at,
                     r.schedule_approval_status,
                     r.schedule_approval_reason,
@@ -3306,6 +3487,43 @@ def update_request(request_id: int, data: RequestUpdate, current_user: dict = De
                     data.address,
                     "ADDRESS_CHANGED",
                     portal_label="адрес",
+                )
+
+            # Контактное лицо заявки. Меняется той же кнопкой «Изменить
+            # заявку», что и остальные поля: это данные заявки, а не
+            # карточки клиента, и правка здесь на клиента не влияет.
+            if (
+                data.contact_name is not None
+                and str(data.contact_name).strip() != str(req.get("contact_name") or "")
+            ):
+                if not can_edit_this_request:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для редактирования этой заявки"
+                    )
+
+                add_request_update(
+                    "contact_name",
+                    str(data.contact_name).strip() or None,
+                    "CONTACT_NAME_CHANGED",
+                    portal_label="контактное лицо",
+                )
+
+            if (
+                data.contact_phone is not None
+                and str(data.contact_phone).strip() != str(req.get("contact_phone") or "")
+            ):
+                if not can_edit_this_request:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Недостаточно прав для редактирования этой заявки"
+                    )
+
+                add_request_update(
+                    "contact_phone",
+                    str(data.contact_phone).strip() or None,
+                    "CONTACT_PHONE_CHANGED",
+                    portal_label="телефон контактного лица",
                 )
 
             # city
@@ -4906,6 +5124,8 @@ def get_requests_calendar(
                     r.address,
                     r.city,
                     r.platform,
+                    r.contact_name,
+                    r.contact_phone,
                     r.scheduled_at,
                     r.scheduled_duration_minutes,
                     r.schedule_approval_status,
@@ -4981,6 +5201,8 @@ def get_requests_calendar(
                     r.address,
                     r.city,
                     r.platform,
+                    r.contact_name,
+                    r.contact_phone,
                     r.scheduled_at,
                     r.scheduled_duration_minutes,
                     r.schedule_approval_status,
@@ -5117,6 +5339,8 @@ def get_request_detail(request_id: int, current_user: dict = Depends(get_current
                     r.address,
                     r.city,
                     r.platform,
+                    r.contact_name,
+                    r.contact_phone,
                     r.scheduled_at,
                     r.schedule_approval_status,
                     r.schedule_approval_reason,

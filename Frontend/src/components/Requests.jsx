@@ -297,6 +297,8 @@ export default function Requests() {
 			paid_at: req.paid_at,
 			total_price: req.total_price,
 			responsible_manager_name: req.responsible_manager_name,
+			contact_name: req.contact_name,
+			contact_phone: req.contact_phone,
 			vehicles: req.vehicles || [],
 		})
 	}
@@ -708,6 +710,12 @@ export default function Requests() {
 					(r.company_name && r.company_name.toLowerCase().includes(s)) ||
 					(r.phone && r.phone.toLowerCase().includes(s))
 
+				// Контакт заявки ищется наравне с клиентом: диспетчеру часто
+				// звонят с объекта, и по этому номеру заявку надо находить.
+				const contactMatch =
+					(r.contact_name && r.contact_name.toLowerCase().includes(s)) ||
+					(r.contact_phone && r.contact_phone.toLowerCase().includes(s))
+
 				const vehicleMatch =
 					Array.isArray(r.vehicles) &&
 					r.vehicles.some(
@@ -718,7 +726,7 @@ export default function Requests() {
 							(v.model && v.model.toLowerCase().includes(s)),
 					)
 
-				return clientMatch || vehicleMatch
+				return clientMatch || contactMatch || vehicleMatch
 			})
 		}
 
@@ -1150,7 +1158,9 @@ export default function Requests() {
 					: []),
 				['Клиент', getClientDisplayName(req)],
 				['Компания', req.company_name || '—'],
-				['Телефон', req.phone || '—'],
+				['Телефон клиента', req.phone || '—'],
+				['Контактное лицо заявки', req.contact_name || '—'],
+				['Телефон контактного лица', req.contact_phone || '—'],
 				[],
 				['Автомобили в заявке', ''],
 			]
@@ -1240,7 +1250,7 @@ export default function Requests() {
 							className={getFilterClassName('search')}
 							type='text'
 							name='search'
-							placeholder='ФИО, Телефон, Гос.номер, VIN, Марка...'
+							placeholder='ФИО, Телефон, Контакт, Гос.номер, VIN, Марка...'
 							value={filters.search}
 							onChange={handleFilterChange}
 						/>
@@ -1486,6 +1496,27 @@ export default function Requests() {
 									</span>
 								)}
 							</div>
+
+							{(String(req.contact_name || '').trim() ||
+								String(req.contact_phone || '').trim()) && (
+								<div className='card-item card-item-contact'>
+									<span className='card-label'>Контакт по заявке</span>
+
+									<span className='card-value request-contact-name'>
+										{req.contact_name || '—'}
+									</span>
+
+									{String(req.contact_phone || '').trim() && (
+										<a
+											className='request-contact-phone'
+											href={`tel:${String(req.contact_phone).replace(/[^\d+]/g, '')}`}
+											onClick={e => e.stopPropagation()}
+										>
+											{req.contact_phone}
+										</a>
+									)}
+								</div>
+							)}
 
 							<div className='card-item card-item-status'>
 								<span className='card-label'>Статус</span>

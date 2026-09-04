@@ -52,6 +52,15 @@ from app.routers.requests import (
     almaty_now,
     build_schedule_approval_data,
     normalize_scheduled_at,
+
+    # Время для клиента, который его не выбирает. Живёт в requests.py
+    # рядом с остальными правилами расписания — второй копии правила
+    # «ближайший рабочий слот» в системе быть не должно.
+    resolve_auto_scheduled_at,
+
+    # Контактное лицо заявки. Правило подстановки одно на обе формы:
+    # пусто пришло — берём контакт организации.
+    resolve_request_contact,
     validate_request_schedule,
 )
 
@@ -578,9 +587,24 @@ def get_portal_installation_settings(
                 for sensor in (payload.get("sensors") or [])
             ]
 
+            # Контакт организации — то, чем форма предзаполнит поля
+            # контактного лица заявки (решение Р52(А)). client_name ниже
+            # для этого не годится: там отображаемое название, у ТОО это
+            # компания, а не человек. Телефона в карточке настроек нет
+            # вовсе — берём отдельным запросом по первичному ключу.
+            cursor.execute(
+                "SELECT name, phone FROM clients WHERE id = %s LIMIT 1",
+                (int(client["id"]),),
+            )
+
+            contact_defaults = cursor.fetchone() or {}
+
             return {
                 "client_id": int(client["id"]),
                 "client_name": get_client_display_name(client),
+
+                "default_contact_name": contact_defaults.get("name") or "",
+                "default_contact_phone": contact_defaults.get("phone") or "",
                 "is_configured": bool(payload.get("is_configured")),
                 "can_create_request": (
                     bool(payload.get("is_configured"))
@@ -601,6 +625,13 @@ def get_portal_installation_settings(
                     # правило, что в client_vin_is_required: молчание
                     # означает «как у всех», а не «можно без VIN».
                     "vin_required": bool(settings.get("vin_required", True)),
+
+                    # А по этому — показывать ли блок даты и времени.
+                    # False означает не «время не нужно», а «время выберет
+                    # система»: подставится ближайший рабочий слот.
+                    "schedule_time_required": bool(
+                        settings.get("schedule_time_required", True)
+                    ),
 
                     "gps_price_code": settings.get("gps_price_code"),
                     "gps_price_name": gps_price_name,
@@ -639,11 +670,9 @@ def create_portal_request(
 
     scheduled_at = normalize_scheduled_at(data.scheduled_at)
 
-    if scheduled_at is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Укажите желаемую дату и время работ",
-        )
+    # Пустое время — не обязательно ошибка: у части клиентов (банки)
+    # его подставляет система. Решает это договор, а он читается
+    # ниже вместе с остальными параметрами установки.
 
     connection = get_connection()
 
@@ -673,6 +702,37 @@ def create_portal_request(
             if visit_type == "IN_OFFICE":
                 address = None
 
+            # Выбирает ли клиент время сам. Берём из уже загруженного
+            # договора, а не отдельным обходом дерева: resolve_client_
+            # installation_settings вернул строку настроек ближайшего
+            # клиента по цепочке — ровно то же, что считает
+            # client_schedule_time_is_required.
+            schedule_time_required = bool(
+                contract["settings"].get("schedule_time_required", True)
+            )
+
+            # Причину нерабочего времени принимаем только от того, кто
+            # это время выбирал. Иначе поле, которого клиент не видел,
+            # могло бы приехать из старого фронта или руками через API.
+            schedule_approval_reason = (
+                data.schedule_approval_reason if schedule_time_required else None
+            )
+
+            if scheduled_at is None:
+                if schedule_time_required:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Укажите желаемую дату и время работ",
+                    )
+
+                # Ближайший рабочий слот с учётом запаса на дорогу.
+                # Календарь и сортировка держатся на этом времени,
+                # поэтому пустым его оставить нельзя.
+                scheduled_at = resolve_auto_scheduled_at(
+                    visit_type,
+                    visit_price_code,
+                )
+
             # Правила времени те же, что у сотрудников: шаг 30 минут,
             # окно 08:00–20:00, минимальный запас по типу выезда.
             # Права на обход у клиентской учётки нет и быть не может.
@@ -686,7 +746,27 @@ def create_portal_request(
             schedule_approval = build_schedule_approval_data(
                 scheduled_at=scheduled_at,
                 current_user=current_user,
-                reason=data.schedule_approval_reason,
+                reason=schedule_approval_reason,
+            )
+
+            # Контактное лицо заявки: кого встретит монтажник. Решение
+            # Р52(А) — по умолчанию контакт организации, на которую
+            # оформляется заявка, как и в CRM.
+            #
+            # Телефон запрашиваем отдельно: load_client_for_settings его
+            # не выбирает, а расширять её ради единственного потребителя
+            # хуже, чем сделать здесь один дешёвый запрос по первичному ключу.
+            cursor.execute(
+                "SELECT name, phone FROM clients WHERE id = %s LIMIT 1",
+                (client_id,),
+            )
+
+            contact_source = cursor.fetchone() or {}
+
+            contact_name, contact_phone = resolve_request_contact(
+                data.contact_name,
+                data.contact_phone,
+                contact_source,
             )
 
             visible_client_ids = get_portal_visible_client_ids(cursor, current_user)
@@ -708,6 +788,8 @@ def create_portal_request(
                     address,
                     city,
                     platform,
+                    contact_name,
+                    contact_phone,
                     scheduled_at,
                     schedule_approval_status,
                     schedule_approval_reason,
@@ -721,7 +803,7 @@ def create_portal_request(
                     created_by,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'NEW', 0, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'NEW', 0, %s, %s)
                 """,
                 (
                     client_id,
@@ -731,6 +813,8 @@ def create_portal_request(
                     address,
                     city,
                     platform,
+                    contact_name,
+                    contact_phone,
                     scheduled_at,
                     schedule_approval["status"],
                     schedule_approval["reason"],
@@ -970,6 +1054,17 @@ def create_portal_request(
                 "client_id": client_id,
                 "client_name": get_client_display_name(client),
                 "vehicles_count": len(vehicle_ids),
+
+                # Возвращаем итоговое время: при автоподстановке клиент
+                # его не выбирал и иначе узнает только из списка заявок.
+                "scheduled_at": scheduled_at,
+                "schedule_time_required": schedule_time_required,
+
+                # Контакт возвращаем: если поля оставили пустыми, клиент
+                # иначе не узнает, что в заявку уехал контакт организации.
+                "contact_name": contact_name,
+                "contact_phone": contact_phone,
+
                 "schedule_approval_status": schedule_approval["status"],
                 "total_price": (
                     total_price if can_view_portal_prices(current_user) else None

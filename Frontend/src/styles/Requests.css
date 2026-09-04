@@ -2544,3 +2544,24 @@
 .vehicle-editor-btn.primary:hover:not(:disabled) {
 	background: #4d7719;
 }
+
+.card-item-contact .request-contact-name {
+	font-size: 13px;
+	font-weight: 600;
+	color: #2f3640;
+	line-height: 1.35;
+}
+ 
+.request-contact-phone {
+	display: inline-block;
+	margin-top: 2px;
+	font-size: 13px;
+	font-weight: 700;
+	color: #2563eb;
+	text-decoration: none;
+	letter-spacing: 0.2px;
+}
+ 
+.request-contact-phone:hover {
+	text-decoration: underline;
+}

@@ -154,6 +154,13 @@ export default function RequestDetailModal({
 	const canOpenVehicleEditor = vehicle =>
 		canEditVehicles || (canFillVehicleVin && !String(vehicle?.vin || '').trim())
 
+	// Контактное лицо заявки. У заявок, созданных до появления полей,
+	// его нет — тогда показываем контакт клиента и честно помечаем,
+	// что в самой заявке он не указан (решение Р51(А)).
+	const requestContactName = String(request?.contact_name || '').trim()
+	const requestContactPhone = String(request?.contact_phone || '').trim()
+	const hasRequestContact = Boolean(requestContactName || requestContactPhone)
+
 	const isRemovalRequest = request?.work_type === 'REMOVAL'
 
 	// Оборудование живёт в warehouse.py и своего флага в заявке не имеет.
@@ -698,6 +705,14 @@ export default function RequestDetailModal({
 
 		if (h.action === 'CLIENT_CHANGED') return 'Изменен клиент заявки'
 		if (h.action === 'VEHICLE_CHANGED') return 'Изменен автомобиль заявки'
+		if (h.action === 'CONTACT_NAME_CHANGED') {
+			return `Контактное лицо заявки: ${h.old_value || 'не указано'} → ${h.new_value || 'не указано'}`
+		}
+
+		if (h.action === 'CONTACT_PHONE_CHANGED') {
+			return `Телефон контактного лица: ${h.old_value || 'не указан'} → ${h.new_value || 'не указан'}`
+		}
+
 		if (h.action === 'CITY_CHANGED') return `Город изменен: ${h.new_value}`
 		if (h.action === 'ADDRESS_CHANGED') return `Адрес изменен: ${h.new_value}`
 
@@ -843,7 +858,7 @@ export default function RequestDetailModal({
 												</span>
 											</div>
 											<div className='info-row'>
-												<span className='info-key'>Телефон</span>
+												<span className='info-key'>Телефон клиента</span>
 												<span className='info-val'>
 													{request.phone || request.client?.phone || '—'}
 												</span>
@@ -882,6 +897,47 @@ export default function RequestDetailModal({
 											)}
 										</div>
 
+										<div className='info-card'>
+											<div className='info-card-title'>
+												Контактное лицо заявки
+											</div>
+
+											<div className='info-row'>
+												<span className='info-key'>ФИО</span>
+												<span className='info-val'>
+													{hasRequestContact
+														? requestContactName || '—'
+														: request.client_name || '—'}
+												</span>
+											</div>
+
+											<div className='info-row'>
+												<span className='info-key'>Телефон для связи</span>
+												<span
+													className='info-val'
+													style={{ fontWeight: '700', color: '#181717' }}
+												>
+													{hasRequestContact
+														? requestContactPhone || '—'
+														: request.phone || '—'}
+												</span>
+											</div>
+
+											{!hasRequestContact && (
+												<div
+													style={{
+														fontSize: '12px',
+														color: '#9a6a05',
+														lineHeight: '1.4',
+														marginTop: '6px',
+													}}
+												>
+													Контакт в заявке не указан — показан контакт из
+													карточки клиента. Заявка оформлена до появления этого
+													поля.
+												</div>
+											)}
+										</div>
 										<div className='info-card'>
 											<div className='info-card-title'>
 												Транспорт ({request.vehicles?.length || 0})
